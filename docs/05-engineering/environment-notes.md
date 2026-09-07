@@ -218,7 +218,7 @@ await plugin.initialize(settings: initializationSettings);
 - [x] 项目 `android/` 下两个 gradle 文件已配阿里云镜像（§3.1）
 - [x] **`compileSdk` 决策落地：移除 `permission_handler`，降回稳定版 36**（§3.2）
 - [x] core library desugaring 已启用（§3.4）
-- [~] `flutter_timezone` 的替代方案已评估（§3.3）—— M0 未引入该依赖，KGP 警告当前不存在；M1 需读系统时区时再定
+- [x] `flutter_timezone` 的替代方案已落地（§3.3）—— **M1-A 采用自写 MethodChannel**，不引入该包；见 [m0-record §1.4](m0-record.md)
 - [x] Impeller 未被显式关闭（§3.7）
 - [x] `uuid` 包的 v7 已实测确认，且断言了**时间有序性**而非仅「能调用」
 - [x] 重复引擎探针 P-1..P-5 已完成，转为 `test/domain/rrule_library_contract_test.dart` 的 14 条常驻测试

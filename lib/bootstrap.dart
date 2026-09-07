@@ -9,19 +9,33 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:timezone/data/latest.dart' as tzdata;
+
+import 'core/time/time_zone_bootstrap.dart';
+import 'platform/timezone/platform_time_zone.dart';
+
+/// 时区初始化的结果，供 UI 在降级时提示用户。
+///
+/// 用 Provider 暴露而不是全局变量，是为了让 Widget 测试能覆盖它。
+final timeZoneSetupProvider = Provider<TimeZoneSetupResult>(
+  (ref) => throw StateError('必须在 ProviderScope 的 overrides 中提供'),
+);
 
 /// 启动应用。
 ///
 /// [appBuilder] 由调用方提供，便于集成测试替换根 Widget。
-Future<void> bootstrap(Widget Function() appBuilder) async {
+/// [timeZoneSource] 可注入，便于测试与桌面端。
+Future<void> bootstrap(
+  Widget Function() appBuilder, {
+  PlatformTimeZoneSource timeZoneSource = const MethodChannelTimeZoneSource(),
+}) async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // 顶层错误兜底（NFR-REL-01）：任何未捕获异常都必须落日志，绝不静默吞掉。
-  // M1 接入 core/logging 的门面后，这里改为写本地滚动日志文件。
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
     if (kReleaseMode) {
-      // TODO(M1): 落本地日志文件，不外发（NFR-PRIV-01）
+      // TODO(M4): 落本地滚动日志文件，不外发（NFR-PRIV-01）
     }
   };
   PlatformDispatcher.instance.onError = (error, stack) {
@@ -29,6 +43,25 @@ Future<void> bootstrap(Widget Function() appBuilder) async {
     return true;
   };
 
-  // TODO(M1): 初始化顺序 —— 时区库 → 数据库 → 通知渠道 → 提醒对账
-  runApp(ProviderScope(child: appBuilder()));
+  // ── 时区：两步都必须做 ────────────────────────────────────────
+  // initializeTimeZones() 只加载数据库，**不设置 tz.local**。
+  // 少了第二步，tz.local.name 恒为 Etc/UTC，于是每条任务的 timeZoneId
+  // 都被记成 UTC —— 北京设的「每天 07:00」变成当地 15:00，且完全静默。
+  tzdata.initializeTimeZones();
+  final tzResult = await setUpLocalTimeZone(timeZoneSource.currentZoneId);
+  if (tzResult.fellBack) {
+    // 降级必须可见：此后创建的任务时区是错的。
+    debugPrint('时区初始化降级: $tzResult');
+    // TODO(M2): 在设置页展示提示，引导用户手动选择时区
+  }
+
+  // TODO(M1-C): 数据库初始化
+  // TODO(M4): 通知渠道创建 → 提醒对账
+
+  runApp(
+    ProviderScope(
+      overrides: [timeZoneSetupProvider.overrideWithValue(tzResult)],
+      child: appBuilder(),
+    ),
+  );
 }

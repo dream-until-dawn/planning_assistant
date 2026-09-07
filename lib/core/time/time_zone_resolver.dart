@@ -59,14 +59,82 @@ abstract interface class TimeZoneResolver {
   DateTime untilForExpansion(DateTime utcUntil, String zoneId);
 }
 
+/// 无法识别的时区标识。
+///
+/// 按 cross-cutting §3 属**基础设施失败**：调用方应捕获并降级，
+/// 而不是让库的原始异常一路冒到 UI。
+final class UnknownTimeZoneException implements Exception {
+  const UnknownTimeZoneException(this.zoneId);
+  final String zoneId;
+
+  @override
+  String toString() => 'UnknownTimeZoneException: 无法识别的时区标识「$zoneId」';
+}
+
+/// 旧式别名 → tz 数据库中的规范 id。
+///
+/// **必要性来自设备**：`timeZoneId` 取自系统，而 Android 至今仍有大量设备
+/// 报 `Asia/Calcutta` 这类 legacy 别名。实测 `timezone` 包的
+/// `latest.dart` 数据库里 `UTC` / `GMT` / `Asia/Calcutta` **都不存在**，
+/// 直接查会抛异常 —— 那意味着该设备上创建的每一条任务都无法换算。
+///
+/// 表按「实际会出现在设备上的」收录，不追求穷尽 tz 数据库的全部 backward 链接。
+const Map<String, String> _zoneAliases = {
+  'UTC': 'Etc/UTC',
+  'GMT': 'Etc/GMT',
+  'GMT0': 'Etc/GMT',
+  'Greenwich': 'Etc/GMT',
+  'Universal': 'Etc/UTC',
+  'Zulu': 'Etc/UTC',
+  'Asia/Calcutta': 'Asia/Kolkata',
+  'Asia/Rangoon': 'Asia/Yangon',
+  'Asia/Saigon': 'Asia/Ho_Chi_Minh',
+  'Asia/Katmandu': 'Asia/Kathmandu',
+  'Asia/Chongqing': 'Asia/Shanghai',
+  'Asia/Harbin': 'Asia/Shanghai',
+  'Europe/Kiev': 'Europe/Kyiv',
+  'America/Buenos_Aires': 'America/Argentina/Buenos_Aires',
+  'Pacific/Ponape': 'Pacific/Pohnpei',
+  'Pacific/Truk': 'Pacific/Chuuk',
+};
+
 /// 基于 `timezone` 包（IANA tz 数据库）的实现。
 ///
-/// 使用前必须先调用 `initializeTimeZones()`（由 bootstrap 负责）。
+/// **使用前 bootstrap 必须完成两步**：
+///  1. `initializeTimeZones()` —— 加载数据库；
+///  2. `tz.setLocalLocation(...)` —— 设置本地时区。
+///
+/// **第 2 步不可省**。`initializeTimeZones()` 只加载数据库、**不设置 `tz.local`**，
+/// 缺了它 `tz.local.name` 恒为 `Etc/UTC`，于是 [currentZoneId] 恒返回 UTC，
+/// 用户在北京设的「每天 07:00」会被记成 07:00 UTC = 当地 15:00 ——
+/// 那正是 ADR-0005 整条存在的理由要防的 bug，而且**完全静默**。
 final class TzTimeZoneResolver implements TimeZoneResolver {
   const TzTimeZoneResolver({this.fixedCurrentZoneId});
 
   /// 固定当前时区，供测试注入。为 null 时读系统时区。
   final String? fixedCurrentZoneId;
+
+  /// 把设备可能报出的旧式别名归一成 tz 数据库里的规范 id。
+  static String normalizeZoneId(String zoneId) =>
+      _zoneAliases[zoneId] ?? zoneId;
+
+  /// 该标识是否可用（已归一后）。
+  static bool isKnownZoneId(String zoneId) {
+    try {
+      tz.getLocation(normalizeZoneId(zoneId));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  tz.Location _location(String zoneId) {
+    try {
+      return tz.getLocation(normalizeZoneId(zoneId));
+    } catch (_) {
+      throw UnknownTimeZoneException(zoneId);
+    }
+  }
 
   @override
   String currentZoneId() => fixedCurrentZoneId ?? tz.local.name;
@@ -93,7 +161,7 @@ final class TzTimeZoneResolver implements TimeZoneResolver {
   /// 所以那组用例过了、这组没过。
   @override
   InstantResolution resolve(LocalWallTime wall) {
-    final loc = tz.getLocation(wall.timeZoneId);
+    final loc = _location(wall.timeZoneId);
     final target = wall.toFakeUtc();
 
     DateTime localWallAt(int epochMs) {
@@ -131,9 +199,19 @@ final class TzTimeZoneResolver implements TimeZoneResolver {
     }
 
     // 有跳变：二分找**偏移发生变化**的那一刻。偏移是分段常量，这一步是单调的。
+    //
+    // **必须收敛到毫秒，不能停在分钟**。循环不变式是
+    // `offset(a) == offsetLo` 且 `offset(b) != offsetLo`，即真实跳变点 T ∈ (a, b]。
+    // 停在 `b - a <= 60000` 时 `b` 最多比 T 晚 60 秒，而墙钟落进 DST 空隙时
+    // 直接返回 `transitionMs` —— 那 60 秒误差就进了 Instant。
+    //
+    // 初版就停在分钟。差分测试（4896 组 (时区, 墙钟) 组合）在 14 处不一致，
+    // 全是这一类：02:00→03:00:14.062、02:15→03:00:28.125……
+    // 而我们当时断言 instant 的那条用例恰好挑了 02:30 —— 空隙里唯一收敛精确的输入。
+    // 多约 16 次迭代，可忽略。
     var a = lo;
     var b = hi;
-    while (b - a > Duration.millisecondsPerMinute) {
+    while (b - a > 1) {
       final mid = a + (b - a) ~/ 2;
       if (offsetMsAt(mid) == offsetLo) {
         a = mid;
@@ -174,7 +252,7 @@ final class TzTimeZoneResolver implements TimeZoneResolver {
 
   @override
   LocalWallTime toWallTime(DateTime instant, String zoneId) {
-    final loc = tz.getLocation(zoneId);
+    final loc = _location(zoneId);
     final local = tz.TZDateTime.from(instant, loc);
     return LocalWallTime(
       date: PlanDate(local.year, local.month, local.day),

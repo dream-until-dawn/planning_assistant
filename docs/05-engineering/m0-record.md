@@ -38,12 +38,17 @@
 | **跨毫秒生成的 ID 字典序 == 生成顺序** | **这才是选 v7 的理由** |
 | 前 48 bit 可解析为生成时刻（误差 < 5s） | 时间戳布局符合规范 |
 
-### 1.4 ⏸ `flutter_timezone` 未引入（推迟到 M1 决定）
+### 1.4 ✅ `flutter_timezone` 未引入（M1-A 已结清）
 
 M0 未引入该依赖，因此 AGP 9 的 KGP 弃用警告**当前不存在**。
-M1 需要读取系统时区时再决定：用 `flutter_timezone`，还是在本项目 `android/` 内写一个
-约 20 行的 MethodChannel（我们自己的 app 模块由 AGP 内置 Kotlin 构建，不受 KGP 问题影响）。
-倾向后者 —— 少一个依赖，且规避已知的未来构建失败。
+
+**M1-A 结论：采用自写 MethodChannel，不引入 `flutter_timezone`**。
+实现见 `android/.../MainActivity.kt`（约 20 行）与
+`lib/platform/timezone/platform_time_zone.dart`。理由：我们自己的 app 模块由
+AGP 内置 Kotlin 构建，不受 KGP 问题影响；少一个依赖，且规避已知的未来构建失败。
+
+接口化（`PlatformTimeZoneSource`）后可注入假实现，测试不依赖真机；
+设备报旧式别名（如 `Asia/Calcutta`）的归一在 `TzTimeZoneResolver.normalizeZoneId()`。
 
 ### 1.5 ✅ Impeller 未被关闭
 
@@ -550,7 +555,7 @@ export 规则封住，`data` 虽能拿到 Repository 但 presentation 引用不�
 |---|---|
 | **B6 可达性绕过（通用解）** | ⚠️ **未解决**。只封了 `application` re-export 这一个入口。剩余入口已枚举完并实测确认：`platform/`、`domain/entities/`、`features/*/domain/`（含跨 feature 变体）共三条。M1 需做闭包分析而非补丁，验收用例见 §2.1g |
 | 断网启动验证（字体已打包） | M0 未引入自定义字体，暂无可验对象；随 M2 设计系统一并验 |
-| `flutter_timezone` 的取舍 | 见 §1.4，M1 需要读系统时区时再定 |
+| ~~`flutter_timezone` 的取舍~~ | ✅ **M1-A 已结清**：自写 MethodChannel，不引入该包。见 §1.4 |
 | 代码生成校验在 CI 中的实效 | 当前无带注解的源文件，该步骤形同空跑；M1 引入 drift/freezed 后才真正生效 |
 | 覆盖率门禁 | 当前仅骨架，设阈值无意义；M1 领域层成型后按[测试策略 §3.3](testing-strategy.md) 设 90%/80% |
 

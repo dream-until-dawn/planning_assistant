@@ -274,4 +274,72 @@ void main() {
       expect(fixed.currentZoneId(), 'Asia/Shanghai');
     });
   });
+
+  group('时区标识归一', () {
+    // 起因：Android 设备实际报的值并不总是规范 IANA 标识。
+    // `TimeZone.getDefault().getID()` 在大量国行/印度设备上返回旧式别名，
+    // tz 数据库里查不到 → getLocation() 抛异常 → 时区初始化整个失败。
+    // 这一组用例把「设备可能报什么」固定下来。
+
+    test('旧式别名映射到规范标识', () {
+      // 依据：IANA tzdata backward 文件中的 Link 行。
+      const cases = <String, String>{
+        'UTC': 'Etc/UTC',
+        'GMT': 'Etc/GMT',
+        'Asia/Calcutta': 'Asia/Kolkata',
+        'Asia/Saigon': 'Asia/Ho_Chi_Minh',
+        'Asia/Rangoon': 'Asia/Yangon',
+        'Europe/Kiev': 'Europe/Kyiv',
+        'America/Buenos_Aires': 'America/Argentina/Buenos_Aires',
+      };
+      cases.forEach((reported, canonical) {
+        expect(
+          TzTimeZoneResolver.normalizeZoneId(reported),
+          canonical,
+          reason: '设备报 $reported 时应归一为 $canonical',
+        );
+      });
+    });
+
+    test('规范标识原样通过', () {
+      for (final id in ['Asia/Shanghai', 'America/New_York', 'Etc/UTC']) {
+        expect(TzTimeZoneResolver.normalizeZoneId(id), id);
+      }
+    });
+
+    test('设备报 Asia/Calcutta 时能正常换算，不抛异常', () {
+      // 评审方点名的用例。印度 UTC+05:30，无 DST。
+      // 2026-06-15 09:00 IST = 03:30Z（手算：09:00 - 5:30）。
+      final r = _resolver.resolve(wall('Asia/Calcutta', 2026, 6, 15, 9, 0));
+      expect(r.instant, DateTime.utc(2026, 6, 15, 3, 30));
+      expect(r.dstAdjusted, isFalse);
+    });
+
+    test('别名与规范名换算结果完全一致', () {
+      for (final (alias, canonical) in [
+        ('Asia/Calcutta', 'Asia/Kolkata'),
+        ('UTC', 'Etc/UTC'),
+        ('Europe/Kiev', 'Europe/Kyiv'),
+      ]) {
+        for (final h in [0, 9, 23]) {
+          expect(
+            _resolver.resolve(wall(alias, 2026, 6, 15, h, 30)).instant,
+            _resolver.resolve(wall(canonical, 2026, 6, 15, h, 30)).instant,
+            reason: '$alias 与 $canonical 应等价',
+          );
+        }
+      }
+    });
+
+    test('真正未知的标识抛 UnknownTimeZoneException，不静默降级', () {
+      // 静默用 UTC 顶上会让用户的所有任务时间悄悄偏移，
+      // 必须让调用方（bootstrap）拿到异常后显式记录降级。
+      expect(
+        () => _resolver.resolve(wall('Mars/Olympus_Mons', 2026, 6, 15, 9, 0)),
+        throwsA(isA<UnknownTimeZoneException>()),
+      );
+      expect(TzTimeZoneResolver.isKnownZoneId('Mars/Olympus_Mons'), isFalse);
+      expect(TzTimeZoneResolver.isKnownZoneId('Asia/Calcutta'), isTrue);
+    });
+  });
 }

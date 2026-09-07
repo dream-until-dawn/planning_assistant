@@ -520,4 +520,87 @@ void main() {
       expect(out.single.end, wall(2026, 9, 8, 1, 0));
     });
   });
+
+  group('UNTIL 的分钟边界不变式（M1-A B1 在领域层的落点）', () {
+    // 由来：`untilForStorage` 内部走 `resolve()`，所以时区层那个
+    // 「二分只收敛到分钟」的缺陷会一路渗到这里 —— `untilForEndDate` 会变成
+    // 形如 23:59:14.062 + 59s 的垃圾值。
+    //
+    // 而 M1-A 的用例**全都没抓到**：R-09d 断言的是
+    // `untilForExpansion(untilForStorage(w)) == w`，而 untilForExpansion 要
+    // 截到分钟，往返把误差整个吸收掉了。**往返恒等测不出精度问题**，
+    // 这条教训比这个 bug 本身值钱。
+    //
+    // 所以这里断绝对值，不断往返。
+    test('untilForEndDate 恒为 :59.000，含 DST 跳变日与跳变在午夜的时区', () {
+      // **时区不是随便挑的**。第一版挑了 New_York / Sydney / Santiago，
+      // 结果把 B1 改回去这条也不红 —— 因为 `untilForEndDate` 取的是 23:59，
+      // 而这些时区的跳变都在凌晨，23:59 永远存在，走不到出问题的那个分支。
+      // 那就是一条「永远绿」的测试。
+      //
+      // 于是扫了整个 tz 数据库（1970–2037 共 8846 次春季跳变），
+      // 问「有没有哪个 (时区, 日期) 让 23:59 不存在」：命中 47 条，
+      // 格陵兰的 America/Nuuk 与 America/Scoresbysund 自 2024 年起
+      // 在 UTC 22:00 跳变，当地 **23:00–23:59 整段消失**。
+      // 用户在那儿设「每天重复，到 3 月 28 日止」就会踩中。
+      const zones = [
+        'America/Nuuk', // 23:59 不存在 —— 唯一能走到空隙分支的
+        'America/Scoresbysund',
+        'Asia/Shanghai',
+        'America/New_York',
+        'Australia/Sydney',
+        'Australia/Lord_Howe',
+        'America/Santiago',
+        'Pacific/Chatham',
+        'Europe/Dublin',
+      ];
+      const dates = [
+        PlanDate(2026, 3, 28), // Nuuk / Scoresbysund 的跳变日
+        PlanDate(2027, 3, 27),
+        PlanDate(2026, 3, 8),
+        PlanDate(2026, 3, 29),
+        PlanDate(2026, 4, 5),
+        PlanDate(2026, 9, 5),
+        PlanDate(2026, 9, 6),
+        PlanDate(2026, 10, 4),
+        PlanDate(2026, 11, 1),
+        PlanDate(2026, 6, 15),
+      ];
+
+      final offenders = <String>[];
+      for (final zone in zones) {
+        for (final date in dates) {
+          final until = _engine.untilForEndDate(date, zone);
+          if (until.second != 59 || until.millisecond != 0) {
+            offenders.add('  $zone $date → $until');
+          }
+        }
+      }
+      expect(
+        offenders,
+        isEmpty,
+        reason:
+            '${offenders.length} 处 UNTIL 不在秒边界上：\n'
+            '${offenders.join('\n')}',
+      );
+    });
+
+    test('withEndDate 产出的规则串里 UNTIL 也是规范的', () {
+      // 串一旦写进库就长期存在，格式歪了以后每次解析都得兼容。
+      final r = _engine.withEndDate(
+        Recurrence.parse('RRULE:FREQ=DAILY'),
+        const PlanDate(2026, 3, 28),
+        'America/Nuuk',
+      );
+      expect(r.canonical, contains('UNTIL='));
+      // RFC 5545 §3.3.5：UTC 形式必须是 yyyyMMddTHHmmssZ，无毫秒。
+      expect(
+        RegExp(r'UNTIL=\d{8}T\d{6}Z').hasMatch(r.canonical),
+        isTrue,
+        reason: '实际串：${r.canonical}',
+      );
+      expect(r.untilUtc!.second, 59);
+      expect(r.untilUtc!.millisecond, 0);
+    });
+  });
 }
