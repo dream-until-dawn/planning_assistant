@@ -14,6 +14,7 @@ import '../../../../design/theme/app_theme.dart';
 import '../../../../design/tokens/dimensions.dart';
 import '../../../../domain/entities/task.dart';
 import '../../../../domain/value_objects/task_status.dart';
+import '../application/task_list_actions.dart';
 import '../application/task_list_providers.dart';
 
 class TaskListPage extends ConsumerWidget {
@@ -51,8 +52,22 @@ class TaskListPage extends ConsumerWidget {
               itemCount: list.length,
               separatorBuilder: (_, _) =>
                   const SizedBox(height: Spacing.cardGap),
-              itemBuilder: (context, i) =>
-                  TaskCard(data: _toCardData(context, list[i])),
+              itemBuilder: (context, i) {
+                final task = list[i];
+                final isDone = task.status == TaskStatus.done;
+                return TaskCard(
+                  data: _toCardData(context, task),
+                  // 就地完成（view-specs §0.3）。
+                  //
+                  // 完成后**不立即消失**（design-system §8.1）——
+                  // 卡片留在原位只是划掉，给撤销留时间。
+                  // 「完成即消失」在误触时最伤：那条任务去哪了、
+                  // 怎么找回来，用户完全没有线索。
+                  onToggleDone: () => ref
+                      .read(toggleTaskDoneProvider)
+                      .call(taskId: task.id, isDone: isDone),
+                );
+              },
             ),
     );
   }

@@ -131,4 +131,38 @@ void main() {
 
     await disposeTree(tester);
   });
+
+  testWidgets('勾完成：就地划掉，不立即消失（§8.1）', (tester) async {
+    final harness = await _pumpApp(tester);
+
+    await tester.tap(find.byKey(AppShell.fabKey));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '交水电费');
+    await tester.pump();
+    await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+    await tester.pumpAndSettle();
+
+    // 勾上
+    await tester.tap(find.byKey(TaskCard.doneButtonKey));
+    await tester.pumpAndSettle();
+
+    final done = await harness.db.select(harness.db.tasks).get();
+    expect(done.single.status, 'done', reason: '状态没落库');
+
+    // **卡片还在**。完成即消失在误触时最伤：那条任务去哪了、
+    // 怎么找回来，用户完全没有线索。
+    expect(find.byType(TaskCard), findsOneWidget);
+    expect(find.text('交水电费'), findsOneWidget);
+    expect(find.byType(EmptyState), findsNothing);
+
+    // 对照组：再点一下要能取消完成。
+    // 少了这条，一个「只会置 done、不会撤回」的实现也能让上面全绿。
+    await tester.tap(find.byKey(TaskCard.doneButtonKey));
+    await tester.pumpAndSettle();
+
+    final undone = await harness.db.select(harness.db.tasks).get();
+    expect(undone.single.status, 'pending', reason: '取消完成应当回到 pending');
+
+    await disposeTree(tester);
+  });
 }
