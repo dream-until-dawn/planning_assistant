@@ -22,6 +22,7 @@ final class AppSemanticColors extends ThemeExtension<AppSemanticColors> {
     required this.brandGraphic,
     required this.brandText,
     required this.onBrand,
+    required this.disabledText,
     required this.canvas,
     required this.card,
     required this.sunken,
@@ -49,6 +50,10 @@ final class AppSemanticColors extends ThemeExtension<AppSemanticColors> {
   final Color brandText;
 
   final Color onBrand;
+
+  /// 禁用态文字。**唯一豁免对比度门槛的文字色**（§2.3、WCAG 1.4.3
+  /// 对失效控件不作要求），所以只许出现在禁用态，别处一律不用。
+  final Color disabledText;
   final Color canvas;
   final Color card;
   final Color sunken;
@@ -74,6 +79,7 @@ final class AppSemanticColors extends ThemeExtension<AppSemanticColors> {
     Color? brandGraphic,
     Color? brandText,
     Color? onBrand,
+    Color? disabledText,
     Color? canvas,
     Color? card,
     Color? sunken,
@@ -94,6 +100,7 @@ final class AppSemanticColors extends ThemeExtension<AppSemanticColors> {
     brandGraphic: brandGraphic ?? this.brandGraphic,
     brandText: brandText ?? this.brandText,
     onBrand: onBrand ?? this.onBrand,
+    disabledText: disabledText ?? this.disabledText,
     canvas: canvas ?? this.canvas,
     card: card ?? this.card,
     sunken: sunken ?? this.sunken,
@@ -120,6 +127,7 @@ final class AppSemanticColors extends ThemeExtension<AppSemanticColors> {
       brandGraphic: c(brandGraphic, other.brandGraphic),
       brandText: c(brandText, other.brandText),
       onBrand: c(onBrand, other.onBrand),
+      disabledText: c(disabledText, other.disabledText),
       canvas: c(canvas, other.canvas),
       card: c(card, other.card),
       sunken: c(sunken, other.sunken),
@@ -140,10 +148,39 @@ final class AppSemanticColors extends ThemeExtension<AppSemanticColors> {
   }
 }
 
-/// 从 context 取语义色。
+/// 圆角档位（FR-CFG-02）。**组件必须从这里取圆角，不许直接写 [Radii]。**
+///
+/// 这条不是洁癖。圆角档位是用户可配的三档，而 `AppTheme` 起初只把它
+/// 装进了 `cardTheme` —— 任务卡片自己画 `DecoratedBox`，压根不读
+/// `cardTheme`，于是那个配置项对最重要的组件**完全无效**。
+/// 而当时的测试查的是 `cardTheme.shape`：值确实被装进主题了，
+/// 没有任何一条验过它被画了出来。
+@immutable
+final class AppShape extends ThemeExtension<AppShape> {
+  const AppShape({required this.corners});
+
+  final CornerStyle corners;
+
+  /// 把档位倍率应用到某个基准圆角上。
+  double radius(double base) => corners.apply(base);
+
+  @override
+  AppShape copyWith({CornerStyle? corners}) =>
+      AppShape(corners: corners ?? this.corners);
+
+  /// 档位是**离散**的，中间态没有意义 —— 半档圆角不是任何一个设置值。
+  /// 所以取最近的一端，不插值。
+  @override
+  AppShape lerp(ThemeExtension<AppShape>? other, double t) =>
+      other is! AppShape ? this : (t < 0.5 ? this : other);
+}
+
+/// 从 context 取语义色与形状。
 extension AppThemeContext on BuildContext {
   AppSemanticColors get appColors =>
       Theme.of(this).extension<AppSemanticColors>()!;
+
+  AppShape get appShape => Theme.of(this).extension<AppShape>()!;
 }
 
 abstract final class AppTheme {
@@ -165,6 +202,7 @@ abstract final class AppTheme {
             brandGraphic: BrandColors.primaryGraphic.toColor(),
             brandText: BrandColors.primaryText.toColor(),
             onBrand: TextColors.onBrand.toColor(),
+            disabledText: TextColors.disabled.toColor(),
             canvas: SurfaceColors.canvas.toColor(),
             card: SurfaceColors.card.toColor(),
             sunken: SurfaceColors.sunken.toColor(),
@@ -188,6 +226,7 @@ abstract final class AppTheme {
             brandGraphic: BrandColors.primaryDark.toColor(),
             brandText: BrandColors.primaryDark.toColor(),
             onBrand: TextColors.onBrand.toColor(),
+            disabledText: TextColors.disabledDark.toColor(),
             canvas: SurfaceColors.canvasDark.toColor(),
             card: SurfaceColors.cardDark.toColor(),
             sunken: SurfaceColors.sunkenDark.toColor(),
@@ -241,7 +280,10 @@ abstract final class AppTheme {
           borderRadius: BorderRadius.circular(corners.apply(Radii.lg)),
         ),
       ),
-      extensions: [semantic],
+      extensions: [
+        semantic,
+        AppShape(corners: corners),
+      ],
     );
   }
 

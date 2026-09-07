@@ -327,6 +327,7 @@ Map<String, Object?> _fieldsOf(AppSemanticColors c) => {
   'brandGraphic': c.brandGraphic,
   'brandText': c.brandText,
   'onBrand': c.onBrand,
+  'disabledText': c.disabledText,
   'canvas': c.canvas,
   'card': c.card,
   'sunken': c.sunken,

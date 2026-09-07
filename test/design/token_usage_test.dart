@@ -20,6 +20,8 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:planning_assistant/design/components/app_button.dart';
+import 'package:planning_assistant/design/components/app_chip.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
 import 'package:planning_assistant/design/tokens/colors.dart';
@@ -237,6 +239,13 @@ void main() {
           stageProgress: (2, 5),
         ),
       ),
+      for (final v in AppButtonVariant.values)
+        '按钮（${v.name}）': AppButton(label: '保存', variant: v, onPressed: () {}),
+      for (final v in AppButtonVariant.values)
+        '按钮（${v.name}·禁用）': AppButton(label: '保存', variant: v),
+      '分类 Chip': const CategoryChip(name: '工作', color: Color(0xFFA8C8F0)),
+      'Chip（选中）': const SelectableChip(label: '今天', selected: true),
+      'Chip（未选中）': const SelectableChip(label: '今天', selected: false),
     };
 
     for (final brightness in Brightness.values) {

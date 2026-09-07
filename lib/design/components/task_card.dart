@@ -71,6 +71,8 @@ class TaskCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.appColors;
     final text = Theme.of(context).textTheme;
+    // 圆角走档位，不直接写 Radii —— 用户可配的三档要真的生效。
+    final radius = context.appShape.radius(Radii.lg);
 
     // 逾期时左色条换成 overdue.fill，时间文字用 overdue.text ——
     // **不是同一个色**（§2.4）。不加感叹号、不加红底（低压力原则）。
@@ -84,7 +86,7 @@ class TaskCard extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: colors.card,
-          borderRadius: BorderRadius.circular(Radii.lg),
+          borderRadius: BorderRadius.circular(radius),
           boxShadow: colors.cardShadow,
           // 左侧分类色条用**左边框**实现，不是一个撑满高度的子组件。
           //
