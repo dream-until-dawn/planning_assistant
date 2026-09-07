@@ -74,3 +74,17 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   generate: true
+
+  # 字体**随包**，不运行时下载（design-system §3.1）——
+  # google_fonts 默认联网取字体，与 NFR-PRIV-01（V1 不联网、不采集）冲突，
+  # 且首启会字体闪烁。所以这里直接打包 asset，也不引 google_fonts 依赖。
+  #
+  # 只打包拉丁与数字用的圆体。中文走系统字体（§3.2）——
+  # 圆体中文字库 5-10MB，V1 不打包，「可爱」由圆角/间距/配色承载。
+  #
+  # 这是**可变字体**（wght 轴 300-700），一个文件覆盖 Light-Bold，
+  # 比打包五个静态字重小得多。选重量用 TextStyle.fontVariations。
+  fonts:
+    - family: Quicksand
+      fonts:
+        - asset: assets/fonts/Quicksand[wght].ttf

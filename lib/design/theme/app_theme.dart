@@ -287,47 +287,73 @@ abstract final class AppTheme {
     );
   }
 
+  /// 打包进 APK 的拉丁圆体（§3.1、§3.2）。
+  ///
+  /// **中文不在这个字体里**，Skia 会自动回落到系统中文字体 ——
+  /// 那是 §3.2 的决定（圆体中文字库 5-10MB，V1 不打包），不是遗漏。
+  /// 于是数字与时间刻度是圆体，中文是系统黑体，这正是想要的分工。
+  static const String fontFamily = 'Quicksand';
+
+  /// 可变字体的字重要走 `fontVariations` 的 wght 轴。
+  ///
+  /// 光给 `fontWeight` 在部分引擎上对可变字体不生效 —— 会一律按默认
+  /// 字重渲染，而「标题 600 / 正文 400」的层次就没了，且不报错。
+  /// 两个都给：`fontVariations` 驱动可变轴，`fontWeight` 供回落字体用。
+  static TextStyle _style({
+    required double size,
+    required double height,
+    required FontWeight weight,
+    required Color color,
+  }) => TextStyle(
+    fontFamily: fontFamily,
+    fontSize: size,
+    height: height,
+    fontWeight: weight,
+    fontVariations: [FontVariation('wght', weight.value.toDouble())],
+    color: color,
+  );
+
   static TextTheme _textTheme(Color primary, Color secondary) => TextTheme(
-    displaySmall: TextStyle(
-      fontSize: TypeScale.displaySize,
+    displaySmall: _style(
+      size: TypeScale.displaySize,
       height: TypeScale.displayHeight,
-      fontWeight: TypeScale.displayWeight,
+      weight: TypeScale.displayWeight,
       color: primary,
     ),
-    titleLarge: TextStyle(
-      fontSize: TypeScale.titleLgSize,
+    titleLarge: _style(
+      size: TypeScale.titleLgSize,
       height: TypeScale.titleLgHeight,
-      fontWeight: TypeScale.titleLgWeight,
+      weight: TypeScale.titleLgWeight,
       color: primary,
     ),
-    titleMedium: TextStyle(
-      fontSize: TypeScale.titleMdSize,
+    titleMedium: _style(
+      size: TypeScale.titleMdSize,
       height: TypeScale.titleMdHeight,
-      fontWeight: TypeScale.titleMdWeight,
+      weight: TypeScale.titleMdWeight,
       color: primary,
     ),
-    bodyLarge: TextStyle(
-      fontSize: TypeScale.bodyLgSize,
+    bodyLarge: _style(
+      size: TypeScale.bodyLgSize,
       height: TypeScale.bodyLgHeight,
-      fontWeight: TypeScale.bodyLgWeight,
+      weight: TypeScale.bodyLgWeight,
       color: primary,
     ),
-    bodyMedium: TextStyle(
-      fontSize: TypeScale.bodyMdSize,
+    bodyMedium: _style(
+      size: TypeScale.bodyMdSize,
       height: TypeScale.bodyMdHeight,
-      fontWeight: TypeScale.bodyMdWeight,
+      weight: TypeScale.bodyMdWeight,
       color: primary,
     ),
-    labelLarge: TextStyle(
-      fontSize: TypeScale.labelSize,
+    labelLarge: _style(
+      size: TypeScale.labelSize,
       height: TypeScale.labelHeight,
-      fontWeight: TypeScale.labelWeight,
+      weight: TypeScale.labelWeight,
       color: primary,
     ),
-    bodySmall: TextStyle(
-      fontSize: TypeScale.captionSize,
+    bodySmall: _style(
+      size: TypeScale.captionSize,
       height: TypeScale.captionHeight,
-      fontWeight: TypeScale.captionWeight,
+      weight: TypeScale.captionWeight,
       color: secondary,
     ),
   );
