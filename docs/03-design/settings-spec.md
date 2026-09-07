@@ -64,7 +64,7 @@ Stream<T> watchSetting<T>(SettingSpec<T> spec);
 | `theme.mode` | enum | `system` | ✅ | 跟随系统 / 亮 / 暗 |
 | `theme.primaryColor` | color | `#7FD1C1` | ✅ | 主色，选择后自动校验对比度 |
 | `theme.cornerStyle` | enum | `standard` | ✅ | soft / standard / sharp |
-| `theme.fontScale` | double | `1.0` | ✅ | 0.85–1.4，与系统缩放叠加 |
+| `theme.fontScale` | double | `1.0` | ✅ | 0.85–1.4，与系统缩放**相乘**。最坏有效缩放 1.4×2.0=**2.8**，golden 必须覆盖，见[设计系统 §3.1](design-system.md#31-缩放是两层相乘golden-必须覆盖到实际最坏值) |
 | `theme.reduceMotion` | bool | `false` | ✅ | 同时响应系统设置，取「或」 |
 | `theme.showCompletedStrikethrough` | bool | `true` | ✅ | 已完成任务是否加删除线 |
 | `theme.cardDensity` | enum | `comfortable` | ✅ | compact / comfortable |
