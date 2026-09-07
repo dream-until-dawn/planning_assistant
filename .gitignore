@@ -107,3 +107,6 @@ app.*.map.json
 /_probe*/
 /probe_*/
 /scratch/
+
+# golden 失败时的对比图，是临时产物
+test/**/failures/
