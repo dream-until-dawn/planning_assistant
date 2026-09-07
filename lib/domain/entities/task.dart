@@ -7,6 +7,7 @@ library;
 
 import 'package:meta/meta.dart';
 
+import '../../core/patch/unset.dart';
 import '../../core/time/local_wall_time.dart';
 import '../../core/time/minute_of_day.dart';
 import '../../core/time/plan_date.dart';
@@ -178,76 +179,58 @@ final class Task {
     }
   }
 
-  /// `null` 与「不改」在 [copyWith] 里无法区分，因此可空字段用哨兵。
-  ///
-  /// 不用哨兵的话，「清空备注」和「不动备注」会写成同一个调用 ——
-  /// 这类 copyWith 缺陷在测试里极难看出来，因为两者中的一个总是碰巧对的。
-  static const Object _unset = Object();
-
+  /// 可空字段用 [unset] 哨兵区分「不改」与「显式清空」，理由见该文件。
   Task copyWith({
     String? title,
-    Object? note = _unset,
+    Object? note = unset,
     TaskKind? kind,
-    Object? categoryId = _unset,
+    Object? categoryId = unset,
     TaskPriority? priority,
     TaskStatus? status,
-    Object? statusBeforeArchive = _unset,
+    Object? statusBeforeArchive = unset,
     bool? isAllDay,
-    Object? planDate = _unset,
-    Object? startMinute = _unset,
-    Object? endDate = _unset,
-    Object? endMinute = _unset,
+    Object? planDate = unset,
+    Object? startMinute = unset,
+    Object? endDate = unset,
+    Object? endMinute = unset,
     String? timeZoneId,
-    Object? recurrence = _unset,
+    Object? recurrence = unset,
     List<String>? recurrenceExDates,
-    Object? splitFromTaskId = _unset,
-    Object? colorArgb = _unset,
-    Object? icon = _unset,
+    Object? splitFromTaskId = unset,
+    Object? colorArgb = unset,
+    Object? icon = unset,
     double? sortOrder,
-    Object? completedAt = _unset,
-    Object? archivedAt = _unset,
-    Object? deletedAt = _unset,
+    Object? completedAt = unset,
+    Object? archivedAt = unset,
+    Object? deletedAt = unset,
   }) {
     return Task(
       id: id,
       title: title ?? this.title,
-      note: note == _unset ? this.note : note as String?,
+      note: patch<String>(note, this.note),
       kind: kind ?? this.kind,
-      categoryId: categoryId == _unset
-          ? this.categoryId
-          : categoryId as String?,
+      categoryId: patch<String>(categoryId, this.categoryId),
       priority: priority ?? this.priority,
       status: status ?? this.status,
-      statusBeforeArchive: statusBeforeArchive == _unset
-          ? this.statusBeforeArchive
-          : statusBeforeArchive as TaskStatus?,
+      statusBeforeArchive: patch<TaskStatus>(
+        statusBeforeArchive,
+        this.statusBeforeArchive,
+      ),
       isAllDay: isAllDay ?? this.isAllDay,
-      planDate: planDate == _unset ? this.planDate : planDate as PlanDate?,
-      startMinute: startMinute == _unset
-          ? this.startMinute
-          : startMinute as MinuteOfDay?,
-      endDate: endDate == _unset ? this.endDate : endDate as PlanDate?,
-      endMinute: endMinute == _unset
-          ? this.endMinute
-          : endMinute as MinuteOfDay?,
+      planDate: patch<PlanDate>(planDate, this.planDate),
+      startMinute: patch<MinuteOfDay>(startMinute, this.startMinute),
+      endDate: patch<PlanDate>(endDate, this.endDate),
+      endMinute: patch<MinuteOfDay>(endMinute, this.endMinute),
       timeZoneId: timeZoneId ?? this.timeZoneId,
-      recurrence: recurrence == _unset
-          ? this.recurrence
-          : recurrence as Recurrence?,
+      recurrence: patch<Recurrence>(recurrence, this.recurrence),
       recurrenceExDates: recurrenceExDates ?? this.recurrenceExDates,
-      splitFromTaskId: splitFromTaskId == _unset
-          ? this.splitFromTaskId
-          : splitFromTaskId as String?,
-      colorArgb: colorArgb == _unset ? this.colorArgb : colorArgb as int?,
-      icon: icon == _unset ? this.icon : icon as String?,
+      splitFromTaskId: patch<String>(splitFromTaskId, this.splitFromTaskId),
+      colorArgb: patch<int>(colorArgb, this.colorArgb),
+      icon: patch<String>(icon, this.icon),
       sortOrder: sortOrder ?? this.sortOrder,
-      completedAt: completedAt == _unset
-          ? this.completedAt
-          : completedAt as DateTime?,
-      archivedAt: archivedAt == _unset
-          ? this.archivedAt
-          : archivedAt as DateTime?,
-      deletedAt: deletedAt == _unset ? this.deletedAt : deletedAt as DateTime?,
+      completedAt: patch<DateTime>(completedAt, this.completedAt),
+      archivedAt: patch<DateTime>(archivedAt, this.archivedAt),
+      deletedAt: patch<DateTime>(deletedAt, this.deletedAt),
     );
   }
 

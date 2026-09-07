@@ -6,6 +6,7 @@ library;
 
 import 'package:meta/meta.dart';
 
+import '../../core/patch/unset.dart';
 import '../value_objects/task_status.dart';
 
 @immutable
@@ -51,35 +52,30 @@ final class Stage {
     return start + (durationMinutes ?? 0);
   }
 
-  static const Object _unset = Object();
-
   Stage copyWith({
     String? title,
     int? orderIndex,
-    Object? startOffsetMinutes = _unset,
-    Object? durationMinutes = _unset,
-    Object? colorArgb = _unset,
+    Object? startOffsetMinutes = unset,
+    Object? durationMinutes = unset,
+    Object? colorArgb = unset,
     TaskStatus? status,
-    Object? completedAt = _unset,
-    Object? deletedAt = _unset,
+    Object? completedAt = unset,
+    Object? deletedAt = unset,
   }) {
     return Stage(
       id: id,
       taskId: taskId,
       title: title ?? this.title,
       orderIndex: orderIndex ?? this.orderIndex,
-      startOffsetMinutes: startOffsetMinutes == _unset
-          ? this.startOffsetMinutes
-          : startOffsetMinutes as int?,
-      durationMinutes: durationMinutes == _unset
-          ? this.durationMinutes
-          : durationMinutes as int?,
-      colorArgb: colorArgb == _unset ? this.colorArgb : colorArgb as int?,
+      startOffsetMinutes: patch<int>(
+        startOffsetMinutes,
+        this.startOffsetMinutes,
+      ),
+      durationMinutes: patch<int>(durationMinutes, this.durationMinutes),
+      colorArgb: patch<int>(colorArgb, this.colorArgb),
       status: status ?? this.status,
-      completedAt: completedAt == _unset
-          ? this.completedAt
-          : completedAt as DateTime?,
-      deletedAt: deletedAt == _unset ? this.deletedAt : deletedAt as DateTime?,
+      completedAt: patch<DateTime>(completedAt, this.completedAt),
+      deletedAt: patch<DateTime>(deletedAt, this.deletedAt),
     );
   }
 
