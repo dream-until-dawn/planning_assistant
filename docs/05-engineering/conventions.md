@@ -65,6 +65,21 @@ dart run build_runner build --delete-conflicting-outputs
   且 review 时看不到生成结果的变化。入库的代价是偶尔的合并冲突，用「冲突时重新生成」解决即可。
 - 生成产物**不参与 review**，`.gitattributes` 标记为 `linguist-generated`。
 - 改了带注解的文件后忘记重新生成，会被 CI 抓到（CI 会跑生成并检查工作区是否干净）。
+  **已实测有效**（M1-C）：把「改了注解但没重新生成」的状态入索引后，CI 跑完生成 `git diff` 有 75 行差异并 `exit 1`。见 [m0-record](m0-record.md)。
+
+### 4.1 改了 Drift 表定义时，还要更新 schema 快照
+
+`build_runner` **不会**更新 `drift_schemas/`。漏了这一步不影响编译、不影响功能测试，
+只会让 v1 基线与真实表定义脱节 —— 而它要到写 v2 迁移时才被需要，那时已无法确定线上的真实形状。
+
+```bash
+dart run drift_dev schema dump lib/data/database/app_database.dart drift_schemas/
+dart run drift_dev schema generate drift_schemas/ test/data/generated_migrations/
+```
+
+漏跑会被 `test/data/migration_test.dart` 的「当前表定义与 v1 快照逐列一致」抓到。
+**注意该用例不能用 drift 文档里的 `startAt(n)` + `migrateAndValidate(db, n)` 写法** ——
+那是拿快照跟自己比，当前表定义根本没参与，永远绿。原委见该文件的头部注释。
 
 ## 5. 文档与代码同步（CI 强制）
 
