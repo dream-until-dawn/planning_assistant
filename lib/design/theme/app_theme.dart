@@ -20,6 +20,7 @@ final class AppSemanticColors extends ThemeExtension<AppSemanticColors> {
   const AppSemanticColors({
     required this.brandFill,
     required this.brandGraphic,
+    required this.brandText,
     required this.onBrand,
     required this.canvas,
     required this.card,
@@ -43,6 +44,9 @@ final class AppSemanticColors extends ThemeExtension<AppSemanticColors> {
 
   /// 图形：进度条、选中指示。与表面 ≥3:1。**其上不得放文字。**
   final Color brandGraphic;
+
+  /// 品牌色**作文字**。亮色下不等于 [brandGraphic]（那个只到图形级）。
+  final Color brandText;
 
   final Color onBrand;
   final Color canvas;
@@ -68,6 +72,7 @@ final class AppSemanticColors extends ThemeExtension<AppSemanticColors> {
   AppSemanticColors copyWith({
     Color? brandFill,
     Color? brandGraphic,
+    Color? brandText,
     Color? onBrand,
     Color? canvas,
     Color? card,
@@ -87,6 +92,7 @@ final class AppSemanticColors extends ThemeExtension<AppSemanticColors> {
   }) => AppSemanticColors(
     brandFill: brandFill ?? this.brandFill,
     brandGraphic: brandGraphic ?? this.brandGraphic,
+    brandText: brandText ?? this.brandText,
     onBrand: onBrand ?? this.onBrand,
     canvas: canvas ?? this.canvas,
     card: card ?? this.card,
@@ -112,6 +118,7 @@ final class AppSemanticColors extends ThemeExtension<AppSemanticColors> {
     return AppSemanticColors(
       brandFill: c(brandFill, other.brandFill),
       brandGraphic: c(brandGraphic, other.brandGraphic),
+      brandText: c(brandText, other.brandText),
       onBrand: c(onBrand, other.onBrand),
       canvas: c(canvas, other.canvas),
       card: c(card, other.card),
@@ -156,6 +163,7 @@ abstract final class AppTheme {
         ? AppSemanticColors(
             brandFill: BrandColors.primaryFill.toColor(),
             brandGraphic: BrandColors.primaryGraphic.toColor(),
+            brandText: BrandColors.primaryText.toColor(),
             onBrand: TextColors.onBrand.toColor(),
             canvas: SurfaceColors.canvas.toColor(),
             card: SurfaceColors.card.toColor(),
@@ -178,6 +186,7 @@ abstract final class AppTheme {
             // 本就 ≥3:1（6.97 / 6.17 / 7.46），不需要第二个 token。
             brandFill: BrandColors.primaryDark.toColor(),
             brandGraphic: BrandColors.primaryDark.toColor(),
+            brandText: BrandColors.primaryDark.toColor(),
             onBrand: TextColors.onBrand.toColor(),
             canvas: SurfaceColors.canvasDark.toColor(),
             card: SurfaceColors.cardDark.toColor(),

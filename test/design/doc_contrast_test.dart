@@ -114,29 +114,55 @@ void main() {
     ///
     /// 手写映射，并在下面用「代码里的每个 token 都必须出现在这里」
     /// 兜住 —— 否则新增 token 时这张表会悄悄落后。
-    final expected = <String, int>{
-      'brand.primary.fill': BrandColors.primaryFill,
-      'brand.primary.graphic': BrandColors.primaryGraphic,
-      'brand.secondary': BrandColors.secondaryFill,
-      'brand.tertiary': BrandColors.tertiaryFill,
-      'surface.canvas': SurfaceColors.canvas,
-      'surface.card': SurfaceColors.card,
-      'surface.sunken': SurfaceColors.sunken,
-      'border.subtle': SurfaceColors.borderSubtle,
-      'text.primary': TextColors.primary,
-      'text.secondary': TextColors.secondary,
-      'text.disabled': TextColors.disabled,
-      'text.onBrand': TextColors.onBrand,
-      'semantic.done': SemanticColors.doneFill,
-      'semantic.soon': SemanticColors.soonFill,
-      'semantic.overdue': SemanticColors.overdueFill,
-      'semantic.info': SemanticColors.infoFill,
-      'semantic.danger': SemanticColors.dangerFill,
+    final expected = <String, ({String constant, int value})>{
+      'brand.primary.fill': (
+        constant: 'primaryFill',
+        value: BrandColors.primaryFill,
+      ),
+      'brand.primary.graphic': (
+        constant: 'primaryGraphic',
+        value: BrandColors.primaryGraphic,
+      ),
+      'brand.primary.text': (
+        constant: 'primaryText',
+        value: BrandColors.primaryText,
+      ),
+      'brand.secondary': (
+        constant: 'secondaryFill',
+        value: BrandColors.secondaryFill,
+      ),
+      'brand.tertiary': (
+        constant: 'tertiaryFill',
+        value: BrandColors.tertiaryFill,
+      ),
+      'surface.canvas': (constant: 'canvas', value: SurfaceColors.canvas),
+      'surface.card': (constant: 'card', value: SurfaceColors.card),
+      'surface.sunken': (constant: 'sunken', value: SurfaceColors.sunken),
+      'border.subtle': (
+        constant: 'borderSubtle',
+        value: SurfaceColors.borderSubtle,
+      ),
+      'text.primary': (constant: 'primary', value: TextColors.primary),
+      'text.secondary': (constant: 'secondary', value: TextColors.secondary),
+      'text.disabled': (constant: 'disabled', value: TextColors.disabled),
+      'text.onBrand': (constant: 'onBrand', value: TextColors.onBrand),
+      'semantic.done': (constant: 'doneFill', value: SemanticColors.doneFill),
+      'semantic.soon': (constant: 'soonFill', value: SemanticColors.soonFill),
+      'semantic.overdue': (
+        constant: 'overdueFill',
+        value: SemanticColors.overdueFill,
+      ),
+      'semantic.info': (constant: 'infoFill', value: SemanticColors.infoFill),
+      'semantic.danger': (
+        constant: 'dangerFill',
+        value: SemanticColors.dangerFill,
+      ),
     };
 
     test('文档表格里每个 token 行的亮色值与代码常量相同', () {
       final failures = <String>[];
-      expected.forEach((name, code) {
+      expected.forEach((name, entry) {
+        final code = entry.value;
         // 匹配形如：| `token.name` | `#RRGGBB` ...
         final row = RegExp(
           r'\|\s*`'
@@ -176,27 +202,54 @@ void main() {
       expect(missing, isEmpty, reason: '文档里找不到这些 token 的行：$missing');
     });
 
+    /// 在文档里与 `.fill` **同行**、不单独占 token 行的常量。
+    ///
+    /// 逐个写出来，不用 `endsWith('Text')` 这类模式 —— 见下面那条测试的说明。
+    const sharesRowWithFill = <String>{
+      'doneText',
+      'soonText',
+      'overdueText',
+      'infoText',
+      'dangerText',
+    };
+
     test('映射表覆盖了 colors.dart 里的全部色值常量', () {
-      // 手写映射会落后于代码。扫源码统计常量个数，对不上就红。
+      // 手写映射会落后于代码。扫源码，**按名字**比对，不按个数。
+      //
+      // 初版是按个数比的：
+      //
+      //     covered = expected.length + 名字以 Text 结尾的常量数
+      //
+      // 新增 BrandColors.primaryText 时它没红 —— 因为这个名字也以 Text
+      // 结尾，于是等号两边同时加一，抵消了。计数式守卫验的是**基数**，
+      // 而要验的是**同一性**：到底是哪些常量被记录了。两个错互相抵消
+      // 就整不出红来。而且那个豁免谓词本身也是错的：它想说的是
+      // 「语义色的 .text 与 .fill 同行」，写出来却是「任何叫 …Text 的」，
+      // 而 primaryText 是品牌色，在文档里要单独占一行。
       final source = File('lib/design/tokens/colors.dart').readAsStringSync();
       final lightConstants =
           RegExp(r'static const int (\w+) = 0x[0-9A-Fa-f]{6};')
               .allMatches(source)
               .map((m) => m.group(1)!)
-              .where((n) => !n.endsWith('Dark')) // 暗色值文档里单独成列，不在本表
+              .where((n) => !n.endsWith('Dark')) // 暗色值文档里单独成列
               .toSet();
-      // 语义色的 .text 系列在文档里与 .fill 同行，不单独占 token 行。
-      final covered =
-          expected.length +
-          lightConstants.where((n) => n.endsWith('Text')).length;
+
+      final mapped = expected.values.map((e) => e.constant).toSet();
+      final unaccounted = lightConstants
+          .difference(mapped)
+          .difference(sharesRowWithFill);
+
       expect(
-        covered,
-        lightConstants.length,
+        unaccounted,
+        isEmpty,
         reason:
-            '映射表 ${expected.length} 项，'
-            '代码里有 ${lightConstants.length} 个亮色常量，对不上：'
-            '\n$lightConstants',
+            'colors.dart 里这些常量既不在映射表里、也不在「与 fill 同行」'
+            '豁免名单里，等于没人验它有没有进文档：$unaccounted',
       );
+
+      // 反向：映射表或豁免名单里写了代码里已经不存在的名字。
+      final stale = mapped.union(sharesRowWithFill).difference(lightConstants);
+      expect(stale, isEmpty, reason: '映射表/豁免名单里有代码里已不存在的常量：$stale');
     });
   });
 

@@ -195,7 +195,6 @@ class _Body extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final colors = context.appColors;
 
     final subtitle = <String>[
       data.categoryName,
@@ -215,7 +214,16 @@ class _Body extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           style: text.bodyLarge?.copyWith(
             decoration: data.isDone ? TextDecoration.lineThrough : null,
-            color: data.isDone ? colors.borderSubtle : null,
+            // 已完成用 **text.secondary**，不是 borderSubtle。
+            //
+            // 初版写的是 borderSubtle（#EDE7DD）—— 那是发丝分隔线的颜色，
+            // 拿来当文字实测 1.23:1，等于看不见。断言型 32 条、golden 6 张
+            // 全绿，我还看着图确认过，把「淡到读不出」当成了「完成态变淡」。
+            // 是用法级守卫（token_usage_test）第一次跑就抓出来的。
+            //
+            // 完成态的信号由**划线 + 填充的勾**承载，不靠把字调没：
+            // 已完成的任务标题仍然要读得出来 —— 撤销时得知道撤的是哪条。
+            color: data.isDone ? text.bodySmall?.color : null,
           ),
         ),
         const SizedBox(height: Spacing.xs),

@@ -320,10 +320,12 @@ void main() {
 ///
 /// **手写这张表是有意的**：它与 `AppSemanticColors` 的字段列表必须一致，
 /// 加了字段却忘了加进来，`copyWith 不传参数时逐字段等于原值` 那条
-/// 就覆盖不到新字段 —— 于是下面这条计数断言把它钉住。
+/// 就覆盖不到新字段 —— 于是下面那条断言拿它与源码里的字段**按名字**比集合。
+/// 按名字不按个数：加一个删一个，个数不变，集合会变。
 Map<String, Object?> _fieldsOf(AppSemanticColors c) => {
   'brandFill': c.brandFill,
   'brandGraphic': c.brandGraphic,
+  'brandText': c.brandText,
   'onBrand': c.onBrand,
   'canvas': c.canvas,
   'card': c.card,

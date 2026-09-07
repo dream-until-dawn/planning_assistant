@@ -40,9 +40,28 @@ abstract final class BrandColors {
   /// 与 [primaryFill] 同色相同饱和（H 168.4° / S 0.471），只压亮度。
   /// 对三个亮表面实测 3.35 / 3.46 / 3.08，全部 ≥3.0 ✅。
   ///
-  /// **其上不得放文字**：`onBrand` 在其上只有 3.40、白字 3.46，
-  /// 都不到正文级。由 `test/design/token_usage_test.dart` 的 lint 守着。
+  /// **其上不得放文字**，**它自己也不作文字色**：`onBrand` 在其上只有
+  /// 3.40、白字 3.46，而它压在亮表面上是 3.35 / 3.46 / 3.08 ——
+  /// 图形够用，正文都不够。作文字请用 [primaryText]。
+  ///
+  /// 由 `test/design/token_usage_test.dart` 守着：那个守卫不扫源码文本，
+  /// 而是渲染组件后遍历渲染树，把每段文字与它实际压着的背景配对算对比度。
   static const int primaryGraphic = 0x379986;
+
+  /// 文字：品牌色**作文字**时用这个，不是 [primaryGraphic]。
+  ///
+  /// [primaryGraphic] 对三个亮表面只有 3.35 / 3.46 / 3.08 —— 图形够用，
+  /// 正文不够。所以品牌色也要按 §2.4 那条规矩拆成填充 / 图形 / 文字三级，
+  /// 语义色早就拆了，品牌色这里补齐。
+  ///
+  /// 值是**派生的不是拍的**：同色相同饱和下，用 `deriveGraphicColor`
+  /// 以 ratio 4.5 对最暗亮表面（sunken）二分求解，取仍达标的**最大亮度**
+  /// —— 也就是在合规前提下最接近品牌色的那一个。
+  /// 实测 5.12 / 4.95 / 4.55 ✅。
+  ///
+  /// 暗色主题不需要这一级：[primaryDark] 对三个暗表面是 6.17–7.46，
+  /// 本来就够正文用。这也是「暗色不是亮色的机械反转」的一个具体例子。
+  static const int primaryText = 0x2C7A6B;
 
   static const int secondaryFill = 0xFFB7C5;
   static const int tertiaryFill = 0xFFD79A;
