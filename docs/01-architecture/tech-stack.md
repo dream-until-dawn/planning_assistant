@@ -93,10 +93,41 @@
 | 约束 | 原因 | 处置 |
 |---|---|---|
 | **不要显式声明 `custom_lint`** | `riverpod_lint 3.1.9` 需 `analyzer_plugin ^0.14.0`；`custom_lint 0.8.1`（当前最新）需 `analyzer_plugin ^0.13.0`。pub 求解器的原话是 "every version of custom_lint requires freezed_annotation ^2.2.0 or uuid ^3.0.6 or analyzer_plugin ^0.13.0"，与 riverpod 3.x 的依赖不可共存 | 由 `riverpod_lint` 自行管理插件依赖 |
-| `freezed` 必须 `^4.0.1` | `riverpod_generator 4.0.9` 需 `analyzer >=13.0.0 <15.0.0`（读其 pubspec 确认）；`freezed 4.0.1` 需 `analyzer >=13.0.0 <15.0.0`，可共存。`freezed 3.x` 各版本的 analyzer 约束分段为 `3.2.3 → >=7.5.9 <9.0.0`、`3.2.4 → ^9.0.0`、`3.2.5 → >=9.0.0 <11.0.0`（求解器输出），**均不含 13–15** | 锁 `freezed: ^4.0.1` |
+| `freezed` 必须 `^4.0.1` | 见下方 §6.1 的完整论证 | 锁 `freezed: ^4.0.1` |
 | `compileSdk = 37` | `permission_handler_android` 强制要求 | 本机 android-37.0 是 **rc2 预览版**；M0 评估移除该依赖后降回 36 |
 | core library desugaring 必开 | `flutter_local_notifications` 硬性要求 | `desugar_jdk_libs:2.1.4` |
 | Gradle 仓库必须配镜像 | Maven Central 在本网络环境返回 403 | 见[环境探针结论](../05-engineering/environment-notes.md) §3.1 |
+
+### 6.1 `freezed` 为什么必须是 4.x（完整论证）
+
+**结论**：`riverpod_generator 4.0.9` 需 `analyzer >=13.0.0 <15.0.0`（读其 pubspec 确认）。
+**pub 在 `^3.x` 约束下会选取的每一个 freezed 版本，其 analyzer 上界都 `< 13`**，与之无交集。故必须用 4.x。
+
+依据是 pub.dev API 的**原始 JSON**（`https://pub.dev/api/packages/freezed`，本地解析 `versions[].pubspec.dependencies.analyzer`），不是抽样、不是二手概括：
+
+| freezed 版本 | analyzer 约束 |
+|---|---|
+| 3.0.0 – 3.0.3 | `>=7.0.0 <8.0.0` |
+| 3.0.4 – 3.1.0 | `>=6.9.0 <8.0.0` |
+| 3.2.0 | `>=7.5.9 <8.0.0` |
+| 3.2.1, 3.2.2 | `^8.0.0` |
+| 3.2.3 | `>=7.5.9 <9.0.0` |
+| 3.2.4 | `^9.0.0` |
+| **3.2.5**（最高稳定 3.x） | `>=9.0.0 <11.0.0` |
+| 3.2.6-dev.1 | `>=12.0.0 <13.0.0` |
+| **4.0.1**（采用） | `>=13.0.0 <15.0.0` ✅ |
+
+⚠️ **一个必须写明的例外**：`3.0.0-0.0.dev`（2024-05-18）**完全不声明 `analyzer` 依赖**
+（其 dependencies 只有 `collection` / `macros` / `meta`，是已停摆的 macros 实验分支）。
+因此「freezed 3.x 的**任何**版本都不允许 analyzer ≥ 13」这句**字面上不成立** —— 不约束即不禁止。
+它不影响结论，因为它是预发布版：pub 在未显式开启预发布时不会选中它。
+但结论的**作用域必须写准**：是「pub 会选取的版本」，不是「任何版本」。
+
+> 这条注释本身就是 [测试策略 §1.2](../05-engineering/testing-strategy.md) 的案例：
+> 该约束在 3.x 内部是**非单调**的（3.2.1/3.2.2 已到 `^8.0.0`，3.2.3 又退回 `>=7.5.9 <9.0.0`），
+> 所以「按手头那个版本推断整个 3.x」在这个包上注定失败。
+
+复现脚本见 [`probe-artifacts/freezed-constraints/`](../05-engineering/probe-artifacts/README.md)。
 
 ## 7. 刻意不引入的东西
 

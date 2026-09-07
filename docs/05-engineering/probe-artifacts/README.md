@@ -108,6 +108,29 @@ C3 规范形幂等        失败 0/6
 > **编码端有错，解码端宽容，本地往返测试恒绿。**
 > 因此[测试策略 §1.2](../testing-strategy.md) 要求往返测试必须断言**字节等价**而不只是语义等价。
 
+### `freezed-constraints/`
+
+产出[技术栈 §6.1](../../01-architecture/tech-stack.md#61-freezed-为什么必须是-4x完整论证)「为什么必须用 freezed 4.x」的完整依据。
+
+| 文件 | 说明 |
+|---|---|
+| `enumerate.py` | 拉 pub.dev 原始 JSON，枚举某个包**全部版本**的某项依赖约束，并单独列出「未声明该依赖」的例外项 |
+
+**复现**（只需 Python 3，无需 Dart）：
+
+```bash
+python docs/05-engineering/probe-artifacts/freezed-constraints/enumerate.py freezed analyzer 13
+```
+
+**为什么值得单独留一个脚本**：这条结论是**全称**的（「每个 3.x 版本都不允许 analyzer ≥ 13」），
+而全称结论只能由完整枚举支撑。本项目在这条上连续错了三轮 ——
+先是双方各自从单个版本外推，再是一次概括式抓取给出与磁盘文件矛盾的答案，
+最后全量枚举才发现还有个不声明 analyzer 的预发布版。经过写进
+[测试策略 §1.3](../testing-strategy.md)。
+
+> 该包的 analyzer 约束在 3.x 内部**非单调**（3.2.1/3.2.2 已是 `^8.0.0`，3.2.3 又退回 `<9.0.0`），
+> 所以「按手头那个版本推断整个 3.x」在它身上注定失败，不是运气问题。
+
 ## 维护规矩
 
 - 依赖版本变更时，**同一个 PR** 里重新生成 `dependency-matrix/pubspec.lock` 并更新版本矩阵。
