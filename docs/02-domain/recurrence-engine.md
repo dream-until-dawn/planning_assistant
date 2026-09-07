@@ -41,7 +41,7 @@ List<Occurrence> expand({
 | 每月最后一个周五 | `FREQ=MONTHLY;BYDAY=-1FR` |
 | 每年 5 月 20 日 | `FREQ=YEARLY;BYMONTH=5;BYMONTHDAY=20` |
 | 结束条件：重复 N 次 | 追加 `COUNT=N` |
-| 结束条件：到某日止 | 追加 `UNTIL=yyyyMMddTHHmmssZ`（**真 UTC**，见 §2.2） |
+| 结束条件：到某日止 | 追加 `UNTIL=yyyyMMddTHHmmssZ`（**真 UTC**，且必须取该日**日终**，见 §2.2 与 §6.1c） |
 
 > **UI 只暴露上表**。用户不需要看见 RRULE 语法。
 > 但存储层保留完整 RRULE 表达能力 —— 从导入的 `.ics` 来的复杂规则能被正确保存与展开，只是 UI 显示为「自定义规则」且编辑时提示会简化。
@@ -128,19 +128,41 @@ toString() 输出 : RRULE:FREQ=DAILY;UNTIL=20260930T235959     ← Z 没了，�
 **强制做法**：项目内**禁止直接调用 `rule.toString()`**，一律走封装：
 
 ```dart
-// core/time 或 domain/recurrence 内唯一的编码出口
+// domain/recurrence 内唯一的编码出口
 const _codec = RecurrenceRuleStringCodec(
   toStringOptions: RecurrenceRuleToStringOptions(isTimeUtc: true),
 );
 String encodeRrule(RecurrenceRule r) => _codec.encode(r);
 ```
 
-已实测：加上 `isTimeUtc: true` 后 `RRULE:FREQ=DAILY;UNTIL=20260930T235959Z` 严格无损往返。
 lint 规则：`lib/` 下出现 `RecurrenceRule` 实例的 `.toString()` 调用即报错。
 
-> **这条是我们自己写文档时犯的错被探针抓出来的**：初版仅用一条不含 `UNTIL` 的规则测了往返，
-> 就写下了「RRULE 字符串严格往返」的全称结论。教训已写入
-> [测试策略 §1.1](../05-engineering/testing-strategy.md)：**单样本不能支撑全称结论**。
+#### 正确的往返性质不是「字节等价于输入串」
+
+补测多部件规则后发现：**即使开了 `isTimeUtc: true`，输出也不会字节等价于输入**，因为编码器会重排部件：
+
+```
+输入 : RRULE:FREQ=MONTHLY;BYMONTHDAY=-1;UNTIL=20261231T155959Z
+输出 : RRULE:FREQ=MONTHLY;UNTIL=20261231T155959Z;BYMONTHDAY=-1     ← 顺序变了
+```
+
+但这**不是缺陷**：RFC 5545 的 RRULE 各部件是**无序**的，重排后语义完全等同。
+真正要断言的是下面三条（6 个样本实测全部 PASS，其中 4 个字节不等价）：
+
+| 性质 | 断言 | 为什么 |
+|---|---|---|
+| **C1 合规性** | 含 `UNTIL` 的输出必须匹配 `UNTIL=\d{8}T\d{6}Z` | 缺 `Z` 就是浮动时间，违反 RFC 且误导外部解析器 |
+| **C2 语义往返** | `decode(encode(x)) == x` | 不丢信息 |
+| **C3 规范形幂等** | `encode(decode(encode(x))) == encode(x)` | 我们的编码是稳定的规范形，不会每存一次变一次 |
+
+**由此定下的存储规则**：落库时存**我们自己 `encodeRrule()` 产出的规范形**，
+而不是用户输入或 `.ics` 导入的原始串。这样库里的规则串形态唯一、可比较、可去重。
+
+> **这一节被自己的探针连续推翻了两次**：
+> 初版用一条不含 `UNTIL` 的规则测出「严格往返」；补 `UNTIL` 样本后推翻，改成「加 `isTimeUtc` 即严格无损」；
+> 再补多部件样本后**又**被推翻 —— 因为那次仍然只测了单部件的 `FREQ=DAILY;UNTIL=…`。
+> 教训见[测试策略 §1.2](../05-engineering/testing-strategy.md)：
+> **样本集必须覆盖各个分支，而不是「多加一个样本」就算数。**
 
 ## 3. 展开算法
 
@@ -238,7 +260,29 @@ NFR-PERF-04 要求「展开 1 年实例 ≤ 50ms」。措施：
 | R-09b | `Asia/Shanghai` (UTC+8) | 每天 23:30，到 9/30 止 | 9/30 那次存在 |
 | R-09c | **对照组**：R-07..R-09b 改用 `COUNT` 表达 | 四个时区结果**完全一致**（`COUNT` 与时区无关）。若 `UNTIL` 组分叉而 `COUNT` 组一致，即定位到换算缺陷 |
 | R-09d | `untilForExpansion(untilForStorage(w, tz), tz) == w` | 对上述全部时区往返恒等 |
-| R-09e | `encodeRrule()` 输出含 `UNTIL` 的规则 | 字符串**带 `Z`** 且与输入严格相等（§2.3 的回归锁） |
+| R-09e | `encodeRrule()` 的 **C1/C2/C3**（§2.3） | 样本集必须**覆盖各分支**：无 `UNTIL` / 单部件 + `UNTIL` / 多部件 + `UNTIL` / `COUNT` / 带负序号 `BYDAY`。断言合规性 + 语义往返 + 规范形幂等，**不断言字节等价于输入串** |
+
+### 6.1c 「到某日止」的日终语义（探针场景 4 暴露的产品级坑）
+
+实测：同一条 `UNTIL=20260910T000000Z`
+
+| DTSTART 时刻 | 展开结果 |
+|---|---|
+| `00:00` | 4 次，末次 **9/10** |
+| `07:00` | 3 次，末次 **9/9** ← 9/10 那次**静默消失** |
+
+用户在 UI 上选的是「重复到 9 月 10 日**为止**」，心智里 9/10 当天应当包含在内。
+若实现时把结束日期直接当成该日 `00:00` 去写 `UNTIL`，**所有非零点开始的任务都会少一次** ——
+而这是绝大多数任务。
+
+**规则**：UI 的「到某日止」必须解释为**该日在任务时区的日终**（`23:59:59` 墙钟），
+再经 `untilForStorage()` 换算成真 UTC。
+
+| # | 用例 | 期望 |
+|---|---|---|
+| R-09f | 「每天 07:00，到 9/10 止」 | 包含 9/10 那次（共 N 次），**不是** N-1 次 |
+| R-09g | 「每天 00:00，到 9/10 止」 | 同样包含 9/10 |
+| R-09h | 「每天 23:00，到 9/10 止」，任务时区 UTC+14 | 包含 9/10 那次 |
 
 ### 6.2 月末与闰年（最容易错）
 
