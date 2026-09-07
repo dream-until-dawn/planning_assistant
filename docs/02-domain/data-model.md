@@ -319,7 +319,7 @@ effectiveEnd(task) = max(
 
 **规则**：
 
-- 所有查询默认带 `WHERE deletedAt IS NULL`，由 DAO 基类统一加，避免遗漏。
+- 所有查询默认带 `WHERE deletedAt IS NULL`，由 DAO 基类统一加，避免遗漏。实现是 `lib/data/database/dao/synced_dao.dart` 的 `SyncedDao`：墓碑过滤、信封盖章（`updatedAt` / `revision` / `lastWriterId`）、outbox 追加三件事全在基类做掉，且写数据与写 outbox 在**同一事务**内。子类只声明表、`entityType` 与主键取法 —— 子类能写的地方就是子类能写错的地方。
 - `revision` + `updatedAt` + `lastWriterId` 足以支撑 V3 的 LWW（最后写入者胜）与冲突检测，详见[云同步预研](../04-platform/future-sync.md)。
 - **不参与同步的表**：`scheduled_notifications`、`change_log` 自身、`settings` 中 `scope='device'` 的行。
 
@@ -356,7 +356,11 @@ effectiveEnd(task) = max(
   否则「服务端无需客户端逻辑即可解析」这句话对这两列不成立。
 - 墓碑行**照常导出**（否则导入方无法知道某条被删了）。
 - 导出/导入必须通过**往返测试**：导出 → 清库 → 导入 → 逐表逐字段比对（FR-CFG-06）。
-- 同时在 `docs/schema/export-v1.schema.json` 维护 JSON Schema，服务端（V3）以此为契约。
+- 同时在 [`docs/schema/export-v1.schema.json`](../schema/export-v1.schema.json) 维护 JSON Schema，服务端（V3）以此为契约。
+
+> **契约由独立脚本守着，不由 Dart 测试守着。** `tool/validate_export.py` 用 Python + 标准 `jsonschema` 库校验，不 import 本项目任何代码 —— 「服务端无需客户端逻辑即可解析」这句话，只有让一个不认识 Flutter/Drift 的程序独立判定才算证明。
+> 该脚本带 `--self-test`（6 个合法样本 + 15 个已知畸形包），先证明校验器本身能变红。CI 每次跑测试产出真实样例后立即校验。
+
 
 ## 7. 迁移策略
 

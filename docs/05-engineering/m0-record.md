@@ -38,12 +38,17 @@
 | **跨毫秒生成的 ID 字典序 == 生成顺序** | **这才是选 v7 的理由** |
 | 前 48 bit 可解析为生成时刻（误差 < 5s） | 时间戳布局符合规范 |
 
-### 1.4 ⏸ `flutter_timezone` 未引入（推迟到 M1 决定）
+### 1.4 ✅ `flutter_timezone` 未引入（M1-A 已结清）
 
 M0 未引入该依赖，因此 AGP 9 的 KGP 弃用警告**当前不存在**。
-M1 需要读取系统时区时再决定：用 `flutter_timezone`，还是在本项目 `android/` 内写一个
-约 20 行的 MethodChannel（我们自己的 app 模块由 AGP 内置 Kotlin 构建，不受 KGP 问题影响）。
-倾向后者 —— 少一个依赖，且规避已知的未来构建失败。
+
+**M1-A 结论：采用自写 MethodChannel，不引入 `flutter_timezone`**。
+实现见 `android/.../MainActivity.kt`（约 20 行）与
+`lib/platform/timezone/platform_time_zone.dart`。理由：我们自己的 app 模块由
+AGP 内置 Kotlin 构建，不受 KGP 问题影响；少一个依赖，且规避已知的未来构建失败。
+
+接口化（`PlatformTimeZoneSource`）后可注入假实现，测试不依赖真机；
+设备报旧式别名（如 `Asia/Calcutta`）的归一在 `TzTimeZoneResolver.normalizeZoneId()`。
 
 ### 1.5 ✅ Impeller 未被关闭
 
@@ -440,11 +445,36 @@ export 专属规则：application 可以 import Repository，但不得 re-export
           的 barrel 间接拿到它，绕过 TaskCommand（FR-AI-01）。import 它是允许的
 ```
 
-#### 明确的未完成状态
+#### 明确的未完成状态：剩余入口已枚举完，共三条
 
-**通用的可达性分析没有做。** 只要出现「application 之外的层做 re-export」或「多跳 barrel」，
-这扇门仍然开着。M1 第一次出现真实 barrel 或第一个 Repository 进 presentation 的诱惑点时，
-必须当场决定修法并给双向输出 —— 已写进 §4 的移交清单。
+**通用的可达性分析没有做。** 「其它层 re-export」具体是哪些，已推导并**逐条实测确认开着**：
+
+| # | 洗白路线 | 实测 |
+|---|---|---|
+| 1 | `platform/` → `export` Repository | ✅ 开着 |
+| 2 | `domain/entities/` → `export ../repositories/` | ✅ 开着 |
+| 3 | `features/*/domain/` → `export` Repository | ✅ 开着 |
+| 3b | 同上，但**跨 feature** 消费（`features/settings/domain/` 被 `features/task/presentation/` 引用） | ✅ 开着 —— 跨 feature 规则只管 presentation→presentation，管不到这条 |
+
+**枚举的完整性推导**（按 `_forbidden` 表逐层过，不是「想到几条算几条」）：
+presentation 能引用的层是 `core` / `design` / `domain` / `platform` / 本 feature 的
+`application` 与 `domain`；其中 `core` 与 `design` 禁 `/domain/`，`application` 已被
+export 规则封住，`data` 虽能拿到 Repository 但 presentation 引用不到它 —— 剩下的**恰好三条**。
+
+> 这个枚举**否掉了「再打三个补丁」这个选项**。路线 2（`domain/entities/barrel.dart` 汇总导出）
+> 是 Dart 里最自然的写法之一，补丁式修法会一直漏。
+> **它反过来证明了「不做通用解、明确移交 M1」是对的**：这个洞的形状本就需要闭包分析。
+
+#### M1 的双向验收用例（四条一起给，缺一条就区分不出「修对了」和「一刀切」）
+
+| 用例 | 修法上线后必须 |
+|---|---|
+| 路线 1 / 2 / 3 / 3b | **全部变红** |
+| `domain/repositories/_barrel.dart` 再导出自己 | **仍然绿** —— 不得一刀切禁掉所有 export |
+| `application` **import**（非 export）Repository | **仍然绿** |
+
+最后两条是防过冲的：只验「洗白路线变红」区分不出「修对了」与「把 export 整个禁掉」，
+而后者会在 M1 写第一个 domain barrel 时立刻炸。这正是 [§2.1e](#21e-第三轮修-b3-时过冲守卫开始禁止文档规定的设计) 的教训。
 
 ### 2.1c 坏测试扫描器 `tool/lint_tests.dart`（补齐 S3）
 
@@ -523,10 +553,10 @@ export 专属规则：application 可以 import Repository，但不得 re-export
 
 | 项 | 说明 |
 |---|---|
-| **B6 可达性绕过（通用解）** | ⚠️ **未解决**。只封了 `application` re-export 这一个入口；「多跳 barrel」「其它层 re-export」仍然开着。M1 出现第一个真实 barrel 或第一个 Repository 进 presentation 的诱惑点时，当场决定修法并给双向输出。见 §2.1g |
+| **B6 可达性绕过（通用解）** | ⚠️ **未解决**。只封了 `application` re-export 这一个入口。剩余入口已枚举完并实测确认：`platform/`、`domain/entities/`、`features/*/domain/`（含跨 feature 变体）共三条。M1 需做闭包分析而非补丁，验收用例见 §2.1g |
 | 断网启动验证（字体已打包） | M0 未引入自定义字体，暂无可验对象；随 M2 设计系统一并验 |
-| `flutter_timezone` 的取舍 | 见 §1.4，M1 需要读系统时区时再定 |
-| 代码生成校验在 CI 中的实效 | 当前无带注解的源文件，该步骤形同空跑；M1 引入 drift/freezed 后才真正生效 |
+| ~~`flutter_timezone` 的取舍~~ | ✅ **M1-A 已结清**：自写 MethodChannel，不引入该包。见 §1.4 |
+| ~~代码生成校验在 CI 中的实效~~ | ✅ **M1-C 已结清**。引入 drift 表定义后实测：把「改了注解但没重新生成」的状态入索引（索引 = 新源码 + 旧 `.g.dart`），CI 跑完 `build_runner` 后 `git diff` 有 **75 行**差异 → `exit 1`。同时验证了 format 与 codegen 两步不打架（drift 产物本身即 `dart format` 干净） |
 | 覆盖率门禁 | 当前仅骨架，设阈值无意义；M1 领域层成型后按[测试策略 §3.3](testing-strategy.md) 设 90%/80% |
 
 > 第 3 条值得记：**一个当前没有作用对象的 CI 步骤，和一个失灵的 CI 步骤在观测上同样是绿的。**

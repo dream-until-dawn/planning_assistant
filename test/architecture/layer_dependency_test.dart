@@ -675,8 +675,17 @@ import
       final lines = file.readAsLinesSync();
       for (var i = 0; i < lines.length; i++) {
         if (lines[i].trim().startsWith('//')) continue;
+        // 去掉字符串字面量再匹配。
+        //
+        // 不去的话，测试**标题**里提一句 DateTime.now() 就会被判违规 ——
+        // 实测踩到过：clock_and_result_test.dart 里那条
+        // 「SystemClock 返回 UTC —— 全项目唯一允许 ... 的地方」被误报，
+        // 而它实际调用的是 SystemClock().nowUtc()。
+        //
+        // 守卫误报的代价不只是烦：它会训练人改测试标题去迁就守卫，
+        // 或者干脆把文件加进白名单 —— 后者是真正的损失。
         if (RegExp(r'\bDateTime\s*\.\s*(now|timestamp)\s*\(')
-            .hasMatch(lines[i])) {
+            .hasMatch(_stripStringLiterals(lines[i]))) {
           violations.add(
             '  - ${_norm(file.path)}:${i + 1}\n      ${lines[i].trim()}\n'
             '      违反: 测试必须注入 FixedClock 或用 fake_async',
@@ -717,4 +726,172 @@ import
           '发现 ${violations.length} 处用 assert 表达的不变量：\n${violations.join('\n')}',
     );
   });
+
+  test('纯 Dart 验收测试不得沾 Flutter（overview §6，V2 那一格）', () {
+    // V2 的桌面小组件跑在后台 isolate、甚至另一个进程，那里没有 binding。
+    // 「读取路径不依赖 Widget」这句话必须由**可执行的东西**守住，
+    // 否则某次重构顺手 import 了 flutter/foundation，谁也不会注意到。
+    //
+    // 这条守的是文件自身的 import；传递依赖由 CI 里的 `dart test` 一步守 ——
+    // 那一步整条链路上任何一处引入 dart:ui 都会直接编译失败。
+    const pureDartTests = ['test/domain/today_digest_pure_dart_test.dart'];
+
+    final violations = <String>[];
+    for (final rel in pureDartTests) {
+      // 测试从仓库根目录运行，直接用相对路径。
+      final file = File(rel);
+      expect(file.existsSync(), isTrue, reason: '$rel 不存在 —— 验收用例被删了？');
+
+      final lines = file.readAsLinesSync();
+      for (var i = 0; i < lines.length; i++) {
+        final line = lines[i].trim();
+        final isImport =
+            line.startsWith('import ') || line.startsWith('export ');
+        if (!isImport) continue;
+        if (RegExp("['\"]package:flutter(_test)?/").hasMatch(line)) {
+          violations.add(
+            '  - $rel:${i + 1}\n      $line\n'
+            '      违反: 该文件必须能在没有 Flutter binding 的环境跑通',
+          );
+        }
+      }
+      // 反向确认：它确实用了 package:test，而不是悄悄换回了 flutter_test。
+      expect(
+        lines.any((l) => l.contains("import 'package:test/test.dart';")),
+        isTrue,
+        reason: '$rel 必须用 package:test —— 换成 flutter_test 就失去了验收意义',
+      );
+    }
+
+    expect(
+      violations,
+      isEmpty,
+      reason: '纯 Dart 验收测试沾了 Flutter：\n${violations.join('\n')}',
+    );
+  });
+
+  test('写操作必须经由命令管道（overview §4、§6 V4 那一格）', () {
+    // 「所有数据变更走同一条 TaskCommand 管道」是 V3 云同步与 V4 Agent 的前提。
+    // 这句话只写在文档里的话，第一个赶时间的人就会绕过去 ——
+    // 而绕过的写不留 change_log 行，要到很久以后的回放测试才暴露。
+    //
+    // 这条守两件事：
+    //  1. Repository 的写方法只能由 dispatcher 与实现自身调用；
+    //  2. DAO 的写方法（upsert / softDelete）不得在 data/ 之外出现。
+    const repoWriteMethods = [
+      'saveTask',
+      'saveTaskWithStages',
+      'softDeleteTask',
+      'restoreTask',
+    ];
+    const daoWriteMethods = ['upsert', 'softDelete'];
+
+    // 允许调用写方法的文件（相对 lib/）。
+    //
+    // **白名单要短且每条有理由**。长白名单等于没有白名单 ——
+    // 加一行比想清楚容易，于是它会一直长下去。
+    const allowedRepoWriters = {
+      // 管道本身。
+      'domain/commands/command_dispatcher.dart',
+      // Repository 实现内部互相调用（如 softDeleteTask 复用 saveTask）。
+      'data/repositories/task_repository_impl.dart',
+    };
+    const allowedDaoWriters = {
+      // DAO 基类与各表 DAO 自身。
+      'data/database/dao/synced_dao.dart',
+      'data/database/dao/table_daos.dart',
+      // Repository 实现是 DAO 的唯一上层调用方。
+      'data/repositories/task_repository_impl.dart',
+      // 导入导出与回放走裸 SQL，不经 DAO —— 它们是「恢复」不是「操作」，
+      // 不该再写一遍 outbox。见各自文件的头部注释。
+      'data/dto/export_bundle.dart',
+      'data/outbox/change_log_replayer.dart',
+    };
+
+    final violations = <String>[];
+    for (final file in _dartFiles('lib')) {
+      final rel = _relToLib(file.path);
+      if (rel == null) continue;
+      final lines = file.readAsLinesSync();
+
+      for (var i = 0; i < lines.length; i++) {
+        final line = lines[i].trim();
+        if (line.startsWith('//') || line.startsWith('///')) continue;
+
+        for (final m in repoWriteMethods) {
+          final calls = RegExp(
+            '[._]$m'
+            r'\s*\(',
+          ).hasMatch(line);
+          if (!calls || allowedRepoWriters.contains(rel)) continue;
+          violations.add(
+            '  - lib/$rel:${i + 1}\n      $line\n'
+            '      违反: 仓储写方法 $m 只能经 CommandDispatcher 调用',
+          );
+        }
+        for (final m in daoWriteMethods) {
+          final calls = RegExp(
+            r'\.'
+            '$m'
+            r'\s*\(',
+          ).hasMatch(line);
+          if (!calls || allowedDaoWriters.contains(rel)) continue;
+          violations.add(
+            '  - lib/$rel:${i + 1}\n      $line\n'
+            '      违反: DAO 写方法 $m 不得在 data/ 之外直接调用',
+          );
+        }
+      }
+    }
+
+    expect(
+      violations,
+      isEmpty,
+      reason: '发现 ${violations.length} 处绕过命令管道的写：\n${violations.join('\n')}',
+    );
+  });
+
+  test('上面那条白名单里的文件确实存在 —— 防止白名单变成僵尸', () {
+    // 白名单条目对应的文件被删或改名后，那一条就永远匹配不上，
+    // 于是守卫在那个位置**静默失效**。这是守卫本身最常见的烂法。
+    const whitelisted = [
+      'lib/domain/commands/command_dispatcher.dart',
+      'lib/data/repositories/task_repository_impl.dart',
+      'lib/data/database/dao/synced_dao.dart',
+      'lib/data/database/dao/table_daos.dart',
+      'lib/data/dto/export_bundle.dart',
+      'lib/data/outbox/change_log_replayer.dart',
+    ];
+    final missing = [
+      for (final f in whitelisted)
+        if (!File(f).existsSync()) f,
+    ];
+    expect(missing, isEmpty, reason: '白名单指向已不存在的文件：$missing');
+  });
+}
+
+/// 去掉一行里的字符串字面量，只留代码部分。
+///
+/// 粗糙但够用：守卫要判的是「这行代码有没有调用某个 API」，
+/// 而字面量里出现同名文本从来不是调用。
+/// 不处理跨行的三引号串 —— 目前没有这种用法，出现了再说，
+/// 而不是先写一套用不上的完整词法分析。
+String _stripStringLiterals(String line) {
+  final buffer = StringBuffer();
+  String? quote;
+  for (var i = 0; i < line.length; i++) {
+    final c = line[i];
+    if (quote == null) {
+      if (c == "'" || c == '"') {
+        quote = c;
+      } else {
+        buffer.write(c);
+      }
+    } else if (c == r'\') {
+      i++; // 跳过转义字符，避免 \' 被当成收尾引号
+    } else if (c == quote) {
+      quote = null;
+    }
+  }
+  return buffer.toString();
 }

@@ -21,33 +21,13 @@ class DomainFailure {
       'DomainFailure($code${detail == null ? '' : ', $detail'})';
 }
 
-/// 领域不变量被破坏。这是**程序缺陷**，不是可预期的失败。
+/// 注：`DomainInvariantViolation` 与 `IllegalTransitionException` **不在这里**。
 ///
-/// 必须显式抛出而不是用 `assert` —— Dart 的 assert 在 AOT release 构建中
-/// 被整条剥离，用它表达的不变量在正式包里等于不存在，
-/// 且会让对应测试在 debug 下变绿、在 release 下失去意义。
-/// 见 docs/01-architecture/cross-cutting.md §3.1。
-class DomainInvariantViolation implements Exception {
-  const DomainInvariantViolation(this.message);
+/// 它们曾经在本文件里有一份 M0 骨架期的定义，而 M1 又在
+/// `domain/value_objects/task_status.dart` 里定义了同名类型 ——
+/// 两份并存时，`catch` 到哪一份取决于调用方 import 了谁，
+/// **不匹配时会静默漏掉**。已删除本文件那份，全项目只保留领域层那份。
 
-  final String message;
-
-  @override
-  String toString() => 'DomainInvariantViolation: $message';
-}
-
-/// 非法状态迁移。见 docs/02-domain/task-lifecycle.md §2.1。
-class IllegalTransitionException implements Exception {
-  const IllegalTransitionException(this.from, this.to);
-
-  final String from;
-  final String to;
-
-  @override
-  String toString() => 'IllegalTransitionException: $from -> $to 不是合法迁移';
-}
-
-/// 成功或领域失败。
 sealed class Result<T> {
   const Result();
 
