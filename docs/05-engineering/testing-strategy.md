@@ -95,10 +95,21 @@
    > （§3.3.10，"bounds the recurrence rule in an inclusive manner" 与
    > "…then the UNTIL rule part MUST be specified as a date with UTC time"），
    > 确认无误 —— 但**核对这一步不能省**。
-3. **完整枚举之后，还要逐一检查枚举里的异常项，并把结论的作用域写准。**
+3. **「数据完整」和「读过数据里的每一行」是两回事 —— 完整性会制造穷尽的错觉。**
    全量枚举后本可下一个漂亮的全称结论「freezed 3.x 任何版本都不允许 analyzer ≥ 13」，
    但 16 个版本里有一个 `3.0.0-0.0.dev` **根本不声明 analyzer 依赖** —— 不约束即不禁止，
    这句话字面上就是假的。正确写法是限定作用域：「**pub 会选取的**每个版本」。
+
+   这一次的失效方式**与第 1 条不同，值得单独记**：
+   第 1 条是拿不到别的样本（抽样偏差）；而这一次，**完整数据就在手上，
+   那一行 `3.0.0-0.0.dev  analyzer: None` 就打印在结论上方几行**，
+   写结论的人读过那段输出，然后写下了被它直接证伪的话。
+   全量枚举带来的「我已经穷尽了」的踏实感，反而让人不再逐行看。
+
+   **可操作的规矩**：下全称结论前，先把 `None` / 空值 / 缺字段 / 格式异常的行
+   **单独挑出来看一遍**。工具也应当默认把异常项顶到眼前，而不是混在长列表里等人自己翻
+   —— [`enumerate.py`](probe-artifacts/README.md) 就是这么做的。
+
    实际影响为零，但一句作用域不准的全称结论，将来一定会被人当成通则去用。
 
 **复现脚本**：[`probe-artifacts/freezed-constraints/enumerate.py`](probe-artifacts/README.md)，
