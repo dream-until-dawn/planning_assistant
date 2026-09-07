@@ -58,6 +58,13 @@ jobs:
       - name: 测试
         run: flutter test --coverage
 
+      # ── 读取路径不依赖 Flutter（overview §6，V2 那一格）──────────
+      # 用 `dart test` 而不是 `flutter test`：整条链路上任何一处引入
+      # dart:ui，这一步会直接编译失败。
+      # 「读一遍 import 确认没有 flutter」看不见传递依赖，这一步能。
+      - name: 纯 Dart 取今日概览（不启动 Flutter binding）
+        run: dart test test/domain/today_digest_pure_dart_test.dart
+
       # ── 导出格式的服务端契约（overview §6，V3 那一格）────────────
       # 关键在「独立」：用 Python + 标准 jsonschema 校验，
       # 不 import 本项目任何代码。Dart 侧自己读自己写的东西，

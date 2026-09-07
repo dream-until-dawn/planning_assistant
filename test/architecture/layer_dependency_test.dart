@@ -717,4 +717,47 @@ import
           '发现 ${violations.length} 处用 assert 表达的不变量：\n${violations.join('\n')}',
     );
   });
+
+  test('纯 Dart 验收测试不得沾 Flutter（overview §6，V2 那一格）', () {
+    // V2 的桌面小组件跑在后台 isolate、甚至另一个进程，那里没有 binding。
+    // 「读取路径不依赖 Widget」这句话必须由**可执行的东西**守住，
+    // 否则某次重构顺手 import 了 flutter/foundation，谁也不会注意到。
+    //
+    // 这条守的是文件自身的 import；传递依赖由 CI 里的 `dart test` 一步守 ——
+    // 那一步整条链路上任何一处引入 dart:ui 都会直接编译失败。
+    const pureDartTests = ['test/domain/today_digest_pure_dart_test.dart'];
+
+    final violations = <String>[];
+    for (final rel in pureDartTests) {
+      // 测试从仓库根目录运行，直接用相对路径。
+      final file = File(rel);
+      expect(file.existsSync(), isTrue, reason: '$rel 不存在 —— 验收用例被删了？');
+
+      final lines = file.readAsLinesSync();
+      for (var i = 0; i < lines.length; i++) {
+        final line = lines[i].trim();
+        final isImport =
+            line.startsWith('import ') || line.startsWith('export ');
+        if (!isImport) continue;
+        if (RegExp("['\"]package:flutter(_test)?/").hasMatch(line)) {
+          violations.add(
+            '  - $rel:${i + 1}\n      $line\n'
+            '      违反: 该文件必须能在没有 Flutter binding 的环境跑通',
+          );
+        }
+      }
+      // 反向确认：它确实用了 package:test，而不是悄悄换回了 flutter_test。
+      expect(
+        lines.any((l) => l.contains("import 'package:test/test.dart';")),
+        isTrue,
+        reason: '$rel 必须用 package:test —— 换成 flutter_test 就失去了验收意义',
+      );
+    }
+
+    expect(
+      violations,
+      isEmpty,
+      reason: '纯 Dart 验收测试沾了 Flutter：\n${violations.join('\n')}',
+    );
+  });
 }
