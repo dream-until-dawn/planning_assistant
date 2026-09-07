@@ -80,9 +80,54 @@ def check(files: list[str]) -> tuple[list[tuple[str, str, str]], int, int]:
     return problems, total, anchors
 
 
+# 手算的 (标题 -> 锚点) 对照表。
+#
+# 这些期望值**必须手算**，绝不能由 slugify() 自己产生 —— 否则 slugify 出错时，
+# 标题那侧与链接那侧会同向偏移、永远相等，自检对 slug 算法的任何缺陷完全免疫。
+# 这正是 docs/05-engineering/testing-strategy.md 1.1 说的「对着实现抄」。
+#
+# 每一条都另有独立佐证：仓库里存在指向该锚点的真实链接，且当前可达。
+# 三条都含全角括号（），因为那是最容易被误当作汉字保留下来的字符。
+SLUG_CASES: list[tuple[str, str]] = [
+    (
+        "2.3 编码 RRULE 必须显式开启 `isTimeUtc`（强制）",
+        "23-编码-rrule-必须显式开启-istimeutc强制",
+    ),
+    (
+        "9. 评审要点（按重要性排序）",
+        "9-评审要点按重要性排序",
+    ),
+    (
+        "6.1 `freezed` 为什么必须是 4.x（完整论证）",
+        "61-freezed-为什么必须是-4x完整论证",
+    ),
+]
+
+
+def check_slugify() -> bool:
+    """先验证 slug 算法本身，再谈链接匹配。期望值全部来自手算。"""
+    ok = True
+    for heading, expected in SLUG_CASES:
+        actual = slugify(heading)
+        if actual != expected:
+            ok = False
+            print("  slugify 不符手算期望:")
+            print(f"      标题 {heading}")
+            print(f"      期望 {expected}")
+            print(f"      实得 {actual}")
+    print(f"  slug 算法: {'PASS' if ok else 'FAIL'}"
+          f"（{len(SLUG_CASES)} 条手算样本，均含全角括号）")
+    return ok
+
+
 def self_test() -> bool:
-    """证明校验器能失败：喂已知坏链，断言恰好检出、且不误报好链。"""
-    good_anchor = slugify("2.3 编码 RRULE 必须显式开启 `isTimeUtc`（强制）")
+    """证明校验器能失败：喂已知坏输入，断言恰好检出、且不误报好输入。"""
+    print("--- 自检：校验器能否正确失败 ---")
+    if not check_slugify():
+        print("  结果: FAIL —— slug 算法本身有缺陷，其对仓库的一切结论均不可信")
+        return False
+
+    good_anchor = SLUG_CASES[0][1]
     with tempfile.TemporaryDirectory() as d:
         a = os.path.join(d, "a.md").replace("\\", "/")
         b = os.path.join(d, "b.md").replace("\\", "/")
@@ -103,7 +148,6 @@ def self_test() -> bool:
     expected = ["ANCHOR_NOT_FOUND", "FILE_NOT_FOUND"]
     ok = kinds == expected and total == 4 and anchors == 2
 
-    print("--- 自检：校验器能否正确失败 ---")
     print(f"  样本: 2 条好链 + 1 条坏文件 + 1 条坏锚点 + 1 条外链(应跳过)")
     print(f"  检出: {kinds}")
     print(f"  统计: 站内链接={total}(期望4)  带锚点={anchors}(期望2)")
