@@ -14,10 +14,15 @@ import 'package:drift/drift.dart';
 /// 以及 `settings` 里 `scope='device'` 的行（用列而非表区分）。
 mixin SyncEnvelope on Table {
   /// 创建时刻，Instant ms。**创建后不再变**。
-  IntColumn get createdAt => integer()();
+  ///
+  /// `clientDefault` 只是让 Companion 不强制调用方填 —— 真正的值由
+  /// `SyncedDao.upsert()` 统一盖章。给个占位默认值而不是让调用方随手填，
+  /// 是为了让「忘了填」与「填错了」都归到同一条路径上去。
+  /// 它不改变 SQL schema（纯客户端默认值），迁移快照不受影响。
+  IntColumn get createdAt => integer().clientDefault(() => 0)();
 
   /// 最后一次本地写入时刻，Instant ms。
-  IntColumn get updatedAt => integer()();
+  IntColumn get updatedAt => integer().clientDefault(() => 0)();
 
   /// 墓碑标记：非空即已删除。
   ///
@@ -29,8 +34,8 @@ mixin SyncEnvelope on Table {
   /// V3 的 LWW 与冲突检测（future-sync.md）。
   IntColumn get revision => integer().withDefault(const Constant(1))();
 
-  /// 写入方设备 ID。
-  TextColumn get lastWriterId => text()();
+  /// 写入方设备 ID。同上，实际值由 DAO 盖章。
+  TextColumn get lastWriterId => text().clientDefault(() => '')();
 
   /// 服务端版本标记。V1 恒为 NULL。
   TextColumn get remoteVersion => text().nullable()();

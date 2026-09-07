@@ -319,7 +319,7 @@ effectiveEnd(task) = max(
 
 **规则**：
 
-- 所有查询默认带 `WHERE deletedAt IS NULL`，由 DAO 基类统一加，避免遗漏。
+- 所有查询默认带 `WHERE deletedAt IS NULL`，由 DAO 基类统一加，避免遗漏。实现是 `lib/data/database/dao/synced_dao.dart` 的 `SyncedDao`：墓碑过滤、信封盖章（`updatedAt` / `revision` / `lastWriterId`）、outbox 追加三件事全在基类做掉，且写数据与写 outbox 在**同一事务**内。子类只声明表、`entityType` 与主键取法 —— 子类能写的地方就是子类能写错的地方。
 - `revision` + `updatedAt` + `lastWriterId` 足以支撑 V3 的 LWW（最后写入者胜）与冲突检测，详见[云同步预研](../04-platform/future-sync.md)。
 - **不参与同步的表**：`scheduled_notifications`、`change_log` 自身、`settings` 中 `scope='device'` 的行。
 

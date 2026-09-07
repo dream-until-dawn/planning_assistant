@@ -18,7 +18,8 @@ class $CategoriesTable extends Categories
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -29,7 +30,8 @@ class $CategoriesTable extends Categories
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _deletedAtMeta = const VerificationMeta(
     'deletedAt',
@@ -63,7 +65,8 @@ class $CategoriesTable extends Categories
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => '',
   );
   static const VerificationMeta _remoteVersionMeta = const VerificationMeta(
     'remoteVersion',
@@ -172,16 +175,12 @@ class $CategoriesTable extends Categories
         _createdAtMeta,
         createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
     }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
         updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
     }
     if (data.containsKey('deleted_at')) {
       context.handle(
@@ -203,8 +202,6 @@ class $CategoriesTable extends Categories
           _lastWriterIdMeta,
         ),
       );
-    } else if (isInserting) {
-      context.missing(_lastWriterIdMeta);
     }
     if (data.containsKey('remote_version')) {
       context.handle(
@@ -329,6 +326,11 @@ class $CategoriesTable extends Categories
 
 class CategoryRow extends DataClass implements Insertable<CategoryRow> {
   /// 创建时刻，Instant ms。**创建后不再变**。
+  ///
+  /// `clientDefault` 只是让 Companion 不强制调用方填 —— 真正的值由
+  /// `SyncedDao.upsert()` 统一盖章。给个占位默认值而不是让调用方随手填，
+  /// 是为了让「忘了填」与「填错了」都归到同一条路径上去。
+  /// 它不改变 SQL schema（纯客户端默认值），迁移快照不受影响。
   final int createdAt;
 
   /// 最后一次本地写入时刻，Instant ms。
@@ -344,7 +346,7 @@ class CategoryRow extends DataClass implements Insertable<CategoryRow> {
   /// V3 的 LWW 与冲突检测（future-sync.md）。
   final int revision;
 
-  /// 写入方设备 ID。
+  /// 写入方设备 ID。同上，实际值由 DAO 盖章。
   final String lastWriterId;
 
   /// 服务端版本标记。V1 恒为 NULL。
@@ -592,11 +594,11 @@ class CategoriesCompanion extends UpdateCompanion<CategoryRow> {
     this.rowid = const Value.absent(),
   });
   CategoriesCompanion.insert({
-    required int createdAt,
-    required int updatedAt,
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.revision = const Value.absent(),
-    required String lastWriterId,
+    this.lastWriterId = const Value.absent(),
     this.remoteVersion = const Value.absent(),
     required String id,
     required String name,
@@ -605,10 +607,7 @@ class CategoriesCompanion extends UpdateCompanion<CategoryRow> {
     required int orderIndex,
     this.isSystemDefault = const Value.absent(),
     this.rowid = const Value.absent(),
-  }) : createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt),
-       lastWriterId = Value(lastWriterId),
-       id = Value(id),
+  }) : id = Value(id),
        name = Value(name),
        colorArgb = Value(colorArgb),
        icon = Value(icon),
@@ -757,7 +756,8 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, TaskRow> {
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -768,7 +768,8 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, TaskRow> {
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _deletedAtMeta = const VerificationMeta(
     'deletedAt',
@@ -802,7 +803,8 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, TaskRow> {
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => '',
   );
   static const VerificationMeta _remoteVersionMeta = const VerificationMeta(
     'remoteVersion',
@@ -1104,16 +1106,12 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, TaskRow> {
         _createdAtMeta,
         createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
     }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
         updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
     }
     if (data.containsKey('deleted_at')) {
       context.handle(
@@ -1135,8 +1133,6 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, TaskRow> {
           _lastWriterIdMeta,
         ),
       );
-    } else if (isInserting) {
-      context.missing(_lastWriterIdMeta);
     }
     if (data.containsKey('remote_version')) {
       context.handle(
@@ -1437,6 +1433,11 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, TaskRow> {
 
 class TaskRow extends DataClass implements Insertable<TaskRow> {
   /// 创建时刻，Instant ms。**创建后不再变**。
+  ///
+  /// `clientDefault` 只是让 Companion 不强制调用方填 —— 真正的值由
+  /// `SyncedDao.upsert()` 统一盖章。给个占位默认值而不是让调用方随手填，
+  /// 是为了让「忘了填」与「填错了」都归到同一条路径上去。
+  /// 它不改变 SQL schema（纯客户端默认值），迁移快照不受影响。
   final int createdAt;
 
   /// 最后一次本地写入时刻，Instant ms。
@@ -1452,7 +1453,7 @@ class TaskRow extends DataClass implements Insertable<TaskRow> {
   /// V3 的 LWW 与冲突检测（future-sync.md）。
   final int revision;
 
-  /// 写入方设备 ID。
+  /// 写入方设备 ID。同上，实际值由 DAO 盖章。
   final String lastWriterId;
 
   /// 服务端版本标记。V1 恒为 NULL。
@@ -2032,11 +2033,11 @@ class TasksCompanion extends UpdateCompanion<TaskRow> {
     this.rowid = const Value.absent(),
   });
   TasksCompanion.insert({
-    required int createdAt,
-    required int updatedAt,
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.revision = const Value.absent(),
-    required String lastWriterId,
+    this.lastWriterId = const Value.absent(),
     this.remoteVersion = const Value.absent(),
     required String id,
     required String title,
@@ -2061,10 +2062,7 @@ class TasksCompanion extends UpdateCompanion<TaskRow> {
     this.completedAt = const Value.absent(),
     this.archivedAt = const Value.absent(),
     this.rowid = const Value.absent(),
-  }) : createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt),
-       lastWriterId = Value(lastWriterId),
-       id = Value(id),
+  }) : id = Value(id),
        title = Value(title),
        kind = Value(kind),
        timeZoneId = Value(timeZoneId);
@@ -2343,7 +2341,8 @@ class $StagesTable extends Stages with TableInfo<$StagesTable, StageRow> {
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -2354,7 +2353,8 @@ class $StagesTable extends Stages with TableInfo<$StagesTable, StageRow> {
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _deletedAtMeta = const VerificationMeta(
     'deletedAt',
@@ -2388,7 +2388,8 @@ class $StagesTable extends Stages with TableInfo<$StagesTable, StageRow> {
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => '',
   );
   static const VerificationMeta _remoteVersionMeta = const VerificationMeta(
     'remoteVersion',
@@ -2530,16 +2531,12 @@ class $StagesTable extends Stages with TableInfo<$StagesTable, StageRow> {
         _createdAtMeta,
         createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
     }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
         updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
     }
     if (data.containsKey('deleted_at')) {
       context.handle(
@@ -2561,8 +2558,6 @@ class $StagesTable extends Stages with TableInfo<$StagesTable, StageRow> {
           _lastWriterIdMeta,
         ),
       );
-    } else if (isInserting) {
-      context.missing(_lastWriterIdMeta);
     }
     if (data.containsKey('remote_version')) {
       context.handle(
@@ -2721,6 +2716,11 @@ class $StagesTable extends Stages with TableInfo<$StagesTable, StageRow> {
 
 class StageRow extends DataClass implements Insertable<StageRow> {
   /// 创建时刻，Instant ms。**创建后不再变**。
+  ///
+  /// `clientDefault` 只是让 Companion 不强制调用方填 —— 真正的值由
+  /// `SyncedDao.upsert()` 统一盖章。给个占位默认值而不是让调用方随手填，
+  /// 是为了让「忘了填」与「填错了」都归到同一条路径上去。
+  /// 它不改变 SQL schema（纯客户端默认值），迁移快照不受影响。
   final int createdAt;
 
   /// 最后一次本地写入时刻，Instant ms。
@@ -2736,7 +2736,7 @@ class StageRow extends DataClass implements Insertable<StageRow> {
   /// V3 的 LWW 与冲突检测（future-sync.md）。
   final int revision;
 
-  /// 写入方设备 ID。
+  /// 写入方设备 ID。同上，实际值由 DAO 盖章。
   final String lastWriterId;
 
   /// 服务端版本标记。V1 恒为 NULL。
@@ -3051,11 +3051,11 @@ class StagesCompanion extends UpdateCompanion<StageRow> {
     this.rowid = const Value.absent(),
   });
   StagesCompanion.insert({
-    required int createdAt,
-    required int updatedAt,
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.revision = const Value.absent(),
-    required String lastWriterId,
+    this.lastWriterId = const Value.absent(),
     this.remoteVersion = const Value.absent(),
     required String id,
     required String taskId,
@@ -3067,10 +3067,7 @@ class StagesCompanion extends UpdateCompanion<StageRow> {
     this.status = const Value.absent(),
     this.completedAt = const Value.absent(),
     this.rowid = const Value.absent(),
-  }) : createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt),
-       lastWriterId = Value(lastWriterId),
-       id = Value(id),
+  }) : id = Value(id),
        taskId = Value(taskId),
        title = Value(title),
        orderIndex = Value(orderIndex);
@@ -3244,7 +3241,8 @@ class $ChecklistItemsTable extends ChecklistItems
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -3255,7 +3253,8 @@ class $ChecklistItemsTable extends ChecklistItems
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _deletedAtMeta = const VerificationMeta(
     'deletedAt',
@@ -3289,7 +3288,8 @@ class $ChecklistItemsTable extends ChecklistItems
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => '',
   );
   static const VerificationMeta _remoteVersionMeta = const VerificationMeta(
     'remoteVersion',
@@ -3387,16 +3387,12 @@ class $ChecklistItemsTable extends ChecklistItems
         _createdAtMeta,
         createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
     }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
         updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
     }
     if (data.containsKey('deleted_at')) {
       context.handle(
@@ -3418,8 +3414,6 @@ class $ChecklistItemsTable extends ChecklistItems
           _lastWriterIdMeta,
         ),
       );
-    } else if (isInserting) {
-      context.missing(_lastWriterIdMeta);
     }
     if (data.containsKey('remote_version')) {
       context.handle(
@@ -3530,6 +3524,11 @@ class $ChecklistItemsTable extends ChecklistItems
 class ChecklistItemRow extends DataClass
     implements Insertable<ChecklistItemRow> {
   /// 创建时刻，Instant ms。**创建后不再变**。
+  ///
+  /// `clientDefault` 只是让 Companion 不强制调用方填 —— 真正的值由
+  /// `SyncedDao.upsert()` 统一盖章。给个占位默认值而不是让调用方随手填，
+  /// 是为了让「忘了填」与「填错了」都归到同一条路径上去。
+  /// 它不改变 SQL schema（纯客户端默认值），迁移快照不受影响。
   final int createdAt;
 
   /// 最后一次本地写入时刻，Instant ms。
@@ -3545,7 +3544,7 @@ class ChecklistItemRow extends DataClass
   /// V3 的 LWW 与冲突检测（future-sync.md）。
   final int revision;
 
-  /// 写入方设备 ID。
+  /// 写入方设备 ID。同上，实际值由 DAO 盖章。
   final String lastWriterId;
 
   /// 服务端版本标记。V1 恒为 NULL。
@@ -3772,11 +3771,11 @@ class ChecklistItemsCompanion extends UpdateCompanion<ChecklistItemRow> {
     this.rowid = const Value.absent(),
   });
   ChecklistItemsCompanion.insert({
-    required int createdAt,
-    required int updatedAt,
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.revision = const Value.absent(),
-    required String lastWriterId,
+    this.lastWriterId = const Value.absent(),
     this.remoteVersion = const Value.absent(),
     required String id,
     required String taskId,
@@ -3784,10 +3783,7 @@ class ChecklistItemsCompanion extends UpdateCompanion<ChecklistItemRow> {
     this.isDone = const Value.absent(),
     required int orderIndex,
     this.rowid = const Value.absent(),
-  }) : createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt),
-       lastWriterId = Value(lastWriterId),
-       id = Value(id),
+  }) : id = Value(id),
        taskId = Value(taskId),
        title = Value(title),
        orderIndex = Value(orderIndex);
@@ -3928,7 +3924,8 @@ class $OccurrenceOverridesTable extends OccurrenceOverrides
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -3939,7 +3936,8 @@ class $OccurrenceOverridesTable extends OccurrenceOverrides
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _deletedAtMeta = const VerificationMeta(
     'deletedAt',
@@ -3973,7 +3971,8 @@ class $OccurrenceOverridesTable extends OccurrenceOverrides
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => '',
   );
   static const VerificationMeta _remoteVersionMeta = const VerificationMeta(
     'remoteVersion',
@@ -4150,16 +4149,12 @@ class $OccurrenceOverridesTable extends OccurrenceOverrides
         _createdAtMeta,
         createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
     }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
         updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
     }
     if (data.containsKey('deleted_at')) {
       context.handle(
@@ -4181,8 +4176,6 @@ class $OccurrenceOverridesTable extends OccurrenceOverrides
           _lastWriterIdMeta,
         ),
       );
-    } else if (isInserting) {
-      context.missing(_lastWriterIdMeta);
     }
     if (data.containsKey('remote_version')) {
       context.handle(
@@ -4387,6 +4380,11 @@ class $OccurrenceOverridesTable extends OccurrenceOverrides
 class OccurrenceOverrideRow extends DataClass
     implements Insertable<OccurrenceOverrideRow> {
   /// 创建时刻，Instant ms。**创建后不再变**。
+  ///
+  /// `clientDefault` 只是让 Companion 不强制调用方填 —— 真正的值由
+  /// `SyncedDao.upsert()` 统一盖章。给个占位默认值而不是让调用方随手填，
+  /// 是为了让「忘了填」与「填错了」都归到同一条路径上去。
+  /// 它不改变 SQL schema（纯客户端默认值），迁移快照不受影响。
   final int createdAt;
 
   /// 最后一次本地写入时刻，Instant ms。
@@ -4402,7 +4400,7 @@ class OccurrenceOverrideRow extends DataClass
   /// V3 的 LWW 与冲突检测（future-sync.md）。
   final int revision;
 
-  /// 写入方设备 ID。
+  /// 写入方设备 ID。同上，实际值由 DAO 盖章。
   final String lastWriterId;
 
   /// 服务端版本标记。V1 恒为 NULL。
@@ -4793,11 +4791,11 @@ class OccurrenceOverridesCompanion
     this.rowid = const Value.absent(),
   });
   OccurrenceOverridesCompanion.insert({
-    required int createdAt,
-    required int updatedAt,
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.revision = const Value.absent(),
-    required String lastWriterId,
+    this.lastWriterId = const Value.absent(),
     this.remoteVersion = const Value.absent(),
     required String id,
     required String taskId,
@@ -4812,10 +4810,7 @@ class OccurrenceOverridesCompanion
     this.endDateOverride = const Value.absent(),
     this.endMinuteOverride = const Value.absent(),
     this.rowid = const Value.absent(),
-  }) : createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt),
-       lastWriterId = Value(lastWriterId),
-       id = Value(id),
+  }) : id = Value(id),
        taskId = Value(taskId),
        occurrenceKey = Value(occurrenceKey),
        action = Value(action);
@@ -5013,7 +5008,8 @@ class $StageOccurrenceStatesTable extends StageOccurrenceStates
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -5024,7 +5020,8 @@ class $StageOccurrenceStatesTable extends StageOccurrenceStates
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _deletedAtMeta = const VerificationMeta(
     'deletedAt',
@@ -5058,7 +5055,8 @@ class $StageOccurrenceStatesTable extends StageOccurrenceStates
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => '',
   );
   static const VerificationMeta _remoteVersionMeta = const VerificationMeta(
     'remoteVersion',
@@ -5169,16 +5167,12 @@ class $StageOccurrenceStatesTable extends StageOccurrenceStates
         _createdAtMeta,
         createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
     }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
         updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
     }
     if (data.containsKey('deleted_at')) {
       context.handle(
@@ -5200,8 +5194,6 @@ class $StageOccurrenceStatesTable extends StageOccurrenceStates
           _lastWriterIdMeta,
         ),
       );
-    } else if (isInserting) {
-      context.missing(_lastWriterIdMeta);
     }
     if (data.containsKey('remote_version')) {
       context.handle(
@@ -5333,6 +5325,11 @@ class $StageOccurrenceStatesTable extends StageOccurrenceStates
 class StageOccurrenceStateRow extends DataClass
     implements Insertable<StageOccurrenceStateRow> {
   /// 创建时刻，Instant ms。**创建后不再变**。
+  ///
+  /// `clientDefault` 只是让 Companion 不强制调用方填 —— 真正的值由
+  /// `SyncedDao.upsert()` 统一盖章。给个占位默认值而不是让调用方随手填，
+  /// 是为了让「忘了填」与「填错了」都归到同一条路径上去。
+  /// 它不改变 SQL schema（纯客户端默认值），迁移快照不受影响。
   final int createdAt;
 
   /// 最后一次本地写入时刻，Instant ms。
@@ -5348,7 +5345,7 @@ class StageOccurrenceStateRow extends DataClass
   /// V3 的 LWW 与冲突检测（future-sync.md）。
   final int revision;
 
-  /// 写入方设备 ID。
+  /// 写入方设备 ID。同上，实际值由 DAO 盖章。
   final String lastWriterId;
 
   /// 服务端版本标记。V1 恒为 NULL。
@@ -5598,11 +5595,11 @@ class StageOccurrenceStatesCompanion
     this.rowid = const Value.absent(),
   });
   StageOccurrenceStatesCompanion.insert({
-    required int createdAt,
-    required int updatedAt,
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.revision = const Value.absent(),
-    required String lastWriterId,
+    this.lastWriterId = const Value.absent(),
     this.remoteVersion = const Value.absent(),
     required String id,
     required String taskId,
@@ -5611,10 +5608,7 @@ class StageOccurrenceStatesCompanion
     required String status,
     this.completedAt = const Value.absent(),
     this.rowid = const Value.absent(),
-  }) : createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt),
-       lastWriterId = Value(lastWriterId),
-       id = Value(id),
+  }) : id = Value(id),
        taskId = Value(taskId),
        stageId = Value(stageId),
        occurrenceKey = Value(occurrenceKey),
@@ -5764,7 +5758,8 @@ class $RemindersTable extends Reminders
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -5775,7 +5770,8 @@ class $RemindersTable extends Reminders
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _deletedAtMeta = const VerificationMeta(
     'deletedAt',
@@ -5809,7 +5805,8 @@ class $RemindersTable extends Reminders
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => '',
   );
   static const VerificationMeta _remoteVersionMeta = const VerificationMeta(
     'remoteVersion',
@@ -5933,16 +5930,12 @@ class $RemindersTable extends Reminders
         _createdAtMeta,
         createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
     }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
         updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
     }
     if (data.containsKey('deleted_at')) {
       context.handle(
@@ -5964,8 +5957,6 @@ class $RemindersTable extends Reminders
           _lastWriterIdMeta,
         ),
       );
-    } else if (isInserting) {
-      context.missing(_lastWriterIdMeta);
     }
     if (data.containsKey('remote_version')) {
       context.handle(
@@ -6102,6 +6093,11 @@ class $RemindersTable extends Reminders
 
 class ReminderRow extends DataClass implements Insertable<ReminderRow> {
   /// 创建时刻，Instant ms。**创建后不再变**。
+  ///
+  /// `clientDefault` 只是让 Companion 不强制调用方填 —— 真正的值由
+  /// `SyncedDao.upsert()` 统一盖章。给个占位默认值而不是让调用方随手填，
+  /// 是为了让「忘了填」与「填错了」都归到同一条路径上去。
+  /// 它不改变 SQL schema（纯客户端默认值），迁移快照不受影响。
   final int createdAt;
 
   /// 最后一次本地写入时刻，Instant ms。
@@ -6117,7 +6113,7 @@ class ReminderRow extends DataClass implements Insertable<ReminderRow> {
   /// V3 的 LWW 与冲突检测（future-sync.md）。
   final int revision;
 
-  /// 写入方设备 ID。
+  /// 写入方设备 ID。同上，实际值由 DAO 盖章。
   final String lastWriterId;
 
   /// 服务端版本标记。V1 恒为 NULL。
@@ -6398,11 +6394,11 @@ class RemindersCompanion extends UpdateCompanion<ReminderRow> {
     this.rowid = const Value.absent(),
   });
   RemindersCompanion.insert({
-    required int createdAt,
-    required int updatedAt,
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.revision = const Value.absent(),
-    required String lastWriterId,
+    this.lastWriterId = const Value.absent(),
     this.remoteVersion = const Value.absent(),
     required String id,
     required String taskId,
@@ -6412,10 +6408,7 @@ class RemindersCompanion extends UpdateCompanion<ReminderRow> {
     this.absoluteMinute = const Value.absent(),
     this.isEnabled = const Value.absent(),
     this.rowid = const Value.absent(),
-  }) : createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt),
-       lastWriterId = Value(lastWriterId),
-       id = Value(id),
+  }) : id = Value(id),
        taskId = Value(taskId),
        kind = Value(kind);
   static Insertable<ReminderRow> custom({
@@ -6570,7 +6563,8 @@ class $TagsTable extends Tags with TableInfo<$TagsTable, TagRow> {
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -6581,7 +6575,8 @@ class $TagsTable extends Tags with TableInfo<$TagsTable, TagRow> {
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _deletedAtMeta = const VerificationMeta(
     'deletedAt',
@@ -6615,7 +6610,8 @@ class $TagsTable extends Tags with TableInfo<$TagsTable, TagRow> {
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => '',
   );
   static const VerificationMeta _remoteVersionMeta = const VerificationMeta(
     'remoteVersion',
@@ -6686,16 +6682,12 @@ class $TagsTable extends Tags with TableInfo<$TagsTable, TagRow> {
         _createdAtMeta,
         createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
     }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
         updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
     }
     if (data.containsKey('deleted_at')) {
       context.handle(
@@ -6717,8 +6709,6 @@ class $TagsTable extends Tags with TableInfo<$TagsTable, TagRow> {
           _lastWriterIdMeta,
         ),
       );
-    } else if (isInserting) {
-      context.missing(_lastWriterIdMeta);
     }
     if (data.containsKey('remote_version')) {
       context.handle(
@@ -6806,6 +6796,11 @@ class $TagsTable extends Tags with TableInfo<$TagsTable, TagRow> {
 
 class TagRow extends DataClass implements Insertable<TagRow> {
   /// 创建时刻，Instant ms。**创建后不再变**。
+  ///
+  /// `clientDefault` 只是让 Companion 不强制调用方填 —— 真正的值由
+  /// `SyncedDao.upsert()` 统一盖章。给个占位默认值而不是让调用方随手填，
+  /// 是为了让「忘了填」与「填错了」都归到同一条路径上去。
+  /// 它不改变 SQL schema（纯客户端默认值），迁移快照不受影响。
   final int createdAt;
 
   /// 最后一次本地写入时刻，Instant ms。
@@ -6821,7 +6816,7 @@ class TagRow extends DataClass implements Insertable<TagRow> {
   /// V3 的 LWW 与冲突检测（future-sync.md）。
   final int revision;
 
-  /// 写入方设备 ID。
+  /// 写入方设备 ID。同上，实际值由 DAO 盖章。
   final String lastWriterId;
 
   /// 服务端版本标记。V1 恒为 NULL。
@@ -7018,20 +7013,17 @@ class TagsCompanion extends UpdateCompanion<TagRow> {
     this.rowid = const Value.absent(),
   });
   TagsCompanion.insert({
-    required int createdAt,
-    required int updatedAt,
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.revision = const Value.absent(),
-    required String lastWriterId,
+    this.lastWriterId = const Value.absent(),
     this.remoteVersion = const Value.absent(),
     required String id,
     required String name,
     required int colorArgb,
     this.rowid = const Value.absent(),
-  }) : createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt),
-       lastWriterId = Value(lastWriterId),
-       id = Value(id),
+  }) : id = Value(id),
        name = Value(name),
        colorArgb = Value(colorArgb);
   static Insertable<TagRow> custom({
@@ -7155,7 +7147,8 @@ class $TaskTagsTable extends TaskTags
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -7166,7 +7159,8 @@ class $TaskTagsTable extends TaskTags
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _deletedAtMeta = const VerificationMeta(
     'deletedAt',
@@ -7200,7 +7194,8 @@ class $TaskTagsTable extends TaskTags
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => '',
   );
   static const VerificationMeta _remoteVersionMeta = const VerificationMeta(
     'remoteVersion',
@@ -7265,16 +7260,12 @@ class $TaskTagsTable extends TaskTags
         _createdAtMeta,
         createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
     }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
         updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
     }
     if (data.containsKey('deleted_at')) {
       context.handle(
@@ -7296,8 +7287,6 @@ class $TaskTagsTable extends TaskTags
           _lastWriterIdMeta,
         ),
       );
-    } else if (isInserting) {
-      context.missing(_lastWriterIdMeta);
     }
     if (data.containsKey('remote_version')) {
       context.handle(
@@ -7376,6 +7365,11 @@ class $TaskTagsTable extends TaskTags
 
 class TaskTagRow extends DataClass implements Insertable<TaskTagRow> {
   /// 创建时刻，Instant ms。**创建后不再变**。
+  ///
+  /// `clientDefault` 只是让 Companion 不强制调用方填 —— 真正的值由
+  /// `SyncedDao.upsert()` 统一盖章。给个占位默认值而不是让调用方随手填，
+  /// 是为了让「忘了填」与「填错了」都归到同一条路径上去。
+  /// 它不改变 SQL schema（纯客户端默认值），迁移快照不受影响。
   final int createdAt;
 
   /// 最后一次本地写入时刻，Instant ms。
@@ -7391,7 +7385,7 @@ class TaskTagRow extends DataClass implements Insertable<TaskTagRow> {
   /// V3 的 LWW 与冲突检测（future-sync.md）。
   final int revision;
 
-  /// 写入方设备 ID。
+  /// 写入方设备 ID。同上，实际值由 DAO 盖章。
   final String lastWriterId;
 
   /// 服务端版本标记。V1 恒为 NULL。
@@ -7574,19 +7568,16 @@ class TaskTagsCompanion extends UpdateCompanion<TaskTagRow> {
     this.rowid = const Value.absent(),
   });
   TaskTagsCompanion.insert({
-    required int createdAt,
-    required int updatedAt,
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.revision = const Value.absent(),
-    required String lastWriterId,
+    this.lastWriterId = const Value.absent(),
     this.remoteVersion = const Value.absent(),
     required String taskId,
     required String tagId,
     this.rowid = const Value.absent(),
-  }) : createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt),
-       lastWriterId = Value(lastWriterId),
-       taskId = Value(taskId),
+  }) : taskId = Value(taskId),
        tagId = Value(tagId);
   static Insertable<TaskTagRow> custom({
     Expression<int>? createdAt,
@@ -7701,7 +7692,8 @@ class $SettingsTable extends Settings
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -7712,7 +7704,8 @@ class $SettingsTable extends Settings
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => 0,
   );
   static const VerificationMeta _deletedAtMeta = const VerificationMeta(
     'deletedAt',
@@ -7746,7 +7739,8 @@ class $SettingsTable extends Settings
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    clientDefault: () => '',
   );
   static const VerificationMeta _remoteVersionMeta = const VerificationMeta(
     'remoteVersion',
@@ -7817,16 +7811,12 @@ class $SettingsTable extends Settings
         _createdAtMeta,
         createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
     }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
         updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
       );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
     }
     if (data.containsKey('deleted_at')) {
       context.handle(
@@ -7848,8 +7838,6 @@ class $SettingsTable extends Settings
           _lastWriterIdMeta,
         ),
       );
-    } else if (isInserting) {
-      context.missing(_lastWriterIdMeta);
     }
     if (data.containsKey('remote_version')) {
       context.handle(
@@ -7940,6 +7928,11 @@ class $SettingsTable extends Settings
 
 class SettingRow extends DataClass implements Insertable<SettingRow> {
   /// 创建时刻，Instant ms。**创建后不再变**。
+  ///
+  /// `clientDefault` 只是让 Companion 不强制调用方填 —— 真正的值由
+  /// `SyncedDao.upsert()` 统一盖章。给个占位默认值而不是让调用方随手填，
+  /// 是为了让「忘了填」与「填错了」都归到同一条路径上去。
+  /// 它不改变 SQL schema（纯客户端默认值），迁移快照不受影响。
   final int createdAt;
 
   /// 最后一次本地写入时刻，Instant ms。
@@ -7955,7 +7948,7 @@ class SettingRow extends DataClass implements Insertable<SettingRow> {
   /// V3 的 LWW 与冲突检测（future-sync.md）。
   final int revision;
 
-  /// 写入方设备 ID。
+  /// 写入方设备 ID。同上，实际值由 DAO 盖章。
   final String lastWriterId;
 
   /// 服务端版本标记。V1 恒为 NULL。
@@ -8156,20 +8149,17 @@ class SettingsCompanion extends UpdateCompanion<SettingRow> {
     this.rowid = const Value.absent(),
   });
   SettingsCompanion.insert({
-    required int createdAt,
-    required int updatedAt,
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.revision = const Value.absent(),
-    required String lastWriterId,
+    this.lastWriterId = const Value.absent(),
     this.remoteVersion = const Value.absent(),
     required String key,
     required String valueJson,
     required String scope,
     this.rowid = const Value.absent(),
-  }) : createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt),
-       lastWriterId = Value(lastWriterId),
-       key = Value(key),
+  }) : key = Value(key),
        valueJson = Value(valueJson),
        scope = Value(scope);
   static Insertable<SettingRow> custom({
@@ -9337,11 +9327,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 }
 
 typedef $$CategoriesTableCreateCompanionBuilder = CategoriesCompanion Function({
-  required int createdAt,
-  required int updatedAt,
+  Value<int> createdAt,
+  Value<int> updatedAt,
   Value<int?> deletedAt,
   Value<int> revision,
-  required String lastWriterId,
+  Value<String> lastWriterId,
   Value<String?> remoteVersion,
   required String id,
   required String name,
@@ -9693,11 +9683,11 @@ class $$CategoriesTableTableManager
               ),
           createCompanionCallback:
               ({
-                required int createdAt,
-                required int updatedAt,
+                Value<int> createdAt = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
                 Value<int?> deletedAt = const Value.absent(),
                 Value<int> revision = const Value.absent(),
-                required String lastWriterId,
+                Value<String> lastWriterId = const Value.absent(),
                 Value<String?> remoteVersion = const Value.absent(),
                 required String id,
                 required String name,
@@ -9774,11 +9764,11 @@ typedef $$CategoriesTableProcessedTableManager =
       PrefetchHooks Function({bool tasksRefs})
     >;
 typedef $$TasksTableCreateCompanionBuilder = TasksCompanion Function({
-  required int createdAt,
-  required int updatedAt,
+  Value<int> createdAt,
+  Value<int> updatedAt,
   Value<int?> deletedAt,
   Value<int> revision,
-  required String lastWriterId,
+  Value<String> lastWriterId,
   Value<String?> remoteVersion,
   required String id,
   required String title,
@@ -10850,11 +10840,11 @@ class $$TasksTableTableManager
               ),
           createCompanionCallback:
               ({
-                required int createdAt,
-                required int updatedAt,
+                Value<int> createdAt = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
                 Value<int?> deletedAt = const Value.absent(),
                 Value<int> revision = const Value.absent(),
-                required String lastWriterId,
+                Value<String> lastWriterId = const Value.absent(),
                 Value<String?> remoteVersion = const Value.absent(),
                 required String id,
                 required String title,
@@ -11123,11 +11113,11 @@ typedef $$TasksTableProcessedTableManager =
       })
     >;
 typedef $$StagesTableCreateCompanionBuilder = StagesCompanion Function({
-  required int createdAt,
-  required int updatedAt,
+  Value<int> createdAt,
+  Value<int> updatedAt,
   Value<int?> deletedAt,
   Value<int> revision,
-  required String lastWriterId,
+  Value<String> lastWriterId,
   Value<String?> remoteVersion,
   required String id,
   required String taskId,
@@ -11615,11 +11605,11 @@ class $$StagesTableTableManager
               ),
           createCompanionCallback:
               ({
-                required int createdAt,
-                required int updatedAt,
+                Value<int> createdAt = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
                 Value<int?> deletedAt = const Value.absent(),
                 Value<int> revision = const Value.absent(),
-                required String lastWriterId,
+                Value<String> lastWriterId = const Value.absent(),
                 Value<String?> remoteVersion = const Value.absent(),
                 required String id,
                 required String taskId,
@@ -11741,11 +11731,11 @@ typedef $$StagesTableProcessedTableManager =
     >;
 typedef $$ChecklistItemsTableCreateCompanionBuilder =
     ChecklistItemsCompanion Function({
-      required int createdAt,
-      required int updatedAt,
+      Value<int> createdAt,
+      Value<int> updatedAt,
       Value<int?> deletedAt,
       Value<int> revision,
-      required String lastWriterId,
+      Value<String> lastWriterId,
       Value<String?> remoteVersion,
       required String id,
       required String taskId,
@@ -12090,11 +12080,11 @@ class $$ChecklistItemsTableTableManager
               ),
           createCompanionCallback:
               ({
-                required int createdAt,
-                required int updatedAt,
+                Value<int> createdAt = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
                 Value<int?> deletedAt = const Value.absent(),
                 Value<int> revision = const Value.absent(),
-                required String lastWriterId,
+                Value<String> lastWriterId = const Value.absent(),
                 Value<String?> remoteVersion = const Value.absent(),
                 required String id,
                 required String taskId,
@@ -12183,11 +12173,11 @@ typedef $$ChecklistItemsTableProcessedTableManager =
     >;
 typedef $$OccurrenceOverridesTableCreateCompanionBuilder =
     OccurrenceOverridesCompanion Function({
-      required int createdAt,
-      required int updatedAt,
+      Value<int> createdAt,
+      Value<int> updatedAt,
       Value<int?> deletedAt,
       Value<int> revision,
-      required String lastWriterId,
+      Value<String> lastWriterId,
       Value<String?> remoteVersion,
       required String id,
       required String taskId,
@@ -12675,11 +12665,11 @@ class $$OccurrenceOverridesTableTableManager
               ),
           createCompanionCallback:
               ({
-                required int createdAt,
-                required int updatedAt,
+                Value<int> createdAt = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
                 Value<int?> deletedAt = const Value.absent(),
                 Value<int> revision = const Value.absent(),
-                required String lastWriterId,
+                Value<String> lastWriterId = const Value.absent(),
                 Value<String?> remoteVersion = const Value.absent(),
                 required String id,
                 required String taskId,
@@ -12784,11 +12774,11 @@ typedef $$OccurrenceOverridesTableProcessedTableManager =
     >;
 typedef $$StageOccurrenceStatesTableCreateCompanionBuilder =
     StageOccurrenceStatesCompanion Function({
-      required int createdAt,
-      required int updatedAt,
+      Value<int> createdAt,
+      Value<int> updatedAt,
       Value<int?> deletedAt,
       Value<int> revision,
-      required String lastWriterId,
+      Value<String> lastWriterId,
       Value<String?> remoteVersion,
       required String id,
       required String taskId,
@@ -13238,11 +13228,11 @@ class $$StageOccurrenceStatesTableTableManager
               ),
           createCompanionCallback:
               ({
-                required int createdAt,
-                required int updatedAt,
+                Value<int> createdAt = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
                 Value<int?> deletedAt = const Value.absent(),
                 Value<int> revision = const Value.absent(),
-                required String lastWriterId,
+                Value<String> lastWriterId = const Value.absent(),
                 Value<String?> remoteVersion = const Value.absent(),
                 required String id,
                 required String taskId,
@@ -13346,11 +13336,11 @@ typedef $$StageOccurrenceStatesTableProcessedTableManager =
       PrefetchHooks Function({bool taskId, bool stageId})
     >;
 typedef $$RemindersTableCreateCompanionBuilder = RemindersCompanion Function({
-  required int createdAt,
-  required int updatedAt,
+  Value<int> createdAt,
+  Value<int> updatedAt,
   Value<int?> deletedAt,
   Value<int> revision,
-  required String lastWriterId,
+  Value<String> lastWriterId,
   Value<String?> remoteVersion,
   required String id,
   required String taskId,
@@ -13725,11 +13715,11 @@ class $$RemindersTableTableManager
               ),
           createCompanionCallback:
               ({
-                required int createdAt,
-                required int updatedAt,
+                Value<int> createdAt = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
                 Value<int?> deletedAt = const Value.absent(),
                 Value<int> revision = const Value.absent(),
-                required String lastWriterId,
+                Value<String> lastWriterId = const Value.absent(),
                 Value<String?> remoteVersion = const Value.absent(),
                 required String id,
                 required String taskId,
@@ -13821,11 +13811,11 @@ typedef $$RemindersTableProcessedTableManager =
       PrefetchHooks Function({bool taskId})
     >;
 typedef $$TagsTableCreateCompanionBuilder = TagsCompanion Function({
-  required int createdAt,
-  required int updatedAt,
+  Value<int> createdAt,
+  Value<int> updatedAt,
   Value<int?> deletedAt,
   Value<int> revision,
-  required String lastWriterId,
+  Value<String> lastWriterId,
   Value<String?> remoteVersion,
   required String id,
   required String name,
@@ -14119,11 +14109,11 @@ class $$TagsTableTableManager
               ),
           createCompanionCallback:
               ({
-                required int createdAt,
-                required int updatedAt,
+                Value<int> createdAt = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
                 Value<int?> deletedAt = const Value.absent(),
                 Value<int> revision = const Value.absent(),
-                required String lastWriterId,
+                Value<String> lastWriterId = const Value.absent(),
                 Value<String?> remoteVersion = const Value.absent(),
                 required String id,
                 required String name,
@@ -14191,11 +14181,11 @@ typedef $$TagsTableProcessedTableManager =
       PrefetchHooks Function({bool taskTagsRefs})
     >;
 typedef $$TaskTagsTableCreateCompanionBuilder = TaskTagsCompanion Function({
-  required int createdAt,
-  required int updatedAt,
+  Value<int> createdAt,
+  Value<int> updatedAt,
   Value<int?> deletedAt,
   Value<int> revision,
-  required String lastWriterId,
+  Value<String> lastWriterId,
   Value<String?> remoteVersion,
   required String taskId,
   required String tagId,
@@ -14552,11 +14542,11 @@ class $$TaskTagsTableTableManager
               ),
           createCompanionCallback:
               ({
-                required int createdAt,
-                required int updatedAt,
+                Value<int> createdAt = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
                 Value<int?> deletedAt = const Value.absent(),
                 Value<int> revision = const Value.absent(),
-                required String lastWriterId,
+                Value<String> lastWriterId = const Value.absent(),
                 Value<String?> remoteVersion = const Value.absent(),
                 required String taskId,
                 required String tagId,
@@ -14651,11 +14641,11 @@ typedef $$TaskTagsTableProcessedTableManager =
       PrefetchHooks Function({bool taskId, bool tagId})
     >;
 typedef $$SettingsTableCreateCompanionBuilder = SettingsCompanion Function({
-  required int createdAt,
-  required int updatedAt,
+  Value<int> createdAt,
+  Value<int> updatedAt,
   Value<int?> deletedAt,
   Value<int> revision,
-  required String lastWriterId,
+  Value<String> lastWriterId,
   Value<String?> remoteVersion,
   required String key,
   required String valueJson,
@@ -14881,11 +14871,11 @@ class $$SettingsTableTableManager
               ),
           createCompanionCallback:
               ({
-                required int createdAt,
-                required int updatedAt,
+                Value<int> createdAt = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
                 Value<int?> deletedAt = const Value.absent(),
                 Value<int> revision = const Value.absent(),
-                required String lastWriterId,
+                Value<String> lastWriterId = const Value.absent(),
                 Value<String?> remoteVersion = const Value.absent(),
                 required String key,
                 required String valueJson,
