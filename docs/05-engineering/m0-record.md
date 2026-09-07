@@ -102,6 +102,82 @@ M1 需要读取系统时区时再决定：用 `flutter_timezone`，还是在本�
 > 守卫里还有一条容易被忽略的用例：**「lib/ 下有可供扫描的源码」**。
 > 没有它的话，一个扫到 0 个文件的守卫会报绿 —— 而那个绿没有任何信息量。
 
+### 2.1b 🔴 但守卫的第一版有 3 处漏报 + 1 处假阳性（评审方变异演练发现）
+
+**上面那次演示只证明了「已实现的规则能红」，没有证明「该实现的规则都实现了」。**
+评审方对守卫本身做变异演练，注入 4 个探针，结果是 **3 个被放过、1 个误报**：
+
+| 探针 | 第一版结果 | 问题 |
+|---|---|---|
+| `DateTime.timestamp()` | ❌ 放过 | 只匹配字面量 `DateTime.now()`。而 `DateTime.timestamp()` 是 dart:core 自 3.0 起的正式 API，同样读环境时钟，**完全落在规则的意图内** |
+| 跨 feature 引用 presentation | ❌ 放过 | 逐格转写 module-map §3 表格时**漏了最后一行** |
+| barrel 文件 `domain/repositories.dart` | ❌ 放过 | 模式带尾斜杠，只挡目录形式 |
+| `lib/data/repositories/core/x.dart` import domain | ❌ **误报** | `_layerOf` 用任意位置子串匹配，路径含 `/core/` 就判为 core 层 |
+
+四条我都独立复现了。**第四条最严重**：它把「data 依赖 domain」这个正常的依赖倒置方向报成违规。
+**假阳性比漏报更伤守卫 —— 它会训练人去绕开守卫。**
+
+修复后重跑同一组探针（前三个应红、第四个应绿）：
+
+```
+分层依赖方向正确 [E]
+    - lib/features/task/presentation/_probe_c.dart:1
+        违反: presentation 不得持有 Repository（写路径必须经 TaskCommand，FR-AI-01）
+
+feature 之间不得跨 presentation 引用（module-map §3 末行） [E]
+    - lib/features/task/presentation/_probe_b.dart:1
+        违反: feature「task」的 presentation 不得引用 feature「settings」的 presentation
+
+领域层与应用层不得直接读环境时钟 [E]
+    - lib/domain/policies/_probe_a.dart:2
+        违反: DateTime.timestamp() 直接读环境时钟；必须经注入的 Clock
+
+（_probe_d.dart 不再出现 —— 假阳性消失）
+```
+
+删除全部探针后：`00:00 +6: All tests passed!`
+
+**修复过程中守卫又抓到了自己**：新增的「测试代码不得使用真实时钟」守卫，
+把守卫自身源码里的规则定义行（`'DateTime.now()'` 作为字符串字面量）报成了违规。
+已加入白名单并逐条注明理由 —— 白名单是守卫的盲区，不能随手加。
+
+> 这一轮印证了 [testing-strategy §1.4 第 ② 条](testing-strategy.md)刚补上的那句：
+> **变异演练不是建立时做一次的仪式。** 守卫每次实质性改动后都要重跑 ——
+> 我在这次修复中就两次让它抓到了新问题。
+
+### 2.1c 坏测试扫描器 `tool/lint_tests.dart`（补齐 S3）
+
+[测试策略 §3.4](testing-strategy.md) 写了这个工具，但此前**只写在文档里没有实现** ——
+按本项目自己的标准，「文档写着有、实际没有的守卫」比没写更危险：它会让人以为坏测试已被自动拦截。
+
+已实现并接入 CI。自检（手写坏样本 + 手写期望）：
+
+```
+--- 自检：坏测试扫描器能否正确失败 ---
+  命中: 被注释掉的断言
+  命中: 按平台静默跳过
+  命中: skip 必须附说明字符串
+  命中: 测试块内没有任何断言
+  误报好样本: 否
+  结果: PASS —— 四类坏测试都能让它变红，好测试不误报
+```
+
+对真实仓库演示失败（注入无断言测试 + 被注释掉的断言）：
+
+```
+扫描 5 个测试文件
+发现 3 处问题：
+  被注释掉的断言 —— 要么删掉整条测试，要么修好它
+    test/domain/_bad_test.dart:10
+      // expect(1, 2);
+  测试块内没有任何断言 —— 它只能发现崩溃，发现不了错误
+    test/domain/_bad_test.dart:4
+      test('无断言的测试')
+```
+
+退出码：有坏测试 `exit=1`，无坏测试 `exit=0`，自检失败 `exit=2`。
+删除注入文件后回到「未发现结构上不可能失败的测试」。
+
 ### 2.2 文档链接校验器：自检 + 对真实仓库演示失败
 
 见[测试策略 §1.4.1](testing-strategy.md)，两个方向的输出已在那里留档。
@@ -126,18 +202,23 @@ M1 需要读取系统时区时再决定：用 `flutter_timezone`，还是在本�
 | `AndroidManifest`：`RECEIVE_BOOT_COMPLETED` / `SCHEDULE_EXACT_ALARM` / 启动接收器 | ✅ |
 | `analysis_options.yaml`（含 riverpod_lint） | ✅ |
 | `core/result`、`core/time`、`core/id` 最小实现 | ✅ |
-| 架构守卫测试（4 条） | ✅ 已证明能红 |
+| 架构守卫测试（**6 条**） | ✅ 已证明能红，且经变异演练修掉 3 漏报 + 1 假阳性 |
+| 坏测试扫描器 `tool/lint_tests.dart` | ✅ 自检 + 真实仓库失败演示 |
 | rrule 契约测试（14 条） | ✅ |
 | uuid v7 测试（5 条） | ✅ |
 | 应用冒烟（2 条） | ✅ |
 | CI（analyze / format / codegen 校验 / test / **守卫有效性** / build） | ✅ |
 | `flutter build apk --debug` | ✅ |
 
-**测试总数 26，`dart analyze --fatal-infos --fatal-warnings` 零问题。**
+**测试总数 28，`dart analyze --fatal-infos --fatal-warnings` 零问题，`dart format` 无差异。**
 
 ---
 
 ## 4. 未完成 / 移交 M1
+
+> 评审方指出的 S3（文档写了但未实现的两条守卫）已在本轮补齐：
+> `tool/lint_tests.dart` 见 §2.1c；「测试代码不得使用真实时钟」已作为守卫测试的一条实现。
+> 两条都不再是「文档写着有、实际没有」。
 
 | 项 | 说明 |
 |---|---|

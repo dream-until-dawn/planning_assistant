@@ -32,11 +32,17 @@ jobs:
       - name: 文档链接（含校验器自检）
         run: python tool/check_doc_links.py --self-test
 
+      # 坏测试扫描：拦截结构上就不可能失败的测试。
+      # 同样带 --self-test —— 用已知坏样本证明扫描器自己能正确失败。
+      # 见 docs/05-engineering/testing-strategy.md §3.4
+      - name: 坏测试扫描（含扫描器自检）
+        run: dart tool/lint_tests.dart --self-test
+
       - name: 静态分析
         run: dart analyze --fatal-infos --fatal-warnings
 
       - name: 格式
-        run: dart format --output=none --set-exit-if-changed lib test
+        run: dart format --output=none --set-exit-if-changed lib test tool
 
       # ── 代码生成产物必须与源同步 ──────────────────────────────────
       # 生成产物入库（conventions §4），因此改了注解却忘记重新生成会被这里抓到。
