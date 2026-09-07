@@ -29,6 +29,7 @@
 | 20 | [构建与发布](05-engineering/build-and-release.md) | 怎么出可安装的 APK | ✅ 定稿 |
 | 21 | [本机环境探针结论](05-engineering/environment-notes.md) | 环境坑与规避方式 | ✅ 实测 |
 | 21b | [探针产物](05-engineering/probe-artifacts/README.md) | 上一条结论的可复现依据（lock + 复现脚本） | ✅ 可复跑 |
+| 21c | [M0 执行记录](05-engineering/m0-record.md) | 工程基建的落地结果与**守卫变红的实际输出** | ✅ 已完成 |
 | 22 | [架构决策记录 ADR](06-adr/README.md) | 关键选型的理由与代价 | ✅ 7 条 |
 | 23 | [路线图与里程碑](07-roadmap/roadmap.md) | 分几期、每期验收什么 | ✅ 定稿 |
 

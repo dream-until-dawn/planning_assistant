@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  FLUTTER_VERSION: '3.47.0'
+
+jobs:
+  verify:
+    name: 分析 · 代码生成校验 · 测试 · 守卫
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: 依赖
+        run: flutter pub get
+
+      # ── 文档链接校验 ──────────────────────────────────────────────
+      # 必须带 --self-test：它会先用已知坏链证明校验器自己能正确变红，
+      # 再校验全仓。不带自检的校验结果不予采信。
+      # 见 docs/05-engineering/testing-strategy.md §1.4
+      - name: 文档链接（含校验器自检）
+        run: python tool/check_doc_links.py --self-test
+
+      - name: 静态分析
+        run: dart analyze --fatal-infos --fatal-warnings
+
+      - name: 格式
+        run: dart format --output=none --set-exit-if-changed lib test
+
+      # ── 代码生成产物必须与源同步 ──────────────────────────────────
+      # 生成产物入库（conventions §4），因此改了注解却忘记重新生成会被这里抓到。
+      - name: 代码生成校验
+        run: |
+          dart run build_runner build --delete-conflicting-outputs
+          if ! git diff --quiet; then
+            echo "::error::代码生成产物与源码不同步，请本地跑一次 build_runner 并提交"
+            git diff --stat
+            exit 1
+          fi
+
+      - name: 测试
+        run: flutter test --coverage
+
+      # ── 守卫必须被证明能失败 ─────────────────────────────────────
+      # 这一步不是走过场：注入一个真实违规，断言守卫**确实变红**。
+      # 若守卫因任何原因失灵（正则写错、路径判断错、文件扫不到），
+      # 它会在这里暴露，而不是在它对着违规代码报绿之后才被发现。
+      # 见 docs/05-engineering/testing-strategy.md §1.4 第 ② 条
+      - name: 守卫有效性（注入违规应变红）
+        run: |
+          set -e
+          mkdir -p lib/domain/policies
+          cat > lib/domain/policies/_ci_violation_probe.dart <<'EOF'
+          import 'package:flutter/material.dart';
+          class CiViolationProbe { Widget? w; DateTime t() => DateTime.now(); }
+          EOF
+          if flutter test test/architecture/layer_dependency_test.dart > /dev/null 2>&1; then
+            echo "::error::守卫对着已知违规报绿 —— 守卫本身失灵，其一切结论不可信"
+            rm -f lib/domain/policies/_ci_violation_probe.dart
+            exit 1
+          fi
+          echo "守卫按预期变红"
+          rm -f lib/domain/policies/_ci_violation_probe.dart
+          # 还原后必须回绿，确认不是恒红
+          flutter test test/architecture/layer_dependency_test.dart
+
+  build:
+    name: 构建 Android 包
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter build apk --debug

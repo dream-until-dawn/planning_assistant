@@ -1,0 +1,64 @@
+# 静态分析配置
+#
+# 规则依据：docs/05-engineering/conventions.md §6
+# 「禁止硬编码颜色 / 禁止 DateTime.now() / 禁止用 assert 表达不变量」这三条
+# 无法用现成 lint 表达，由 test/architecture/ 下的守卫测试强制，
+# 见 docs/05-engineering/testing-strategy.md §6。
+
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    # 这些在本项目中一律按错误处理，而不是警告
+    unused_import: error
+    unused_local_variable: error
+    dead_code: error
+    invalid_annotation_target: ignore # freezed + json_serializable 已知误报
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+    - "lib/l10n/generated/**"
+    - "docs/05-engineering/probe-artifacts/**"
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
+
+  plugins:
+    # riverpod_lint 3.1.9 走 Dart 原生分析器插件协议。
+    # 注意：不要声明 custom_lint，与之冲突，见 docs/01-architecture/tech-stack.md §6
+    - riverpod_lint
+
+linter:
+  rules:
+    # —— 正确性 ——
+    always_declare_return_types: true
+    avoid_dynamic_calls: true
+    unawaited_futures: true # 漏 await 是异步 bug 的主要来源
+    avoid_slow_async_io: true
+    cancel_subscriptions: true
+    close_sinks: true
+    test_types_in_equals: true
+    throw_in_finally: true
+
+    # —— 可读性 ——
+    avoid_print: true # 用 core/logging 的门面
+    prefer_single_quotes: true
+    require_trailing_commas: true # diff 更干净
+    sort_child_properties_last: true
+    directives_ordering: true
+    curly_braces_in_flow_control_structures: true
+
+    # —— 性能 ——
+    prefer_const_constructors: true
+    prefer_const_constructors_in_immutables: true
+    prefer_const_declarations: true
+    prefer_const_literals_to_create_immutables: true
+    prefer_final_locals: true
+
+    # —— 文档 ——
+    # public_member_api_docs 暂不开启：骨架期会产生大量噪声，
+    # M1 领域层成型后再对 lib/domain/ 单独开启。

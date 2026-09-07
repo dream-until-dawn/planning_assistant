@@ -123,10 +123,10 @@ repositories {
 
 `permission_handler_android` 要求 `compileSdk = 37`，而本机的 android-37.0 是 **rc2 预览版**。
 
-**当前处置**：在 `android/app/build.gradle.kts` 显式写 `compileSdk = 37`，已验证可构建可运行。
-
-**待决**：`flutter_local_notifications` 22.x 自带通知权限申请能力，`permission_handler` 未必必需。
-M0 检查表中列一项：评估移除 `permission_handler`，把 compileSdk 降回稳定版 36。详见 [ADR-0007](../06-adr/ADR-0007-toolchain-pinning.md)。
+**✅ M0 已解决**：确认 `flutter_local_notifications 22.3.0` 自带
+`requestNotificationsPermission()` 与 `requestExactAlarmsPermission()`，V1 的权限需求由它全覆盖，
+因此**移除 `permission_handler`，`compileSdk` 降回稳定版 36**，`flutter build apk --debug` 通过。
+本项目不再依赖任何预览版 SDK。见 [M0 执行记录 §1.1](m0-record.md)。
 
 ### 3.3 🟠 AGP 9 弃用警告
 
@@ -215,10 +215,12 @@ await plugin.initialize(settings: initializationSettings);
 
 实现开始前逐条确认：
 
-- [ ] 项目 `android/` 下两个 gradle 文件已配阿里云镜像（§3.1）
-- [ ] `compileSdk` 决策落地：保留 `permission_handler` 用 37，或移除后降回 36（§3.2）
-- [ ] core library desugaring 已启用（§3.4）
-- [ ] `flutter_timezone` 的替代方案已评估（§3.3）
-- [ ] Impeller 未被显式关闭（§3.7）
-- [ ] `uuid` 包的 v7 生成 API 已实测确认（见[横切关注点](../01-architecture/cross-cutting.md) §2）
-- [ ] 重复引擎探针 P-3/P-4/P-5 已完成并转化为测试用例
+- [x] 项目 `android/` 下两个 gradle 文件已配阿里云镜像（§3.1）
+- [x] **`compileSdk` 决策落地：移除 `permission_handler`，降回稳定版 36**（§3.2）
+- [x] core library desugaring 已启用（§3.4）
+- [~] `flutter_timezone` 的替代方案已评估（§3.3）—— M0 未引入该依赖，KGP 警告当前不存在；M1 需读系统时区时再定
+- [x] Impeller 未被显式关闭（§3.7）
+- [x] `uuid` 包的 v7 已实测确认，且断言了**时间有序性**而非仅「能调用」
+- [x] 重复引擎探针 P-1..P-5 已完成，转为 `test/domain/rrule_library_contract_test.dart` 的 14 条常驻测试
+
+执行结果与守卫变红的实际输出见 [M0 执行记录](m0-record.md)。
