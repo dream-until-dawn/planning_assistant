@@ -416,3 +416,61 @@ golden 测试覆盖开关两种状态（NFR-A11Y-03）。
 
 > 这条测试必须能被「把某个颜色调淡一点」弄红。M1 的变异演练会验证这一点
 > （见[测试策略](../05-engineering/testing-strategy.md) §3.1）。
+
+---
+
+## 附录 A：对比度断言表（机检）
+
+§2 开头写着「下表所有对比度**均为按 WCAG 2.1 公式实算所得**」。
+**那句话此前只靠人守。** 本表是它的可执行形式：
+
+`test/design/doc_contrast_test.dart` 逐行按 WCAG 2.1 重算，不符即红；
+并检查**正文里出现的每一个实测数字都能在本表里找到**，
+所以正文的数字也不可能悄悄漂移。
+
+> 为什么需要它：conventions §5 的文档同步检查保证「改了 token 就得改文档」，
+> 但**不保证两边说的是同一件事**。M2 里出现过一次「代码对、文档错」——
+> 两边都没被改，同步检查无从触发。这个方向的不一致更危险，
+> 因为文档是人读的，而没人会去读测试来确认一个色值。
+
+表中带「已废弃 / 初版」字样的行是**历史值**，故意保留：
+它们记录的是当初错在哪，重算它们同样有意义（验证那个旧色确实是那个比值）。
+
+<!-- CONTRAST-TABLE-BEGIN -->
+| 说明 | 前景 | 背景 | 比值 | 出现在 |
+|---|---|---|---|---|
+| 逾期填充色误作文字（初版缺陷） | `#F5A38C` | `#FDFBF7` | 1.94:1 | §2 引言 |
+| 白字在品牌色上（禁止） | `#FFFFFF` | `#7FD1C1` | 1.78:1 | §2.1 |
+| onBrand 在 primary 上 | `#1F3D37` | `#7FD1C1` | 6.62:1 | §2.1 |
+| onBrand 在 secondary 上 | `#1F3D37` | `#FFB7C5` | 7.21:1 | §2.1 |
+| onBrand 在 tertiary 上 | `#1F3D37` | `#FFD79A` | 8.67:1 | §2.1 |
+| text.primary vs canvas | `#3A3742` | `#FDFBF7` | 11.26:1 | §2.3 |
+| text.secondary vs canvas | `#6E6A78` | `#FDFBF7` | 5.08:1 | §2.3 |
+| text.disabled vs canvas（豁免） | `#A9A5B0` | `#FDFBF7` | 2.34:1 | §2.3 |
+| 白字 vs 暗 card（暗色最差） | `#FFFFFF` | `#26242C` | 15.32:1 | §2.3 |
+| 白字 vs 暗 sunken（暗色最好） | `#FFFFFF` | `#141317` | 18.50:1 | §2.3 |
+| done.text 三表面最差 | `#3F7A55` | `#F5F1EA` | 4.52:1 | §2.4 |
+| soon.text 三表面最差 | `#916629` | `#F5F1EA` | 4.51:1 | §2.4 |
+| overdue.text 三表面最差 | `#A35B43` | `#F5F1EA` | 4.51:1 | §2.4 |
+| info.text 三表面最差 | `#3F6FA8` | `#F5F1EA` | 4.60:1 | §2.4 |
+| danger.text 三表面最差 | `#A85555` | `#F5F1EA` | 4.55:1 | §2.4 |
+| done.text 初版值（已废弃） | `#417F58` | `#F5F1EA` | 4.24:1 | §2.4 修正说明 |
+| soon.text 初版值（已废弃） | `#94682A` | `#F5F1EA` | 4.37:1 | §2.4 修正说明 |
+| overdue.text 初版值（已废弃） | `#A85E45` | `#F5F1EA` | 4.29:1 | §2.4 修正说明 |
+| done.text 初版 vs canvas（当初只算了这个） | `#417F58` | `#FDFBF7` | 4.62:1 | §2.4 修正说明 |
+| danger.fill 暗色最差 | `#E88B8B` | `#26242C` | 6.20:1 | §2.4 |
+| soon.fill 暗色最好 | `#FFC97A` | `#141317` | 12.23:1 | §2.4 |
+| done.fill 作文字 vs canvas（不达标，拆分依据） | `#8FD9A8` | `#FDFBF7` | 1.61:1 | §10.2 |
+| primary vs canvas | `#7FD1C1` | `#FDFBF7` | 1.72:1 | §10.2 |
+| primary vs card | `#7FD1C1` | `#FFFFFF` | 1.78:1 | §10.2 |
+| primary vs sunken | `#7FD1C1` | `#F5F1EA` | 1.58:1 | §10.2 |
+| primaryGraphic vs canvas | `#379986` | `#FDFBF7` | 3.35:1 | §10.2 |
+| primaryGraphic vs card | `#379986` | `#FFFFFF` | 3.46:1 | §10.2 |
+| primaryGraphic vs sunken | `#379986` | `#F5F1EA` | 3.08:1 | §10.2 |
+| primaryDark vs 暗 canvas | `#5FB3A3` | `#1B1A1F` | 6.97:1 | §10.2 |
+| primaryDark vs 暗 card | `#5FB3A3` | `#26242C` | 6.17:1 | §10.2 |
+| primaryDark vs 暗 sunken | `#5FB3A3` | `#141317` | 7.46:1 | §10.2 |
+| 暗色态 #5FB3A3 vs 亮 canvas（方式 B 不成立） | `#5FB3A3` | `#FDFBF7` | 2.40:1 | §10.2 |
+| 暗色态 vs 亮 card | `#5FB3A3` | `#FFFFFF` | 2.48:1 | §10.2 |
+| 暗色态 vs 亮 sunken | `#5FB3A3` | `#F5F1EA` | 2.20:1 | §10.2 |
+<!-- CONTRAST-TABLE-END -->
