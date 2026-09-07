@@ -1,0 +1,6 @@
+name: rrule_probe
+publish_to: none
+environment:
+  sdk: ^3.13.0
+dependencies:
+  rrule: ^0.2.18
