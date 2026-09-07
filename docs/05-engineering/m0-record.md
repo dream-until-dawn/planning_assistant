@@ -218,6 +218,81 @@ lib/ 下每个文件都必须被分类到某一层（否则守卫对它静默失
 > ③ **已实现的规则在所有该生效的地方都生效** → 只能靠「未分类即失败」这类**结构性断言**兜底，
 > 因为它的失效方式是沉默的。
 
+### 2.1e 🔴 第三轮：修 B3 时**过冲**，守卫开始禁止文档规定的设计
+
+B3 的修法把 feature 名取成「层段之前的完整路径」，于是 `views/timeline` 与 `views/shared`
+成了两个不同的 feature。实测：
+
+```
+feature 之间不得跨 presentation 引用 [E]
+    - lib/features/views/timeline/presentation/timeline_page.dart:1
+        import '../../shared/presentation/filter_bar.dart';
+        违反: feature「views/timeline」的 presentation 不得引用 feature「views/shared」的 presentation
+```
+
+**但这正是文档规定要做的事**：[module-map §1](../01-architecture/module-map.md) 把
+`views/shared/` 与四视图并列；[view-specs §0.3](../03-design/view-specs.md) 写明顶部筛选条是
+「**同一个组件，同一份状态**」。守卫会在 M2/M3 一动手就红，而红的是正确代码。
+
+#### 三轮失效方式的对比
+
+| 轮次 | 失效方式 | 症状 | 「注入违规 → 红」能否发现 |
+|---|---|---|---|
+| 1 | 规则写错 / 漏写 | 错误代码变绿 | ✅ 能 |
+| 2 (B3) | 文件根本没被扫 | 错误代码变绿，**且无声** | ❌ 不能（违规文件在盲区里） |
+| 3 (B4) | 规则**管得太宽** | **正确代码变红** | ❌ **永远不能** |
+
+B3 与 B4 是同一次改动的一体两面。第 3 类的症状与前两类相反，因此
+**单向验证（只验「违规必红」）对它完全免疫**。
+
+#### 修法：feature 粒度与层位置解耦
+
+| | 取法 | 例（`features/views/gantt/presentation/x.dart`） |
+|---|---|---|
+| feature 名 | `features/` 之后的**第一段** | `views` |
+| 层 | 从第 2 段起、任意深度上**第一个**层段 | `presentation` |
+
+于是 `views/gantt` 与 `views/shared` 同属 feature `views`（可互相引用），
+而 `views` 与 `task` 之间仍然受约束。B3 修的是「层认不出来」，不需要连 feature 粒度一起改。
+
+#### 治本：守卫自带**双向**夹具表
+
+这是本轮最重要的产出。守卫里新增三条不依赖仓库现状的测试：
+
+| 夹具 | 锁住什么 |
+|---|---|
+| `_legalCases`（9 条） | **文档明文规定的正常写法必须判绿** —— 含共享筛选条、依赖倒置、路径含 `core` 段的 data 层文件等 |
+| `_illegalCases`（9 条） | 违规必须判红，**且理由对得上**（不是随便红一下） |
+| import 解析 | 条件 import / 跨行 import 的每个 URI 都要取到，注释里的不能取 |
+
+为此把判定逻辑抽成纯函数 `checkImport(文件路径, import目标)`，夹具用合成输入直接驱动它。
+**只跑真实文件的话，「正常写法被误判」要等到 M2 写页面时才暴露。**
+
+#### 顺带修掉的 S5 / S6
+
+`_importRe` 是逐行正则、只取第一个字符串字面量，被两种合法写法绕过：
+
+```dart
+// S5 条件 import —— 只有第一个 URI 被检查
+import 'stub.dart' if (dart.library.io) 'package:planning_assistant/data/x.dart';
+// S6 跨行 import
+import
+    'package:planning_assistant/data/x.dart';
+```
+
+改为按 `;` 切分指令、取出每条指令的**全部**字符串字面量，并先剥掉注释。
+两条一起解决，将来的 `export ... show/hide` 也不用再补一次。
+
+修复后：两个探针都变红（`违反: presentation 不得依赖 data`），
+`timeline_page.dart` 不再被误判，`views/gantt → task` 仍然变红。
+
+#### 顺带修掉一处文档自相矛盾
+
+module-map §2 标题写「feature 内部结构（**强制统一**）」却只给了两级形态，
+与 §1 的 `features/views/<view>/` 三级结构**自相矛盾**，此前没有任何东西检验过。
+守卫照 §1 实现就撞上了 §2 的措辞 —— **这是守卫的功劳**。
+§2 已改写为允许一层可选子模块，并明确「feature 边界在第一段」。
+
 ### 2.1c 坏测试扫描器 `tool/lint_tests.dart`（补齐 S3）
 
 [测试策略 §3.4](testing-strategy.md) 写了这个工具，但此前**只写在文档里没有实现** ——
@@ -275,7 +350,7 @@ lib/ 下每个文件都必须被分类到某一层（否则守卫对它静默失
 | `AndroidManifest`：`RECEIVE_BOOT_COMPLETED` / `SCHEDULE_EXACT_ALARM` / 启动接收器 | ✅ |
 | `analysis_options.yaml`（含 riverpod_lint） | ✅ |
 | `core/result`、`core/time`、`core/id` 最小实现 | ✅ |
-| 架构守卫测试（**7 条**） | ✅ 经两轮变异演练：修掉 3 漏报 + 1 假阳性，再修掉「整片目录零覆盖」并加结构性断言 |
+| 架构守卫测试（**9 条**，含双向夹具） | ✅ 经三轮变异演练：修掉 3 漏报 + 1 假阳性 → 整片目录零覆盖 → 规则过冲禁止合法写法 |
 | 坏测试扫描器 `tool/lint_tests.dart` | ✅ 自检 + 真实仓库失败演示 |
 | rrule 契约测试（14 条） | ✅ |
 | uuid v7 测试（5 条） | ✅ |
@@ -283,7 +358,7 @@ lib/ 下每个文件都必须被分类到某一层（否则守卫对它静默失
 | CI（analyze / format / codegen 校验 / test / **守卫有效性** / build） | ✅ |
 | `flutter build apk --debug` | ✅ |
 
-**测试总数 29，`dart analyze --fatal-infos --fatal-warnings` 零问题，`dart format` 无差异。**
+**测试总数 31，`dart analyze --fatal-infos --fatal-warnings` 零问题，`dart format` 无差异。**
 
 ---
 

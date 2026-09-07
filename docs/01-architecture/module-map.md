@@ -75,11 +75,28 @@ planning_assistant/
 ## 2. feature 内部结构（强制统一）
 
 ```
-features/<name>/
+features/<name>/[<子模块>/]
 ├── presentation/    Page / Widget / 局部状态
 ├── application/     Provider / UseCase / 视图模型
 └── domain/          仅当该 feature 有自己独有的领域概念时才建，否则不建
 ```
+
+**允许一层可选的子模块**：当一个 feature 内部有多个并列的同类模块时（§1 中
+`features/views/` 下的 `shared` / `timeline` / `task_list` / `calendar` / `gantt` 就是如此），
+可以在 feature 名与层目录之间加一级。层目录的三个名字**不变**，这一点是强制的。
+
+| 形态 | 例 | feature 名 |
+|---|---|---|
+| 两级 | `features/task/presentation/` | `task` |
+| 三级（带子模块） | `features/views/gantt/presentation/` | **`views`** |
+
+> ⚠️ **feature 边界在第一段**：`views/gantt` 与 `views/shared` 属于**同一个 feature**，
+> 因此它们之间可以直接引用（view-specs §0.3 的「同一个筛选条组件」正依赖这一点），
+> 而 §3 的「不得跨 feature 引用 presentation」约束的是 `views` 与 `task` 之间。
+>
+> 初版 §2 只写了两级形态、且标注「强制统一」，与 §1 的三级结构自相矛盾。
+> 该矛盾是在 M0 写守卫时被撞出来的：守卫照 §1 实现，就违反了 §2 的措辞
+> —— 详见 [M0 执行记录 §2.1e](../05-engineering/m0-record.md)。
 
 **禁止**在 feature 里建 `data/`。所有持久化实现都归 `lib/data/`，避免同一张表被多处写。
 
