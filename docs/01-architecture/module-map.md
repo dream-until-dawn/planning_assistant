@@ -109,8 +109,18 @@ features/<name>/[<子模块>/]
 | `data/` | `core/` `domain/` | `features/` `design/` `platform/`（平台能力经构造注入） |
 | `platform/` | `core/` `domain/`(仅值对象) | `data/` `features/` |
 | `design/` | `core/` Flutter | `domain/` `data/` `features/` |
+| **`features/*/domain/`** | `core/`、顶层 `domain/` | **与顶层 `domain/` 同样严格**：`package:flutter/*`、`data/`、`platform/`、`design/` |
 | `features/*/application/` | `core/` `domain/` `platform/` 接口 | `data/` 具体实现（只依赖抽象）、其它 feature 的 `presentation/` |
 | `features/*/presentation/` | `core/` `design/` 本 feature 的 `application/` | `data/` `domain/repositories/`、其它 feature 的 `presentation/` |
+
+> ⚠️ **`features/*/domain/` 这一行初版是缺的**，而 §2 又明文允许建这个目录。
+> 守卫照本表逐格转写，表里没有的格自然转写不出来 —— 于是 `features/<name>/domain/`
+> 落进一个**没有任何规则**的桶：Flutter 依赖、data 依赖、`DateTime.now()`、`assert`
+> 四类违规同时存在而九条守卫全绿。
+>
+> **feature 本地的 domain 仍然是 domain**，NFR-MAINT-02 的「领域层零 Flutter 依赖、
+> 可在纯 Dart VM 下测试」对它同样成立，否则「新增一个 feature 就能绕过领域层纯净性」。
+> 经过见 [M0 执行记录 §2.1f](../05-engineering/m0-record.md)。
 
 守卫测试的实现方式：解析 `lib/**/*.dart` 的 import 语句，按上表规则断言。
 **新增违规会让 CI 变红**，这是 NFR-MAINT-01 的兑现方式。

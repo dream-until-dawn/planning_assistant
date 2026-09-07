@@ -24,6 +24,35 @@ const _packageName = 'planning_assistant';
 const _layerSegments = {'presentation', 'application', 'domain'};
 const _topLevelLayers = {'core', 'domain', 'data', 'platform', 'design'};
 
+/// `_classify()` 可能产出的**全部**层键。
+///
+/// 由两个基础集合派生而不是手写，因此不可能与 `_classify` 漂移。
+/// 「每个层键都必须有规则」那条断言拿它当全集 —— 见 B5：
+/// 上一版 `_forbidden` 只有 7 个键，而 `_classify` 能产出 8 个，
+/// 于是 `features/<name>/domain/` 落进一个没有任何规则的桶，四条违规全绿。
+final Set<String> allLayerKeys = {
+  ..._topLevelLayers,
+  for (final s in _layerSegments) 'feature_$s',
+};
+
+/// 「领域性质」的层。feature 本地的 domain 仍然是 domain ——
+/// 否则「新增一个 feature 就能绕过领域层纯净性」（NFR-MAINT-02）。
+const domainLikeLayers = {'domain', 'feature_domain'};
+
+/// 禁止直接读环境时钟的层。
+const clockRestrictedLayers = {
+  'domain',
+  'feature_domain',
+  'feature_application',
+};
+
+/// 禁止用 assert 表达不变量的层。
+const assertRestrictedLayers = {'domain', 'feature_domain', 'data'};
+
+/// 显式声明「本层无禁止项」的层，必须注明理由。
+/// 目前为空 —— 每一层都有至少一条约束。
+const layersWithoutRules = <String, String>{};
+
 /// 不属于任何一层、但允许存在于 `lib/` 下的文件。每条都要有理由。
 const _unlayeredAllowList = {
   'main.dart', // 入口，只调 bootstrap
@@ -131,6 +160,13 @@ const Map<String, List<(String, String)>> _forbiddenRaw = {
   'feature_application': [
     ('/data/', 'feature 的 application 层只依赖抽象，不得依赖 data 的具体实现'),
     ('/presentation/', 'application 不得依赖任何 presentation'),
+  ],
+  'feature_domain': [
+    // feature 本地的 domain 与顶层 domain 受同样约束，见 module-map §3。
+    ('package:flutter/', 'feature 的 domain 层同样必须零 Flutter 依赖（NFR-MAINT-02）'),
+    ('/data/', 'feature 的 domain 不得依赖 data'),
+    ('/platform/', 'feature 的 domain 不得依赖 platform'),
+    ('/design/', 'feature 的 domain 不得依赖 design'),
   ],
   'feature_presentation': [
     ('/data/', 'presentation 不得依赖 data'),
@@ -266,6 +302,11 @@ const _legalCases = <(String file, String import, String why)>[
     'domain 依赖 core 是允许的',
   ),
   (
+    'features/task/domain/task_rules.dart',
+    'package:planning_assistant/core/time/clock.dart',
+    'feature 本地 domain 依赖 core 同样允许（正向，防止 B5 被修成一刀切）',
+  ),
+  (
     'design/components/task_card.dart',
     'package:flutter/material.dart',
     'design 层就是 Flutter 组件',
@@ -283,6 +324,16 @@ const _illegalCases = <(String file, String import, String expectContains)>[
     'domain/entities/task.dart',
     'package:flutter/material.dart',
     '零 Flutter 依赖',
+  ),
+  (
+    'features/task/domain/task_rules.dart',
+    'package:flutter/material.dart',
+    '零 Flutter 依赖',
+  ),
+  (
+    'features/task/domain/task_rules.dart',
+    'package:planning_assistant/data/database/db.dart',
+    'domain 不得依赖 data',
   ),
   (
     'domain/entities/task.dart',
@@ -329,6 +380,70 @@ const _illegalCases = <(String file, String import, String expectContains)>[
 void main() {
   final libFiles = _dartFiles('lib');
   final testFiles = _dartFiles('test');
+
+  group('守卫自身的完备性（每个桶都必须落在某条规则下）', () {
+    // 这一组与下面的夹具组管的是**不同的事**：
+    //   夹具组  → 规则内容对不对
+    //   本组    → 规则有没有被套到所有该套的地方
+    // B3/B5 那一类失效，规则内容全是对的，问题在于某些文件根本不受任何规则约束。
+    // 「未分类即违规」锁住了「文件 → 层」这一跳，本组锁住「层 → 规则」那一跳。
+
+    test('_classify 能产出的每个层键，都必须有禁止项或显式声明无禁止项', () {
+      final missing = <String>[];
+      for (final key in allLayerKeys) {
+        final hasRules = (_forbidden[key] ?? const []).isNotEmpty;
+        final declaredEmpty = layersWithoutRules.containsKey(key);
+        if (!hasRules && !declaredEmpty) missing.add(key);
+      }
+      expect(
+        missing,
+        isEmpty,
+        reason:
+            '以下层键没有任何规则，落进该桶的文件不受任何约束，'
+            '而且它们**分类是成功的**，因此「未分类即违规」那条断言也发现不了：'
+            ' ${missing.join(', ')} 。'
+            '要么在 _forbidden 里补条目，要么在 layersWithoutRules 里显式声明并注明理由。',
+      );
+    });
+
+    test('_forbidden 里不得出现 _classify 产不出的层键（拼写错会静默失效）', () {
+      final unknown = _forbidden.keys.where((k) => !allLayerKeys.contains(k));
+      expect(unknown, isEmpty, reason: '这些键永远匹配不上任何文件：$unknown');
+    });
+
+    test('所有层过滤集合都只含合法层键', () {
+      final sets = {
+        'domainLikeLayers': domainLikeLayers,
+        'clockRestrictedLayers': clockRestrictedLayers,
+        'assertRestrictedLayers': assertRestrictedLayers,
+      };
+      for (final e in sets.entries) {
+        expect(
+          e.value.difference(allLayerKeys),
+          isEmpty,
+          reason: '${e.key} 含有 _classify 产不出的键，那部分过滤永远不生效',
+        );
+      }
+    });
+
+    test('每个「领域性质」的层都必须同时受时钟与 assert 约束', () {
+      // 防止将来新增层键时，只补了 _forbidden 却漏掉这两条按层过滤的守卫。
+      final domainish = allLayerKeys.where((k) => k.endsWith('domain')).toSet();
+      expect(
+        domainish.difference(domainLikeLayers),
+        isEmpty,
+        reason: '以下领域性质的层未被 domainLikeLayers 收录',
+      );
+      for (final k in domainish) {
+        expect(clockRestrictedLayers, contains(k), reason: '$k 未受时钟守卫约束');
+        expect(
+          assertRestrictedLayers,
+          contains(k),
+          reason: '$k 未受 assert 守卫约束',
+        );
+      }
+    });
+  });
 
   group('守卫自身的双向夹具（不依赖仓库现状）', () {
     test('文档规定的正常写法必须全部判绿', () {
@@ -439,7 +554,7 @@ import
       final rel = _relToLib(file.path);
       if (rel == null) continue;
       final layer = _classify(rel)?.layer;
-      if (layer != 'domain' && layer != 'feature_application') continue;
+      if (!clockRestrictedLayers.contains(layer)) continue;
       final lines = file.readAsLinesSync();
       for (var i = 0; i < lines.length; i++) {
         if (lines[i].trim().startsWith('//')) continue;
@@ -495,7 +610,7 @@ import
       final rel = _relToLib(file.path);
       if (rel == null) continue;
       final layer = _classify(rel)?.layer;
-      if (layer != 'domain' && layer != 'data') continue;
+      if (!assertRestrictedLayers.contains(layer)) continue;
       final lines = file.readAsLinesSync();
       for (var i = 0; i < lines.length; i++) {
         final line = lines[i].trim();

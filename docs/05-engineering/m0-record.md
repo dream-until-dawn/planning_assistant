@@ -293,6 +293,88 @@ module-map §2 标题写「feature 内部结构（**强制统一**）」却只�
 守卫照 §1 实现就撞上了 §2 的措辞 —— **这是守卫的功劳**。
 §2 已改写为允许一层可选子模块，并明确「feature 边界在第一段」。
 
+### 2.1f 🔴 第四轮：分类成功了，但那个桶里没有规则
+
+一个文件、四条违规、**九条守卫全绿**：
+
+```dart
+// lib/features/task/domain/_probe_j.dart
+import 'package:flutter/material.dart';                       // 违反 NFR-MAINT-02
+import 'package:planning_assistant/data/.../drift_repo.dart'; // 违反依赖倒置
+class ProbeJ {
+  DateTime when() => DateTime.now();           // 违反 cross-cutting §1.2
+  void check(Object? x) { assert(x != null); } // 违反 cross-cutting §3.1
+}
+```
+```
+00:00 +9: All tests passed!
+```
+
+根因是**键的数量对不上**：`_classify` 能产出 8 个层键，`_forbidden` 只有 7 个 ——
+少了 `feature_domain`。而时钟守卫与 assert 守卫的过滤条件写的是 `layer == 'domain'`，
+`feature_domain` 同样落在外面。一个桶，四条规则一起失效。
+
+#### 与 B3 是同一类别，但走的是另一扇门
+
+| | 失效路径 | 「未分类即违规」能否发现 |
+|---|---|---|
+| B3 | 文件**没被分类** → 无规则可套 | ✅ 能 |
+| **B5** | 文件**分类成功**，但那个桶在规则表里没条目 | ❌ **不能** —— 它分类成功了 |
+
+上一轮的结构性断言覆盖了「文件 → 层」这一跳，**没覆盖「层 → 规则」那一跳**。
+
+#### 治本：把「层 → 规则」也锁住
+
+新增一组四条断言（`守卫自身的完备性`）：
+
+| 断言 | 防什么 |
+|---|---|
+| `_classify` 能产出的每个层键，都必须有禁止项或显式声明无禁止项 | B5 本身 |
+| `_forbidden` 里不得出现 `_classify` 产不出的键 | 键名拼错 → 该条规则永远匹配不上，静默失效 |
+| 所有层过滤集合只含合法层键 | 同上，针对时钟/assert 守卫的层集合 |
+| 每个「领域性质」的层必须同时受时钟与 assert 约束 | 将来新增层键时只补 `_forbidden` 却漏掉按层过滤的守卫 |
+
+配套把 `allLayerKeys` 改为**从 `_topLevelLayers` 与 `_layerSegments` 派生**而非手写 ——
+它与 `_classify` 用同一对基础集合，因此不可能漂移。
+时钟/assert 守卫的过滤也从零散的字面量比较改成**具名集合**。
+
+#### 三条验证输出
+
+**① 探针 J 四条违规齐发**（修复后）：
+
+```
+分层依赖与跨 feature 规则 [E]
+    违反: feature 的 domain 层同样必须零 Flutter 依赖（NFR-MAINT-02）
+    违反: feature 的 domain 不得依赖 data
+领域层与应用层不得直接读环境时钟 [E]
+    违反: DateTime.now() 直接读环境时钟；必须经注入的 Clock
+领域层与数据层不得用 assert 表达不变量 [E]
+    违反: assert 在 release 构建中被剥离；不变量必须显式 throw
+```
+
+**② 正向夹具**（防止修成一刀切）：`features/task/domain/` 引 `core/time/clock.dart` **判绿**，
+与 `features/task/domain/` 引 Flutter / 引 `data/` 必须判红一并进了夹具表。
+
+**③ 新断言自己能失败**（故意删掉 `_forbidden` 的 `feature_domain` 键）：
+
+```
+_classify 能产出的每个层键，都必须有禁止项或显式声明无禁止项 [E]
+  Expected: empty
+    Actual: ['feature_domain']
+  以下层键没有任何规则，落进该桶的文件不受任何约束，而且它们**分类是成功的**，
+  因此「未分类即违规」那条断言也发现不了： feature_domain 。
+```
+
+#### 又一处文档的洞（同样是守卫撞出来的）
+
+module-map §2 明文允许建 `features/<name>/domain/`，而 **§3 的依赖规则表里根本没有这一行**。
+守卫照 §3 逐格转写，表里没有的格自然转写不出来。§3 已补该行，并写明与顶层 `domain/` 同样严格。
+
+> **两类断言，管的是两件事**：
+> · 夹具表 → **规则内容**对不对；
+> · 完备性断言 → 规则**有没有被套到所有该套的地方**。
+> B3/B5 这一类失效，规则内容全是对的。这两者需要不同的断言，缺一不可。
+
 ### 2.1c 坏测试扫描器 `tool/lint_tests.dart`（补齐 S3）
 
 [测试策略 §3.4](testing-strategy.md) 写了这个工具，但此前**只写在文档里没有实现** ——
@@ -350,7 +432,7 @@ module-map §2 标题写「feature 内部结构（**强制统一**）」却只�
 | `AndroidManifest`：`RECEIVE_BOOT_COMPLETED` / `SCHEDULE_EXACT_ALARM` / 启动接收器 | ✅ |
 | `analysis_options.yaml`（含 riverpod_lint） | ✅ |
 | `core/result`、`core/time`、`core/id` 最小实现 | ✅ |
-| 架构守卫测试（**9 条**，含双向夹具） | ✅ 经三轮变异演练：修掉 3 漏报 + 1 假阳性 → 整片目录零覆盖 → 规则过冲禁止合法写法 |
+| 架构守卫测试（**13 条**，含双向夹具 + 完备性断言） | ✅ 经四轮变异演练，四种失效方式各修一轮 |
 | 坏测试扫描器 `tool/lint_tests.dart` | ✅ 自检 + 真实仓库失败演示 |
 | rrule 契约测试（14 条） | ✅ |
 | uuid v7 测试（5 条） | ✅ |
@@ -358,7 +440,7 @@ module-map §2 标题写「feature 内部结构（**强制统一**）」却只�
 | CI（analyze / format / codegen 校验 / test / **守卫有效性** / build） | ✅ |
 | `flutter build apk --debug` | ✅ |
 
-**测试总数 31，`dart analyze --fatal-infos --fatal-warnings` 零问题，`dart format` 无差异。**
+**测试总数 35，`dart analyze --fatal-infos --fatal-warnings` 零问题，`dart format` 无差异。**
 
 ---
 
