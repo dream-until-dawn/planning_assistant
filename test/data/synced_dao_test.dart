@@ -457,6 +457,46 @@ void main() {
       expect(env.read<int>('updated_at'), clock.ms);
     });
 
+    test('复合主键的各段不得含分隔符 —— 在写入时就拦住', () async {
+      // 评审的观察项。`entityId` 是单列 TEXT，联结表把两个键拼成一串，
+      // 回放时再按分隔符拆开 —— 拼得回去的前提是各段本身不含分隔符。
+      //
+      // 这条假设此前只活在注释里。UUID v7 确实不含 `:`，但「当下满足」
+      // 不等于「以后也满足」（换 id 方案、导入外部数据都可能破坏它）。
+      //
+      // 拦在**写入**路径而不是回放路径：回放可能发生在几个月后、
+      // 甚至另一台设备上，那时已经查不出是哪次写入种下的。
+      await seedParents();
+      await TagDao(db, writer, clock).upsert(
+        TagsCompanion.insert(id: 'tag:with:colon', name: '坏 id', colorArgb: 1),
+      );
+      final dao = TaskTagDao(db, writer, clock);
+
+      await expectLater(
+        dao.upsert(
+          TaskTagsCompanion.insert(
+            taskId: _seedTaskId,
+            tagId: 'tag:with:colon',
+          ),
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('正常 id 不受影响（否则上面那条可能因「一律拒绝」而假绿）', () async {
+      await seedParents();
+      await TagDao(
+        db,
+        writer,
+        clock,
+      ).upsert(TagsCompanion.insert(id: 'tag-ok', name: '正常', colorArgb: 1));
+      final dao = TaskTagDao(db, writer, clock);
+      await dao.upsert(
+        TaskTagsCompanion.insert(taskId: _seedTaskId, tagId: 'tag-ok'),
+      );
+      expect((await dao.getAll()).length, 1);
+    });
+
     test('SyncedDao 用在无信封的表上会直接抛，而不是不过滤', () async {
       // 退化成「不过滤」比报错危险得多：查询照跑，只是墓碑全漏出来。
       final dao = _BadDao(db, writer, clock);

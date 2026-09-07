@@ -20,6 +20,33 @@ import 'package:drift/drift.dart';
 import '../../../core/time/clock.dart';
 import '../app_database.dart';
 
+/// 复合主键在 outbox `entityId` 里的分隔符。
+///
+/// **这是一条承重假设**：`entityId` 是单列 TEXT，联结表只能把两个键拼成一串，
+/// 回放时再拆开。拼得回去的前提是**各段本身不含分隔符**。
+///
+/// 选 `:` 而不是 `-`：两侧都是 UUID v7，本身含 `-`。
+/// 当下满足假设（UUID v7 只有十六进制与 `-`），但「当下满足」不等于
+/// 「以后也满足」—— 所以由 [requireSeparatorFree] 在**写入时**拦住，
+/// 而不是等到回放时才拆不开。评审把它列为观察项，这里升格成可执行的检查。
+const String kCompositeKeySeparator = ':';
+
+/// 校验一个键段不含分隔符，否则拼出的 `entityId` 无法还原。
+///
+/// 在写入路径上抛，不在回放路径上抛：回放可能发生在几个月后、
+/// 甚至另一台设备上，那时已经查不出是哪次写入种下的。
+String requireSeparatorFree(String value, String columnName) {
+  if (value.contains(kCompositeKeySeparator)) {
+    throw ArgumentError.value(
+      value,
+      columnName,
+      '不得包含复合主键分隔符「$kCompositeKeySeparator」—— '
+      '它会让 outbox 的 entityId 无法被回放拆回原键',
+    );
+  }
+  return value;
+}
+
 /// outbox 的操作类型（data-model §3.11）。
 enum ChangeOp {
   upsert,

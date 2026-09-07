@@ -218,12 +218,16 @@ class TaskTagDao extends SyncedDao<$TaskTagsTable, TaskTagRow> {
   @override
   String get entityType => EntityTypes.taskTag;
 
-  /// 复合键拼成 `taskId:tagId`。
+  /// 复合键拼成 `taskId:tagId`（分隔符见 [kCompositeKeySeparator]）。
   ///
-  /// outbox 的 `entityId` 是单列 TEXT，联结表只能用复合串表达。
-  /// 分隔符用 `:` 而不是 `-`：两侧都是 UUID v7，本身含 `-`。
+  /// 两段都过 [requireSeparatorFree]：拼得回去的前提是各段不含分隔符，
+  /// 而这条假设此前只存在于注释里。放在写入路径上拦，
+  /// 是因为回放可能发生在几个月后、甚至另一台设备上。
   @override
-  String primaryKeyOf(TaskTagRow row) => '${row.taskId}:${row.tagId}';
+  String primaryKeyOf(TaskTagRow row) =>
+      '${requireSeparatorFree(row.taskId, 'taskId')}'
+      '$kCompositeKeySeparator'
+      '${requireSeparatorFree(row.tagId, 'tagId')}';
 
   @override
   Map<String, Object?> toJson(TaskTagRow row) => row.toJson();

@@ -18,6 +18,7 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 
 import '../database/app_database.dart';
+import '../database/dao/synced_dao.dart';
 import '../database/dao/table_daos.dart';
 
 /// 回放结果，用于诊断。
@@ -161,15 +162,15 @@ final class ChangeLogReplayer {
 
   /// 把 outbox 的 `entityId` 拆回主键各列的值。
   ///
-  /// 分隔符与 `SyncedDao.primaryKeyOf()` 约定一致，用 `:` 而不是 `-`
-  /// —— 两侧都是 UUID v7，本身含 `-`。
+  /// 分隔符取自 [kCompositeKeySeparator]，与 `SyncedDao.primaryKeyOf()`
+  /// 同一个常量 —— 两处各写一个字面量的话，改一处就静默拆错。
   List<String> _splitCompositeKey(
     String entityId,
     int columnCount,
     TableInfo<Table, dynamic> table,
   ) {
     if (columnCount == 1) return [entityId];
-    final parts = entityId.split(':');
+    final parts = entityId.split(kCompositeKeySeparator);
     if (parts.length != columnCount) {
       // 拆不开就**抛**，不猜。猜错会更新到别的行上去，
       // 而那种损坏在回放报告里看不出来。
