@@ -25,9 +25,12 @@ library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'core/id/id_generator.dart';
 import 'core/time/clock.dart';
 import 'core/time/time_zone_bootstrap.dart';
 import 'core/time/time_zone_resolver.dart';
+import 'domain/commands/command_dispatcher.dart';
+import 'domain/repositories/task_repository.dart';
 
 Never _mustOverride(String what) =>
     throw StateError('$what 必须在 ProviderScope 的 overrides 中提供');
@@ -47,4 +50,28 @@ final timeZoneSetupProvider = Provider<TimeZoneSetupResult>(
 /// 自己拿 `DateTime` 加减时区偏移在 DST 边界上一定是错的。
 final timeZoneResolverProvider = Provider<TimeZoneResolver>(
   (ref) => _mustOverride('timeZoneResolverProvider'),
+);
+
+/// ID 生成器（UUID v7）。
+///
+/// **命令自带 ID**，不由 dispatcher 现场生成 —— 否则同一条命令重放两次
+/// 会建出两条任务，而 outbox 回放与 V3 重试都会重放命令
+/// （见 `CreateTaskCommand.taskId` 的注释）。所以 ID 在这一层产生。
+final idGeneratorProvider = Provider<IdGenerator>(
+  (ref) => _mustOverride('idGeneratorProvider'),
+);
+
+/// 任务仓库。**presentation 层不得直接持有它**（FR-AI-01，分层守卫盯着）
+/// —— 写路径一律经 [taskCommandDispatcherProvider]。
+final taskRepositoryProvider = Provider<TaskRepository>(
+  (ref) => _mustOverride('taskRepositoryProvider'),
+);
+
+/// 命令分发器。**所有写操作的唯一入口。**
+///
+/// 之所以不让 UI 直接调仓库：命令是可序列化、可重放、可审计的，
+/// 而 V4 的语音/Agent 要能构造同一批命令走同一条路（FR-AI-01）。
+/// UI 直接写仓库的话，那条路就绕过了全部不变量与 outbox。
+final taskCommandDispatcherProvider = Provider<CommandDispatcher>(
+  (ref) => _mustOverride('taskCommandDispatcherProvider'),
 );

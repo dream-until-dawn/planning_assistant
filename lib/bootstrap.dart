@@ -6,15 +6,22 @@ library;
 
 import 'dart:async';
 
+import 'package:drift_flutter/drift_flutter.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
+import 'package:uuid/uuid.dart';
 
 import 'app_providers.dart';
+import 'core/id/id_generator.dart';
 import 'core/time/clock.dart';
 import 'core/time/time_zone_bootstrap.dart';
 import 'core/time/time_zone_resolver.dart';
+import 'data/database/app_database.dart';
+import 'data/database/dao/synced_dao.dart';
+import 'data/repositories/task_repository_impl.dart';
+import 'domain/commands/command_dispatcher.dart';
 import 'platform/timezone/platform_time_zone.dart';
 
 /// 启动应用。
@@ -25,6 +32,10 @@ Future<void> bootstrap(
   Widget Function() appBuilder, {
   PlatformTimeZoneSource timeZoneSource = const MethodChannelTimeZoneSource(),
   Clock clock = const SystemClock(),
+  IdGenerator idGenerator = const UuidV7Generator(Uuid()),
+
+  /// 可注入，供集成测试用内存库。
+  AppDatabase? database,
 }) async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -52,7 +63,20 @@ Future<void> bootstrap(
     // TODO(M2): 在设置页展示提示，引导用户手动选择时区
   }
 
-  // TODO(M1-C): 数据库初始化
+  // ── 数据层装配 ────────────────────────────────────────────────
+  // 组合根是**唯一**知道具体实现的地方：feature 只看得见抽象
+  // （module-map §3：application 层不得依赖 data 的具体实现）。
+  final db = database ?? AppDatabase(driftDatabase(name: 'planning_assistant'));
+
+  // 设备 ID 是同步信封里的 lastWriterId，V3 才真正用得上；
+  // V1 先固定一个值，但**字段从第一天就写**，否则老数据没有出处，
+  // 到 V3 无法参与冲突解决（ADR 里那条「同步信封从 V1 起就存」）。
+  // TODO(V3): 换成持久化的、每台设备唯一的 ID
+  const writer = FixedWriterIdentity('local-device');
+
+  final repository = DriftTaskRepository(db, writer, clock);
+  final dispatcher = CommandDispatcher(repository, clock);
+
   // TODO(M4): 通知渠道创建 → 提醒对账
 
   runApp(
@@ -61,6 +85,9 @@ Future<void> bootstrap(
       overrides: [
         clockProvider.overrideWithValue(clock),
         timeZoneResolverProvider.overrideWithValue(const TzTimeZoneResolver()),
+        idGeneratorProvider.overrideWithValue(idGenerator),
+        taskRepositoryProvider.overrideWithValue(repository),
+        taskCommandDispatcherProvider.overrideWithValue(dispatcher),
         timeZoneSetupProvider.overrideWithValue(tzResult),
       ],
       child: appBuilder(),

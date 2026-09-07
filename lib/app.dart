@@ -25,6 +25,7 @@ import 'package:go_router/go_router.dart';
 
 import 'design/theme/app_theme.dart';
 import 'features/shell/presentation/app_shell.dart';
+import 'features/task/presentation/task_editor_page.dart';
 import 'features/views/shared/application/view_kind.dart';
 import 'features/views/task_list/presentation/task_list_page.dart';
 
@@ -54,12 +55,31 @@ const Set<ViewKind> unimplementedViews = {
 
 /// 路由表（view-specs §7.2）。
 ///
-/// 现在只有 `/`。`/task/new`、`/task/:id/edit`、`/settings` 等编辑器与
-/// 设置页做出来再加 —— **不预先注册指向占位页的路由**：
-/// 那种路由跳过去是一个假页面，比 404 更难查。
+/// `/task/:id/edit`、`/settings` 等做出来再加 ——
+/// **不预先注册指向占位页的路由**：那种路由跳过去是一个假页面，
+/// 比 404 更难查。
+abstract final class AppRoutes {
+  static const String shell = '/';
+  static const String newTask = '/task/new';
+}
+
 GoRouter buildAppRouter() => GoRouter(
   routes: [
-    GoRoute(path: '/', builder: (context, state) => const _ShellRoute()),
+    GoRoute(
+      path: AppRoutes.shell,
+      builder: (context, state) => const _ShellRoute(),
+      routes: [
+        GoRoute(
+          path: 'task/new',
+          builder: (context, state) => TaskEditorPage(
+            // 存完就回列表。**用 pop 而不是 go('/')**：
+            // go 会把编辑器从栈上换掉，返回手势会直接退出应用；
+            // pop 保留「从哪来回哪去」。
+            onSaved: (_) => context.pop(),
+          ),
+        ),
+      ],
+    ),
   ],
 );
 
@@ -96,6 +116,8 @@ class _ShellRoute extends StatefulWidget {
   State<_ShellRoute> createState() => _ShellRouteState();
 }
 
+void _openEditor(BuildContext context) => context.go(AppRoutes.newTask);
+
 class _ShellRouteState extends State<_ShellRoute> {
   // TODO(M2-设置): 初值改读配置项 `view.defaultView`
   //  （ViewKind.fromStorageKey 已经把「认不出的值」处理成回落，见 §7.4）
@@ -117,11 +139,9 @@ class _ShellRouteState extends State<_ShellRoute> {
         if (builder == null) {
           return Center(child: Text('「${kind.label}」还没做好'));
         }
-        // TODO(M2-编辑器): 接上 /task/new
-        return builder(context, null);
+        return builder(context, () => _openEditor(context));
       },
-      // TODO(M2-编辑器): 接上 /task/new
-      onCreateTask: null,
+      onCreateTask: () => _openEditor(context),
       // TODO(M2-设置): 接上 /settings
       onOpenSettings: null,
     );

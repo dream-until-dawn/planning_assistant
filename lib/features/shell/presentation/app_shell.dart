@@ -86,13 +86,36 @@ class AppShell extends ConsumerWidget {
       // 比没有按钮更让人困惑。
       floatingActionButton: onCreateTask == null
           ? null
-          : FloatingActionButton(
-              key: fabKey,
-              onPressed: onCreateTask,
-              backgroundColor: colors.brandFill,
-              foregroundColor: colors.onBrand,
-              tooltip: '新建任务',
-              child: const Icon(Icons.add),
+          : DecoratedBox(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                boxShadow: colors.cardShadow,
+              ),
+              child: FloatingActionButton(
+                key: fabKey,
+                onPressed: onCreateTask,
+                backgroundColor: colors.brandFill,
+                foregroundColor: colors.onBrand,
+                // Material 默认的 elevation 6 会在药丸边上压出一圈很硬的
+                // 深阴影，与 §6「不用锐利深阴影」的基调打架 ——
+                // golden 里那圈黑边一眼就能看见。
+                // 阴影统一由 token 画（cardShadow），这里关掉 Material 的。
+                elevation: 0,
+                highlightElevation: 0,
+                focusElevation: 0,
+                hoverElevation: 0,
+                // 正圆，不用 M3 默认的圆角方形 —— 后者偏硬，
+                // 与 §1「可爱清新」的基调不合。用 Radii.full 而不是写死
+                // `CircleBorder()`，是为了让它跟着圆角档位那套走
+                // （full 按 CornerStyle 的约定不参与缩放，永远是药丸/正圆）。
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(
+                    context.appShape.radius(Radii.full),
+                  ),
+                ),
+                tooltip: '新建任务',
+                child: const Icon(Icons.add),
+              ),
             ),
     );
   }
