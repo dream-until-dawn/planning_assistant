@@ -760,4 +760,103 @@ import
       reason: '纯 Dart 验收测试沾了 Flutter：\n${violations.join('\n')}',
     );
   });
+
+  test('写操作必须经由命令管道（overview §4、§6 V4 那一格）', () {
+    // 「所有数据变更走同一条 TaskCommand 管道」是 V3 云同步与 V4 Agent 的前提。
+    // 这句话只写在文档里的话，第一个赶时间的人就会绕过去 ——
+    // 而绕过的写不留 change_log 行，要到很久以后的回放测试才暴露。
+    //
+    // 这条守两件事：
+    //  1. Repository 的写方法只能由 dispatcher 与实现自身调用；
+    //  2. DAO 的写方法（upsert / softDelete）不得在 data/ 之外出现。
+    const repoWriteMethods = [
+      'saveTask',
+      'saveTaskWithStages',
+      'softDeleteTask',
+      'restoreTask',
+    ];
+    const daoWriteMethods = ['upsert', 'softDelete'];
+
+    // 允许调用写方法的文件（相对 lib/）。
+    //
+    // **白名单要短且每条有理由**。长白名单等于没有白名单 ——
+    // 加一行比想清楚容易，于是它会一直长下去。
+    const allowedRepoWriters = {
+      // 管道本身。
+      'domain/commands/command_dispatcher.dart',
+      // Repository 实现内部互相调用（如 softDeleteTask 复用 saveTask）。
+      'data/repositories/task_repository_impl.dart',
+    };
+    const allowedDaoWriters = {
+      // DAO 基类与各表 DAO 自身。
+      'data/database/dao/synced_dao.dart',
+      'data/database/dao/table_daos.dart',
+      // Repository 实现是 DAO 的唯一上层调用方。
+      'data/repositories/task_repository_impl.dart',
+      // 导入导出与回放走裸 SQL，不经 DAO —— 它们是「恢复」不是「操作」，
+      // 不该再写一遍 outbox。见各自文件的头部注释。
+      'data/dto/export_bundle.dart',
+      'data/outbox/change_log_replayer.dart',
+    };
+
+    final violations = <String>[];
+    for (final file in _dartFiles('lib')) {
+      final rel = _relToLib(file.path);
+      if (rel == null) continue;
+      final lines = file.readAsLinesSync();
+
+      for (var i = 0; i < lines.length; i++) {
+        final line = lines[i].trim();
+        if (line.startsWith('//') || line.startsWith('///')) continue;
+
+        for (final m in repoWriteMethods) {
+          final calls = RegExp(
+            '[._]$m'
+            r'\s*\(',
+          ).hasMatch(line);
+          if (!calls || allowedRepoWriters.contains(rel)) continue;
+          violations.add(
+            '  - lib/$rel:${i + 1}\n      $line\n'
+            '      违反: 仓储写方法 $m 只能经 CommandDispatcher 调用',
+          );
+        }
+        for (final m in daoWriteMethods) {
+          final calls = RegExp(
+            r'\.'
+            '$m'
+            r'\s*\(',
+          ).hasMatch(line);
+          if (!calls || allowedDaoWriters.contains(rel)) continue;
+          violations.add(
+            '  - lib/$rel:${i + 1}\n      $line\n'
+            '      违反: DAO 写方法 $m 不得在 data/ 之外直接调用',
+          );
+        }
+      }
+    }
+
+    expect(
+      violations,
+      isEmpty,
+      reason: '发现 ${violations.length} 处绕过命令管道的写：\n${violations.join('\n')}',
+    );
+  });
+
+  test('上面那条白名单里的文件确实存在 —— 防止白名单变成僵尸', () {
+    // 白名单条目对应的文件被删或改名后，那一条就永远匹配不上，
+    // 于是守卫在那个位置**静默失效**。这是守卫本身最常见的烂法。
+    const whitelisted = [
+      'lib/domain/commands/command_dispatcher.dart',
+      'lib/data/repositories/task_repository_impl.dart',
+      'lib/data/database/dao/synced_dao.dart',
+      'lib/data/database/dao/table_daos.dart',
+      'lib/data/dto/export_bundle.dart',
+      'lib/data/outbox/change_log_replayer.dart',
+    ];
+    final missing = [
+      for (final f in whitelisted)
+        if (!File(f).existsSync()) f,
+    ];
+    expect(missing, isEmpty, reason: '白名单指向已不存在的文件：$missing');
+  });
 }

@@ -26,6 +26,7 @@ final class Occurrence {
     this.titleOverride,
     this.noteOverride,
     this.isModified = false,
+    this.dstAdjusted = false,
   });
 
   final String taskId;
@@ -49,6 +50,13 @@ final class Occurrence {
   /// 这一次是否被 override 修改过（时间、标题、状态任一）。
   final bool isModified;
 
+  /// 这一次的墙钟在该时区当天**不存在**（春季跳表），已顺延到该时段后
+  /// 第一个合法时刻（recurrence-engine §4.1）。
+  ///
+  /// 暴露出来是为了让 UI 能解释「为什么今天这条是 03:00 而不是 02:30」——
+  /// 静默改掉时刻而不告诉用户，是日历应用最招人恨的行为之一。
+  final bool dstAdjusted;
+
   /// 生效开始时刻是否已偏离 key 所指的原始时刻。
   bool get isMoved =>
       OccurrenceKey.fromWallTime(start, isAllDay: isAllDay) != key;
@@ -60,6 +68,7 @@ final class Occurrence {
     String? titleOverride,
     String? noteOverride,
     bool? isModified,
+    bool? dstAdjusted,
   }) => Occurrence(
     taskId: taskId,
     key: key,
@@ -70,6 +79,7 @@ final class Occurrence {
     titleOverride: titleOverride ?? this.titleOverride,
     noteOverride: noteOverride ?? this.noteOverride,
     isModified: isModified ?? this.isModified,
+    dstAdjusted: dstAdjusted ?? this.dstAdjusted,
   );
 
   @override
@@ -83,7 +93,8 @@ final class Occurrence {
       other.status == status &&
       other.titleOverride == titleOverride &&
       other.noteOverride == noteOverride &&
-      other.isModified == isModified;
+      other.isModified == isModified &&
+      other.dstAdjusted == dstAdjusted;
 
   @override
   int get hashCode => Object.hash(

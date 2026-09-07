@@ -32,6 +32,7 @@
 | 21c | [M0 执行记录](05-engineering/m0-record.md) | 工程基建的落地结果与**守卫变红的实际输出** | ✅ 已完成 |
 | 21d | [变异演练 · M1-A 时间](05-engineering/mutation-drills/M1-A-time.md) | 8 个变异，1 个存活并已补测 | ✅ |
 | 21e | [变异演练 · M1-B 重复引擎](05-engineering/mutation-drills/M1-B-recurrence.md) | 10 个变异全部被抓 | ✅ |
+| 21f | [变异演练 · M1 汇总](05-engineering/mutation-drills/M1.md) | 38 个变异 37 个被抓；含三次「差点交出永远绿的测试」 | ✅ |
 | 22 | [架构决策记录 ADR](06-adr/README.md) | 关键选型的理由与代价 | ✅ 7 条 |
 | 23 | [路线图与里程碑](07-roadmap/roadmap.md) | 分几期、每期验收什么 | ✅ 定稿 |
 

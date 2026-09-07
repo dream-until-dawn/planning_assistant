@@ -203,6 +203,19 @@ final class RecurrenceEngine {
       );
     }
 
+    // **DST 解析必须在这里做，不能留给调用方**（§4.1）。
+    //
+    // 展开是在墙钟域进行的，rrule 不知道时区 —— 春季跳表日会产出一个
+    // 当天根本不存在的墙钟（如 America/New_York 的 02:30）。
+    // 不在这里顺延的话，日历会显示一个不存在的时刻，
+    // 而排通知时又会被换算到别处，两边对不上。
+    //
+    // 注意顺序：先应用 override（用户可能把这次挪走了），再解析 DST，
+    // 因为挪过去的新时刻同样可能落进空隙。
+    final resolved = _tz.resolve(start);
+    final dstAdjusted = resolved.dstAdjusted;
+    start = resolved.effectiveWallTime;
+
     LocalWallTime? end;
     if (o?.endDateOverride != null || o?.endMinuteOverride != null) {
       end = LocalWallTime(
@@ -224,6 +237,7 @@ final class RecurrenceEngine {
       titleOverride: o?.titleOverride,
       noteOverride: o?.noteOverride,
       isModified: o != null,
+      dstAdjusted: dstAdjusted,
     );
   }
 
