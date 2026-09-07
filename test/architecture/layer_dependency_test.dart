@@ -3,16 +3,37 @@
 /// 强制 docs/01-architecture/module-map.md §3 的依赖规则，以及
 /// docs/05-engineering/testing-strategy.md §6 的额外守卫。
 ///
-/// 这不是「写着好看」的测试。任何守卫机制建立时都必须当场证明它能失败
-/// （testing-strategy §1.4 第 ② 条），且**每次实质性改动后都要重跑变异演练** ——
-/// 本文件的第一版就漏掉了三条规则、并产生了一处假阳性，
-/// 全部是评审方做变异演练时发现的。演示输出留档在 docs/05-engineering/m0-record.md。
+/// **本文件被变异演练打回过两轮**，两轮的失效方式一次比一次沉默：
+///  1. 漏了三条规则 + 一处假阳性 —— 注入违规就能发现。
+///  2. 三层 feature 路径（`features/views/gantt/presentation/`）完全不被分类，
+///     该目录下**六条规则全部静默失效**，而守卫报绿 —— 注入违规也发现不了，
+///     因为违规文件根本没被扫。
+///
+/// 第 2 类只能靠**结构性断言**兜底，因此有了「每个文件都必须被分类」这条守卫：
+/// 它把「未分类 → 静默放行」变成「未分类 → 变红」。
 @TestOn('vm')
 library;
 
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+
+const _packageName = 'planning_assistant';
+
+/// `features/<路径>/<层>/` 中合法的层段。
+const _layerSegments = {'presentation', 'application', 'domain'};
+
+/// 不属于任何一层、但允许存在于 `lib/` 下的文件。
+/// **这是守卫的豁免名单，每一条都要有理由。**
+const _unlayeredAllowList = {
+  'main.dart', // 入口，只调 bootstrap
+  'app.dart', // MaterialApp 装配
+  'bootstrap.dart', // 初始化编排
+};
+
+/// 生成目录，不参与分层检查。
+bool _isGeneratedPath(String relToLib) =>
+    relToLib.startsWith('l10n/generated/');
 
 class Violation {
   Violation(this.file, this.line, this.lineNo, this.rule);
@@ -44,55 +65,99 @@ List<File> _dartFiles(String dir) {
     ..sort((a, b) => a.path.compareTo(b.path));
 }
 
-/// `lib/` 之下的相对路径，如 `domain/policies/foo.dart`。
+/// `lib/` 之下的相对路径，如 `features/views/gantt/presentation/x.dart`。
 String? _relToLib(String path) {
   final p = _norm(path);
   final i = p.indexOf('lib/');
   return i < 0 ? null : p.substring(i + 4);
 }
 
-/// 该文件属于哪一层。
+/// 该文件所属的层与 feature。
 ///
-/// **按路径前缀判定，不能用任意位置的子串。**
-/// 第一版用了子串匹配，导致 `lib/data/repositories/core/x.dart` 因为路径里含
-/// `/core/` 被判成 core 层，进而把「data 依赖 domain」这个**正常的依赖倒置方向**
-/// 误报为违规。假阳性比漏报更伤守卫 —— 它会训练人去绕开守卫。
-String? _layerOf(String path) {
-  final rel = _relToLib(path);
-  if (rel == null) return null;
+/// feature 名是**层段之前的完整路径**，因此支持 module-map §1 规定的三层结构
+/// （`features/views/gantt/presentation/` 的 feature 是 `views/gantt`）。
+/// 第一版固定取第 2 段，导致三层结构一律落进「未分类」而被静默跳过。
+({String layer, String? feature})? _classify(String relToLib) {
+  const topLevel = {'core', 'domain', 'data', 'platform', 'design'};
+  final segs = relToLib.split('/');
+  if (segs.length < 2) return null; // lib 根下的文件
 
-  if (rel.startsWith('core/')) return 'core';
-  if (rel.startsWith('domain/')) return 'domain';
-  if (rel.startsWith('data/')) return 'data';
-  if (rel.startsWith('platform/')) return 'platform';
-  if (rel.startsWith('design/')) return 'design';
-
-  final m = RegExp(r'^features/([^/]+)/([^/]+)/').firstMatch(rel);
-  if (m != null) {
-    return switch (m.group(2)) {
-      'presentation' => 'feature_presentation',
-      'application' => 'feature_application',
-      'domain' => 'feature_domain',
-      _ => null,
-    };
+  if (topLevel.contains(segs.first)) {
+    return (layer: segs.first, feature: null);
   }
-  return null; // lib 根下的 main/app/bootstrap 不属于任何一层
+
+  if (segs.first == 'features') {
+    // 取**第一个**层段（从下标 2 起，下标 1 至少是 feature 名的一部分）
+    for (var i = 2; i < segs.length - 1; i++) {
+      if (_layerSegments.contains(segs[i])) {
+        return (
+          layer: 'feature_${segs[i]}',
+          feature: segs.sublist(1, i).join('/'),
+        );
+      }
+    }
+  }
+  return null;
 }
 
-/// 该文件属于哪个 feature（非 feature 文件返回 null）。
-String? _featureOf(String path) {
-  final rel = _relToLib(path);
-  if (rel == null) return null;
-  return RegExp(r'^features/([^/]+)/').firstMatch(rel)?.group(1);
-}
-
-/// 目录模式同时匹配它的 barrel 文件。
+/// 把一条 import 目标归一成「lib 相对路径」。
 ///
-/// `/domain/repositories/` 只能挡住目录形式的 import；
-/// 一旦出现 `lib/domain/repositories.dart` 这样的 barrel 导出文件，
-/// `import '.../domain/repositories.dart'` 就绕过去了。
+/// 三处匹配（层规则、barrel、跨 feature）共用这一套归一化，
+/// 而不是各自对原始字符串做子串匹配 —— 后者会被相对路径绕过：
+/// `import '../../settings/presentation/x.dart'` 里根本没有 `features/` 字样。
+///
+/// 外部包（`package:flutter/…`、`dart:…`）原样返回，供 `package:flutter/` 之类的模式匹配。
+String _resolveImport(String target, String fromFileRelToLib) {
+  const selfPrefix = 'package:$_packageName/';
+  if (target.startsWith(selfPrefix)) {
+    return target.substring(selfPrefix.length);
+  }
+  if (target.startsWith('package:') || target.startsWith('dart:')) {
+    return target;
+  }
+
+  final fromDir = fromFileRelToLib.split('/')..removeLast();
+  final out = <String>[...fromDir];
+  for (final seg in target.split('/')) {
+    if (seg == '.' || seg.isEmpty) continue;
+    if (seg == '..') {
+      if (out.isNotEmpty) out.removeLast();
+    } else {
+      out.add(seg);
+    }
+  }
+  return out.join('/');
+}
+
+/// 用于模式匹配的形态：lib 相对路径前加 `/`，外部包保持原样。
+String _matchable(String resolved) =>
+    resolved.startsWith('package:') || resolved.startsWith('dart:')
+    ? resolved
+    : '/$resolved';
+
+final _importRe = RegExp('''^(?:import|export)\\s+['"]([^'"]+)['"]''');
+
+/// 该文件的全部 import/export，已归一。
+List<({int lineNo, String raw, String resolved})> _imports(
+  File file,
+  String relToLib,
+) {
+  final out = <({int lineNo, String raw, String resolved})>[];
+  final lines = file.readAsLinesSync();
+  for (var i = 0; i < lines.length; i++) {
+    final m = _importRe.firstMatch(lines[i].trim());
+    if (m == null) continue;
+    out.add((
+      lineNo: i + 1,
+      raw: lines[i].trim(),
+      resolved: _resolveImport(m.group(1)!, relToLib),
+    ));
+  }
+  return out;
+}
+
 List<String> _withBarrel(String dirPattern) {
-  final trimmed = dirPattern.substring(0, dirPattern.length - 1); // 去尾斜杠
+  final trimmed = dirPattern.substring(0, dirPattern.length - 1);
   return [dirPattern, '$trimmed.dart'];
 }
 
@@ -138,20 +203,16 @@ const Map<String, List<(String, String)>> _forbiddenRaw = {
   ],
 };
 
-/// 把 barrel 变体展开进来。
 final Map<String, List<(String, String)>> _forbidden = {
   for (final entry in _forbiddenRaw.entries)
     entry.key: [
       for (final (pattern, rule) in entry.value)
-        if (pattern.endsWith('/') && pattern != 'package:flutter/')
+        if (pattern.startsWith('/') && pattern.endsWith('/'))
           ...(_withBarrel(pattern).map((p) => (p, rule)))
         else
           (pattern, rule),
     ],
 };
-
-bool _isImportLine(String line) =>
-    line.startsWith('import ') || line.startsWith('export ');
 
 void main() {
   final libFiles = _dartFiles('lib');
@@ -161,20 +222,46 @@ void main() {
     expect(libFiles, isNotEmpty, reason: '守卫扫描到 0 个文件时，它的「通过」没有任何信息量');
   });
 
+  test('lib/ 下每个文件都必须被分类到某一层（否则守卫对它静默失效）', () {
+    // 这条是 B3 的治本措施。前面那条只保证「有文件被扫」，
+    // 它保证「每个文件都被扫」—— 未分类的文件不会触发任何 _forbidden 规则，
+    // 而那种失效是沉默的：不被扫描的文件报绿，和干净的文件报绿，观测上无法区分。
+    final unclassified = <String>[];
+    for (final file in libFiles) {
+      final rel = _relToLib(file.path);
+      if (rel == null) continue;
+      if (_isGeneratedPath(rel)) continue;
+      if (!rel.contains('/') && _unlayeredAllowList.contains(rel)) continue;
+      if (_classify(rel) == null) unclassified.add(rel);
+    }
+
+    expect(
+      unclassified,
+      isEmpty,
+      reason:
+          '以下 ${unclassified.length} 个文件不属于任何一层，所有分层规则对它们静默失效：\n'
+          '${unclassified.map((f) => '  - lib/$f').join('\n')}\n'
+          '要么把它放进 module-map §1 规定的目录结构，'
+          '要么在 _unlayeredAllowList 里显式豁免并说明理由。',
+    );
+  });
+
   test('分层依赖方向正确（module-map §3）', () {
     final violations = <Violation>[];
     for (final file in libFiles) {
-      final layer = _layerOf(file.path);
-      final rules = _forbidden[layer];
+      final rel = _relToLib(file.path);
+      if (rel == null) continue;
+      final c = _classify(rel);
+      final rules = _forbidden[c?.layer];
       if (rules == null) continue;
 
-      final lines = file.readAsLinesSync();
-      for (var i = 0; i < lines.length; i++) {
-        final line = lines[i].trim();
-        if (!_isImportLine(line)) continue;
+      for (final imp in _imports(file, rel)) {
+        final matchable = _matchable(imp.resolved);
         for (final (pattern, rule) in rules) {
-          if (line.contains(pattern)) {
-            violations.add(Violation(_norm(file.path), line, i + 1, rule));
+          if (matchable.contains(pattern)) {
+            violations.add(
+              Violation(_norm(file.path), imp.raw, imp.lineNo, rule),
+            );
           }
         }
       }
@@ -190,30 +277,28 @@ void main() {
   });
 
   test('feature 之间不得跨 presentation 引用（module-map §3 末行）', () {
-    // 第一版逐格转写 module-map §3 的表格时漏了这一行。
-    // 跨 feature 通信只能经 application 层的 Provider。
     final violations = <Violation>[];
     for (final file in libFiles) {
-      if (_layerOf(file.path) != 'feature_presentation') continue;
-      final own = _featureOf(file.path);
-      if (own == null) continue;
+      final rel = _relToLib(file.path);
+      if (rel == null) continue;
+      final c = _classify(rel);
+      if (c?.layer != 'feature_presentation' || c?.feature == null) continue;
 
-      final lines = file.readAsLinesSync();
-      for (var i = 0; i < lines.length; i++) {
-        final line = lines[i].trim();
-        if (!_isImportLine(line)) continue;
-        final m = RegExp(r'features/([^/]+)/presentation').firstMatch(line);
-        if (m != null && m.group(1) != own) {
-          violations.add(
-            Violation(
-              _norm(file.path),
-              line,
-              i + 1,
-              'feature「$own」的 presentation 不得引用 feature「${m.group(1)}」的 '
-              'presentation；跨 feature 只能经 application 层的 Provider 通信',
-            ),
-          );
-        }
+      for (final imp in _imports(file, rel)) {
+        // 归一后的路径一定是 features/<feature 路径>/presentation/... 形态，
+        // 因此相对 import 与 package: import 走同一条判定。
+        final target = _classify(imp.resolved);
+        if (target?.layer != 'feature_presentation') continue;
+        if (target!.feature == c!.feature) continue;
+        violations.add(
+          Violation(
+            _norm(file.path),
+            imp.raw,
+            imp.lineNo,
+            'feature「${c.feature}」的 presentation 不得引用 feature「${target.feature}」的 '
+            'presentation；跨 feature 只能经 application 层的 Provider 通信',
+          ),
+        );
       }
     }
 
@@ -227,20 +312,19 @@ void main() {
   });
 
   test('领域层与应用层不得直接读环境时钟（cross-cutting §1.2）', () {
-    // 第一版只匹配字面量 `DateTime.now()`，被 `DateTime.timestamp()` 绕过 ——
-    // 后者是 dart:core 自 3.0 起的正式 API，同样读环境时钟，
-    // 完全落在「时间必须经注入的 Clock 取得」这条规则的意图内。
-    // 规则的**意图**才是要强制的东西，不是它最初被写成的那个字面量。
+    // 要强制的是规则的**意图**（时间必须可注入），不是它最初被写成的那个字面量。
+    // 第一版只匹配 `DateTime.now()`，被 `DateTime.timestamp()` 绕过。
     final patterns = <RegExp, String>{
       RegExp(r'\bDateTime\s*\.\s*now\s*\('): 'DateTime.now()',
       RegExp(r'\bDateTime\s*\.\s*timestamp\s*\('): 'DateTime.timestamp()',
-      // tear-off 写法：把函数本身传出去，同样绕过注入
       RegExp(r'\bDateTime\s*\.\s*now\b(?!\s*\()'): 'DateTime.now 的 tear-off',
     };
 
     final violations = <Violation>[];
     for (final file in libFiles) {
-      final layer = _layerOf(file.path);
+      final rel = _relToLib(file.path);
+      if (rel == null) continue;
+      final layer = _classify(rel)?.layer;
       if (layer != 'domain' && layer != 'feature_application') continue;
 
       final lines = file.readAsLinesSync();
@@ -254,8 +338,7 @@ void main() {
                 _norm(file.path),
                 line.trim(),
                 i + 1,
-                '${entry.value} 直接读环境时钟；必须经注入的 Clock，'
-                '否则时间相关逻辑无法测试',
+                '${entry.value} 直接读环境时钟；必须经注入的 Clock，否则时间相关逻辑无法测试',
               ),
             );
           }
@@ -273,19 +356,22 @@ void main() {
   });
 
   test('测试代码不得使用真实时钟（testing-strategy §4）', () {
-    // 文档里写了这条守卫，此前只写在文档里没有实现 ——
-    // 「文档写着有、实际没有的守卫」比没写更危险，它会让人以为已经被拦截了。
+    // 白名单锚定到确切文件名，不做子串匹配 ——
+    // 否则将来的 task_id_generator_test.dart 之类会被静默豁免。
+    // 每一条都必须有理由：白名单是守卫的盲区。
+    const allowedFileNames = {
+      // 验证的正是「v7 的时间戳与真实时刻相符」，必须用真实时钟
+      'id_generator_test.dart',
+      // 验证外部库的既有行为，不涉及我们的时间逻辑
+      'rrule_library_contract_test.dart',
+      // 守卫自身：源码里必然包含要搜的那些字面量
+      'layer_dependency_test.dart',
+    };
+
     final violations = <Violation>[];
-    // 白名单，每一条都必须说明理由 —— 白名单是守卫的盲区，不能随手加：
-    //  · id_generator_test         验证的正是「v7 的时间戳与真实时刻相符」，必须用真实时钟
-    //  · rrule_library_contract_test 验证外部库的既有行为，不涉及我们的时间逻辑
-    //  · layer_dependency_test     守卫自身：它的源码里必然包含要搜的那些字面量，
-    //                              否则会把自己的规则定义行报成违规（第一版就是这样）
-    final allowed = RegExp(
-      r'(id_generator_test|rrule_library_contract_test|layer_dependency_test)',
-    );
     for (final file in testFiles) {
-      if (allowed.hasMatch(_norm(file.path))) continue;
+      final name = _norm(file.path).split('/').last;
+      if (allowedFileNames.contains(name)) continue;
 
       final lines = file.readAsLinesSync();
       for (var i = 0; i < lines.length; i++) {
@@ -315,11 +401,11 @@ void main() {
   });
 
   test('领域层与数据层不得用 assert 表达不变量（cross-cutting §3.1）', () {
-    // Dart 的 assert 在 AOT release 构建中被整条剥离，
-    // 用它表达的不变量在正式包里等于不存在。
     final violations = <Violation>[];
     for (final file in libFiles) {
-      final layer = _layerOf(file.path);
+      final rel = _relToLib(file.path);
+      if (rel == null) continue;
+      final layer = _classify(rel)?.layer;
       if (layer != 'domain' && layer != 'data') continue;
 
       final lines = file.readAsLinesSync();

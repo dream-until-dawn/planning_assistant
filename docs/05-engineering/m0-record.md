@@ -145,6 +145,79 @@ feature 之间不得跨 presentation 引用（module-map §3 末行） [E]
 > **变异演练不是建立时做一次的仪式。** 守卫每次实质性改动后都要重跑 ——
 > 我在这次修复中就两次让它抓到了新问题。
 
+### 2.1d 🔴 第二轮变异演练：整片目录零守卫覆盖，而它报绿
+
+上一轮修完后我以为守卫已经可信了。评审方第二轮演练找到一个**性质完全不同**的问题。
+
+`_layerOf` 用 `^features/([^/]+)/([^/]+)/` 识别 feature，只认两级。
+而 [module-map §1](../01-architecture/module-map.md) 规定的四视图是**三级**：
+
+```
+lib/features/views/gantt/presentation/x.dart
+                  ↑ group(1)=views, group(2)=gantt → 不是层段 → 返回 null
+```
+
+于是 **`features/views/` 整片目录不被分类，六条规则全部静默失效**。
+而那正好是 M3 四个视图所在、全项目最大的一块，也是最需要「不得绕过 Provider 直接查库」的地方。
+
+实测：在 `lib/features/views/gantt/presentation/` 放一个同时 import `data/` 与
+`domain/repositories/` 的文件，**六条守卫一条都没报**。
+
+**这与前一轮的失效方式不同**：
+
+| | 失效方式 | 能否靠注入违规发现 |
+|---|---|---|
+| 第一轮（3 漏报 + 1 假阳性） | 规则写错 / 漏写 | ✅ 能 |
+| **第二轮（B3）** | 文件**根本没被扫** | ❌ **不能** —— 注入的违规文件本身就在盲区里 |
+
+不被扫描的文件报绿，和干净的文件报绿，**观测上无法区分**。
+
+#### 修法：治标 + 治本
+
+**治标**：`_classify` 改为在 `features/` 之下寻找第一个层段，feature 名取该段之前的完整路径
+（`features/views/gantt/presentation/` → feature = `views/gantt`）。
+
+**治本**：新增守卫 **「lib/ 下每个文件都必须被分类到某一层」**，未分类即违规。
+它把「未分类 → 静默放行」变成「未分类 → 变红」，因此**将来任何新的目录形状都会当场暴露**，
+而不是安静地脱离守卫。豁免名单只有 `main.dart` / `app.dart` / `bootstrap.dart` 三条，各有理由。
+
+修复后三条验证输出：
+
+```
+分层依赖方向正确（module-map §3） [E]
+    - lib/features/views/gantt/presentation/_probe_f.dart:1
+        违反: presentation 不得依赖 data
+    - lib/features/views/gantt/presentation/_probe_f.dart:2
+        违反: presentation 不得持有 Repository（写路径必须经 TaskCommand，FR-AI-01）
+
+feature 之间不得跨 presentation 引用 [E]
+    - lib/features/task/presentation/_probe_e.dart:1
+        import '../../settings/presentation/settings_page.dart';
+        违反: feature「task」的 presentation 不得引用 feature「settings」的 presentation
+
+lib/ 下每个文件都必须被分类到某一层（否则守卫对它静默失效） [E]
+  以下 2 个文件不属于任何一层，所有分层规则对它们静默失效：
+    - lib/features/views/gantt/_probe_g.dart
+    - lib/some_stray_file.dart
+```
+
+删除全部探针后：`00:00 +7: All tests passed!`
+
+#### 顺带修掉的 S4 与观察项
+
+- **S4 相对路径绕过**：跨 feature 守卫原先匹配 import 串里的 `features/` 字样，
+  而 `import '../../settings/presentation/x.dart'` 根本没有这个字样。
+  现在**先把 import 归一成 lib 相对路径**，层规则 / barrel 展开 / 跨 feature 判定三处共用同一套归一化，
+  而不是各自对原始字符串做子串匹配。
+- **白名单子串匹配**：改为锚定确切文件名，否则将来的 `task_id_generator_test.dart`
+  会被静默豁免真实时钟检查。
+
+> **这是「守卫可信度」的第三层**：
+> ① 已实现的规则能红 → 注入违规可验；
+> ② 该实现的规则都实现了 → 逐条比对文档可验；
+> ③ **已实现的规则在所有该生效的地方都生效** → 只能靠「未分类即失败」这类**结构性断言**兜底，
+> 因为它的失效方式是沉默的。
+
 ### 2.1c 坏测试扫描器 `tool/lint_tests.dart`（补齐 S3）
 
 [测试策略 §3.4](testing-strategy.md) 写了这个工具，但此前**只写在文档里没有实现** ——
@@ -202,7 +275,7 @@ feature 之间不得跨 presentation 引用（module-map §3 末行） [E]
 | `AndroidManifest`：`RECEIVE_BOOT_COMPLETED` / `SCHEDULE_EXACT_ALARM` / 启动接收器 | ✅ |
 | `analysis_options.yaml`（含 riverpod_lint） | ✅ |
 | `core/result`、`core/time`、`core/id` 最小实现 | ✅ |
-| 架构守卫测试（**6 条**） | ✅ 已证明能红，且经变异演练修掉 3 漏报 + 1 假阳性 |
+| 架构守卫测试（**7 条**） | ✅ 经两轮变异演练：修掉 3 漏报 + 1 假阳性，再修掉「整片目录零覆盖」并加结构性断言 |
 | 坏测试扫描器 `tool/lint_tests.dart` | ✅ 自检 + 真实仓库失败演示 |
 | rrule 契约测试（14 条） | ✅ |
 | uuid v7 测试（5 条） | ✅ |
@@ -210,7 +283,7 @@ feature 之间不得跨 presentation 引用（module-map §3 末行） [E]
 | CI（analyze / format / codegen 校验 / test / **守卫有效性** / build） | ✅ |
 | `flutter build apk --debug` | ✅ |
 
-**测试总数 28，`dart analyze --fatal-infos --fatal-warnings` 零问题，`dart format` 无差异。**
+**测试总数 29，`dart analyze --fatal-infos --fatal-warnings` 零问题，`dart format` 无差异。**
 
 ---
 
