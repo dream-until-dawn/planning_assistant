@@ -62,7 +62,7 @@
 | `endDate` | TEXT | NULL | 跨天任务的结束日 |
 | `endMinute` | INT | NULL | |
 | `timeZoneId` | TEXT | NOT NULL | IANA，创建时的时区 |
-| `recurrenceRule` | TEXT | NULL | RFC 5545 `RRULE:` 串。NULL = 不重复 |
+| `recurrenceRule` | TEXT | NULL | RFC 5545 `RRULE:` 串。NULL = 不重复。**必须是本应用 `encodeRrule()` 产出的规范形**（含 `UNTIL` 时必带 `Z`），不得直接存外部原串 —— 见[重复引擎 §2.3](recurrence-engine.md#23-编码-rrule-必须显式开启-istimeutc强制) |
 | `recurrenceExDates` | TEXT | NULL | JSON 数组。**V1 不参与展开**，仅作导入 `.ics` 的原始留档，见 §4.5 |
 | `splitFromTaskId` | TEXT | NULL | 「本次及以后」分裂的溯源，见 §4.4 |
 | `colorArgb` | INT | NULL | 任务级颜色覆盖；NULL 则用分类色 |
