@@ -54,7 +54,8 @@
 | `kind` | TEXT | NOT NULL | `single` \| `staged` |
 | `categoryId` | TEXT | NULL, FK→categories.id ON DELETE SET NULL | 删分类不删任务（FR-CFG-03） |
 | `priority` | INT | NOT NULL DEFAULT 2 | 0 无 / 1 低 / 2 普通 / 3 高 / 4 紧急 |
-| `status` | TEXT | NOT NULL DEFAULT 'pending' | 非重复任务的状态；重复任务此列恒为 `pending`，真实状态在 override |
+| `status` | TEXT | NOT NULL DEFAULT 'pending' | `pending`\|`inProgress`\|`done`\|`skipped`。重复任务此列恒为 `pending`，真实状态在 override |
+| `statusBeforeArchive` | TEXT | NULL | 归档时快照的 `status`，取消归档时还原；非归档态恒为 NULL。参与同步与导出 |
 | `isAllDay` | BOOL | NOT NULL DEFAULT 0 | |
 | `planDate` | TEXT | NULL | `yyyy-MM-dd`。重复任务即 DTSTART 的日期 |
 | `startMinute` | INT | NULL | 0..1439，`isAllDay=1` 时为 NULL |
@@ -62,16 +63,19 @@
 | `endMinute` | INT | NULL | |
 | `timeZoneId` | TEXT | NOT NULL | IANA，创建时的时区 |
 | `recurrenceRule` | TEXT | NULL | RFC 5545 `RRULE:` 串。NULL = 不重复 |
-| `recurrenceExDates` | TEXT | NULL | JSON 数组，被排除的 occurrenceKey（保留用于导入 `.ics`） |
+| `recurrenceExDates` | TEXT | NULL | JSON 数组。**V1 不参与展开**，仅作导入 `.ics` 的原始留档，见 §4.5 |
 | `splitFromTaskId` | TEXT | NULL | 「本次及以后」分裂的溯源，见 §4.4 |
 | `colorArgb` | INT | NULL | 任务级颜色覆盖；NULL 则用分类色 |
 | `icon` | TEXT | NULL | |
 | `sortOrder` | REAL | NOT NULL DEFAULT 0 | 手动排序（浮点便于插入中间） |
 | `completedAt` | INT | NULL | Instant ms |
-| `archivedAt` | INT | NULL | |
+| `archivedAt` | INT | NULL | 非空即已归档。**归档不是 `status` 的取值**，见[任务生命周期 §1.1](task-lifecycle.md#11-归档与删除不是状态) |
 | **同步信封** | | | 见 §5 |
 
-**索引**：`(deletedAt, planDate)`、`(categoryId)`、`(recurrenceRule)` 部分索引（`WHERE recurrenceRule IS NOT NULL`）、`(status, deletedAt)`
+**索引**：`(deletedAt, archivedAt, planDate)`、`(categoryId)`、`(recurrenceRule)` 部分索引（`WHERE recurrenceRule IS NOT NULL`）、`(status, deletedAt)`
+
+> 归档与删除都用时间戳列表达（`archivedAt` / `deletedAt`），不占用 `status` 取值。
+> 否则重复任务（`status` 恒为 `pending`）将永远无法被归档。三个可见性谓词见[任务生命周期 §1.1](task-lifecycle.md#11-归档与删除不是状态)。
 
 ### 3.2 `stages`
 
@@ -111,7 +115,7 @@
 |---|---|---|
 | `id` | TEXT PK | |
 | `taskId` | TEXT NOT NULL FK CASCADE | |
-| `occurrenceKey` | TEXT NOT NULL | **原始**发生时刻的墙钟串 `yyyy-MM-ddTHH:mm`（未被修改前的），唯一标识是哪一次 |
+| `occurrenceKey` | TEXT NOT NULL | **原始**发生时刻的墙钟串（未被修改前的），唯一标识是哪一次。**格式定义见 §4.6**（全天任务与定时任务形态不同） |
 | `action` | TEXT NOT NULL | `skip` \| `modify` |
 | `status` | TEXT NULL | 该次的状态 |
 | `completedAt` | INT NULL | |
@@ -249,6 +253,59 @@ UI 层始终展示绝对日期，编辑时换算回偏移。「不自动缩放�
 
 好处：历史发生的完成记录原样保留，且云端合并时不需要理解「部分修改」这种复杂语义。
 
+> ⚠️ **分割点必须先转成真 UTC 再写进 `UNTIL`**。分割点在 UI 与领域层都是墙钟
+> （「从 10 月 6 日这次起」），而 `UNTIL` 按 RFC 必须是真 UTC。
+> 换算走 `core/time` 的 `untilForStorage()`，禁止直接把墙钟值加个 `Z` 拼上去 ——
+> 那会产生偏差最多 ±14 小时的错误规则。完整规则见[重复引擎 §2.2](recurrence-engine.md#22-until-的时间域必须显式换算)。
+
+### 4.5 `recurrenceExDates` 在 V1 不参与展开（决定）
+
+RFC 5545 的 `EXDATE` 用于排除指定的发生。本项目有两条可选路径：
+
+| 方案 | 取舍 |
+|---|---|
+| 展开时读 `recurrenceExDates` 并排除 | 与 RFC 语义直接对应，但引擎多一条分支，且与 `action=skip` 的 override **功能重复** |
+| **（采纳）导入时转成 `action=skip` 的 override，该列只作原始留档** | 排除逻辑只有一条路径（override），引擎不必处理 EXDATE；该列保留原始串，导出 `.ics` 时可还原 |
+
+**因此**：展开算法（[重复引擎 §3](recurrence-engine.md)）**不读**这一列，这是刻意的而不是遗漏。
+导入 `.ics` 时由导入器把 EXDATE 逐条转成 override 行，并有对应测试（R-26）。
+
+### 4.6 `occurrenceKey` 的格式（区分全天与定时）
+
+`occurrenceKey` 是 `occurrence_overrides` 与 `stage_occurrence_states` 唯一索引的成分，格式定错会导致例外挂不上。
+
+| 任务类型 | `occurrenceKey` 形态 | 例 |
+|---|---|---|
+| 定时任务（`isAllDay = 0`） | `yyyy-MM-ddTHH:mm` | `2026-09-08T09:00` |
+| **全天任务（`isAllDay = 1`）** | `yyyy-MM-dd`（**纯日期，无时间部分**） | `2026-09-08` |
+
+**为什么全天不用 `T00:00` 补齐**：若补成 `T00:00`，当用户把一个全天任务改成定时任务（或反之）时，
+同一次发生的 key 会静默改变，已有的例外会全部失联。用纯日期表达「这一天」，语义上也更诚实。
+
+**代价**：切换 `isAllDay` 时仍需迁移已有 override 的 key。因此该操作必须是一次显式的领域操作
+（`ConvertTaskAllDayMode` 命令），在同一事务内重写相关 override 的 key，并有测试 R-27 锁住。
+
+### 4.7 任务的「有效跨度」由领域层派生（不是甘特图的私事）
+
+阶段用相对偏移表达（§4.1），因此**末阶段的结束可能超出 `tasks.endDate`**。
+若甘特图自行「扩展到末阶段结束」而时间轴按 `endDate` 显示，同一任务在两个视图里跨度不同，
+违背[四视图共享同一份数据源](../03-design/view-specs.md#0-共享层)的前提。
+
+**规则**（放在领域层，四视图共用）：
+
+```
+effectiveEnd(task) = max(
+    task.endDate/endMinute,                       // 存储的结束（可能为 null）
+    max over stages of (occurrenceStart + startOffsetMinutes + durationMinutes)
+)
+```
+
+- `effectiveEnd` 是**派生值**，不落库（避免与 `endDate` 不一致）。
+- 所有视图、甘特布局、冲突检测一律用 `effectiveEnd`，不得各自计算。
+- 编辑器在保存时若发现 `effectiveEnd > endDate`，提示用户「阶段超出了任务结束时间」并提供一键对齐，
+  但**不静默改写** `endDate`（与 §4.1「不静默缩放」一致）。
+- 对应用例：甘特 G-05 与时间轴的跨度断言必须使用同一个 `effectiveEnd`。
+
 ## 5. 同步信封（每张可同步表都有）
 
 | 列 | 类型 | 语义 |
@@ -292,6 +349,11 @@ UI 层始终展示绝对日期，编辑时换算回偏移。「不自动缩放�
 ```
 
 - 字段名 = 列名（lowerCamelCase），逐字段对应，无嵌套加工。
+- **例外：二次编码的 JSON 列**。以下列在 SQLite 中是 TEXT，内容本身是 JSON 字符串：
+  `tasks.recurrenceExDates`、`settings.valueJson`。
+  服务端解析时需要对这两列再做一次 `JSON.parse`。
+  **必须在 `docs/schema/export-v1.schema.json` 中显式标注**（用 `contentMediaType: "application/json"`），
+  否则「服务端无需客户端逻辑即可解析」这句话对这两列不成立。
 - 墓碑行**照常导出**（否则导入方无法知道某条被删了）。
 - 导出/导入必须通过**往返测试**：导出 → 清库 → 导入 → 逐表逐字段比对（FR-CFG-06）。
 - 同时在 `docs/schema/export-v1.schema.json` 维护 JSON Schema，服务端（V3）以此为契约。

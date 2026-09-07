@@ -115,14 +115,30 @@ List<PlannedNotification> planNotifications({
 
 ### 4.4 降级策略（FR-NOTI-04）
 
+`AndroidScheduleMode` 的**五个**取值（已读 `schedule_mode.dart` 全文确认）：
+
+| 取值 | 精确 | Doze(低电空闲) 下能否执行 |
+|---|---|---|
+| `alarmClock` | ✅ | ✅（需 SCHEDULE_EXACT_ALARM；会在状态栏显示闹钟图标） |
+| `exact` | ✅ | ❌ |
+| `exactAllowWhileIdle` | ✅ | ✅ |
+| `inexact` | ❌ | ❌ |
+| `inexactAllowWhileIdle` | ❌ | ✅ |
+
+**降级策略**：
+
 | 状态 | 行为 | UI |
 |---|---|---|
 | 通知权限被拒 | 不排期 | 设置页显示状态卡片 + 一键跳系统设置 |
-| 精确闹钟不可用 | 用 `AndroidScheduleMode.inexact` 继续排 | 明确告知「提醒可能延迟几分钟」，不假装一切正常 |
+| 精确闹钟不可用 | 用 **`inexactAllowWhileIdle`** 继续排 | 明确告知「提醒可能延迟几分钟」，不假装一切正常 |
 | 两者都可用 | `exactAllowWhileIdle` | — |
 
-`AndroidScheduleMode` 的四个取值已读源码确认：`alarmClock` / `exact` / `exactAllowWhileIdle` / `inexact`。
-选 `exactAllowWhileIdle` 而非 `alarmClock`：后者会在系统状态栏显示闹钟图标，对计划助手来说过于喧宾夺主。
+> 降级目标选 `inexactAllowWhileIdle` 而**不是** `inexact`：后者在 Doze 下可能被推迟到下一个
+> 维护窗口，对「今天 9 点的会议」这类提醒等于失效。既然已经放弃精确，至少要保住「会响」。
+>
+> 初版此处误写为四个取值并选了 `inexact` —— 漏掉的恰是降级路径上更该用的那个。
+
+选 `exactAllowWhileIdle` 而非 `alarmClock`：后者会在系统状态栏常驻闹钟图标，对计划助手来说过于喧宾夺主。
 
 ## 5. 重启恢复（FR-NOTI-03）
 
@@ -195,7 +211,7 @@ String buildDigestText(TodayDigest digest);   // V2 常驻通知复用
 | N-11 | 对账：系统列表多 3 条（任务已删） | 取消这 3 条 |
 | N-12 | 时区从上海改到伦敦 | 全量重排，墙钟时刻不变 |
 | N-13 | 同一时刻 5 条提醒，阈值 3 | 合并为 1 条摘要 |
-| N-14 | 精确闹钟不可用 | 降级为 inexact，且 UI 状态可查 |
+| N-14 | 精确闹钟不可用 | 降级为 **`inexactAllowWhileIdle`**（不是 `inexact`），且 UI 状态可查 |
 
 N-01..N-13 全部可在**纯 Dart 层**用假时钟与假通知平台测完，不需要设备。
 只有 N-14 与实际触发时刻精度需要真机验证（M4 的手工验收项）。

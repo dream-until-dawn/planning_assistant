@@ -1,7 +1,8 @@
 # 本机环境探针结论
 
 > **全部结论均为实测**，不是文档摘抄或记忆。测试日期：2026-09-07。
-> 探针工程为一次性产物，不入库；本文是它留下的唯一资产。
+> 探针**工程**（含构建产物）为一次性资源，已删除；但**结论的可复现依据**
+> （`pubspec.lock`、最小复现脚本）已入库于 [`probe-artifacts/`](probe-artifacts/README.md)。
 
 ## 1. 工具链现状
 
@@ -21,12 +22,12 @@
 
 ## 2. 已验证可行（构建 + 运行时双验证）
 
-在 `C:\VScodeProject\probe_apk` 用完整依赖集构建 debug APK **成功**，安装到模拟器**运行成功**，实测输出：
+用完整依赖集构建 debug APK **成功**，安装到模拟器**运行成功**，实测输出：
 
 ```
 PROBE_OK drift_rows=3            ← 第 3 次启动累计 3 行：数据确实持久化落盘
 PROBE_OK sqlite=3.53.4           ← sqlite3 3.x 原生库经 native assets 正确打包并加载
-PROBE_OK rrule_roundtrip=true    ← RRULE 字符串 fromString/toString 无损往返
+PROBE_OK rrule_roundtrip=true    ← 注意：此样本不含 UNTIL。含 UNTIL 时有损，见 §2.2
 PROBE_OK rrule_next=2026-09-08,2026-09-10,2026-09-22,2026-09-24
 PROBE_OK rrule_monthend=2026-01-31,2026-03-31,2026-05-31,2026-07-31
 PROBE_OK notif_init=true         ← flutter_local_notifications 初始化成功
@@ -37,10 +38,45 @@ PROBE_OK notif_init=true         ← flutter_local_notifications 初始化成功
 | 探针 | 结论 |
 |---|---|
 | **P-1** `FREQ=MONTHLY;BYMONTHDAY=31` | **跳过**没有 31 号的月份（2、4、6 月缺席），**不顺延到月末**。这是 RFC 5545 的正确语义，但与多数用户直觉相反 → UI 必须在选择「每月 31 号」时给出明确提示，并提供「每月最后一天」（`BYMONTHDAY=-1`）作为替代选项 |
-| **P-2** RRULE 往返 | 严格无损，可安全用作存储格式 |
+| **P-2** RRULE 往返 | ⚠️ **不含 `UNTIL` 时无损；含 `UNTIL` 时有损** —— 见 §2.2 |
 | 隔周多日展开 | `FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH` 从 9/7(周一) 起 → 9/8、9/10、**跳过一周**、9/22、9/24，行为正确 |
 
-### 2.2 宿主机测试可行性（对应[测试策略](testing-strategy.md) §2.1）
+### 2.2 🔴 补测推翻了初版的一个结论：RRULE 往返在含 `UNTIL` 时有损
+
+初版只用 `RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH`（不含 `UNTIL`）测出 `roundtrip=true`，
+就写下了「RRULE 字符串严格往返」。补一条带 `UNTIL` 的样本后，结论当场被推翻：
+
+```
+输入            : RRULE:FREQ=DAILY;UNTIL=20260930T235959Z
+toString()      : RRULE:FREQ=DAILY;UNTIL=20260930T235959      ← Z 丢失，lossless=false
+isTimeUtc:true  : RRULE:FREQ=DAILY;UNTIL=20260930T235959Z     ← lossless=true
+```
+
+- **根因**：`RecurrenceRuleToStringOptions.isTimeUtc` 默认 `false`（读包源码 `encoder.dart:133` 确认）。
+- **危害**：丢掉 `Z` 后的串按 RFC 5545 是「浮动本地时间」，而 DTSTART 带 TZID 时该值 MUST 为真 UTC。
+  也就是**我们自己的导出会产出不合规的规则串**。`rrule` 自己解析回来仍等值，
+  所以**本地往返测试发现不了**，只有外部消费者（服务端、`.ics` 互通）会错 —— 而这两者正是 ADR-0004 的立论依据。
+- **对策**：禁止直接 `toString()`，统一走带 `isTimeUtc: true` 的封装，见
+  [重复引擎 §2.3](../02-domain/recurrence-engine.md#23-编码-rrule-必须显式开启-istimeutc强制)。
+
+### 2.3 `UNTIL` 不做时区换算（实测）
+
+```
+FREQ=DAILY;UNTIL=20260930T095959Z, start=墙钟 09-28T23:00
+  → [09-28T23:00, 09-29T23:00]          09-30T23:00 被丢掉
+FREQ=DAILY;UNTIL=20260930T235959Z, 同一 start
+  → [09-28T23:00, 09-29T23:00, 09-30T23:00]
+```
+
+全程无时区参数参与，边界完全由裸值比较决定 → 朴素比较属实。
+换算责任必须落在 `core/time`，见[重复引擎 §2.2](../02-domain/recurrence-engine.md#22-until-的时间域必须显式换算)。
+
+另实测：`UNTIL` 恰为某实例时刻时该实例**被包含**（闭区间），与 RFC 5545 §3.3.10
+"bounds the recurrence rule in an inclusive manner" 一致。
+
+> 复现方式：`docs/05-engineering/probe-artifacts/rrule/` 下有可直接 `dart run` 的探针源码与 lock。
+
+### 2.4 宿主机测试可行性（对应[测试策略](testing-strategy.md) §2.1）
 
 `flutter test` 在本机 Windows 宿主直接跑通 drift 的 `NativeDatabase.memory()`：
 
@@ -146,8 +182,11 @@ Cannot operate on packages inside the cache.
 
 | 冲突 | 现象 | 解法 |
 |---|---|---|
-| `riverpod_lint ≥3.1.9` + 显式声明 `custom_lint` | 版本求解失败：前者要 `analyzer_plugin ^0.14`，后者锁死 `^0.13` | **不要显式声明 `custom_lint`**。riverpod_lint 3.1.9 已改用 Dart 原生分析器插件协议（`analysis_server_plugin`） |
-| `riverpod_generator 4.0.9` + `freezed ^3.x` | 前者要 `analyzer 13–15`，后者要 `analyzer 9–11` | `freezed` 必须升到 **`^4.0.1`** |
+| `riverpod_lint 3.1.9` + 显式声明 `custom_lint` | 版本求解失败：前者需 `analyzer_plugin ^0.14.0`，`custom_lint 0.8.1`（当前最新）需 `^0.13.0` | **不要显式声明 `custom_lint`**。riverpod_lint 3.1.9 已改用 Dart 原生分析器插件协议（`analysis_server_plugin`） |
+| `riverpod_generator 4.0.9` + `freezed ^3.x` | 前者需 `analyzer >=13.0.0 <15.0.0`（读其 pubspec）；`freezed 3.x` 分段为 `3.2.3 → >=7.5.9 <9.0.0`、`3.2.4 → ^9.0.0`、`3.2.5 → >=9.0.0 <11.0.0`（求解器输出），均不含 13–15 | `freezed` 必须升到 **`^4.0.1`**（其约束为 `>=13.0.0 <15.0.0`，可共存） |
+
+> 初版此处把 freezed 3.x 的约束笼统写成「analyzer 9–11」，只是 3.2.5 那一段的值，不覆盖全部 3.x。
+> 结论没错，数字不准 —— 在一份反复强调「全部实测」的文档里，这种不准确尤其伤可信度，故改为逐段列出。
 
 完整锁定版本见[技术栈与版本矩阵](../01-architecture/tech-stack.md)。
 

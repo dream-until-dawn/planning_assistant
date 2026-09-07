@@ -41,10 +41,106 @@ List<Occurrence> expand({
 | 每月最后一个周五 | `FREQ=MONTHLY;BYDAY=-1FR` |
 | 每年 5 月 20 日 | `FREQ=YEARLY;BYMONTH=5;BYMONTHDAY=20` |
 | 结束条件：重复 N 次 | 追加 `COUNT=N` |
-| 结束条件：到某日止 | 追加 `UNTIL=yyyyMMddTHHmmssZ` |
+| 结束条件：到某日止 | 追加 `UNTIL=yyyyMMddTHHmmssZ`（**真 UTC**，见 §2.2） |
 
 > **UI 只暴露上表**。用户不需要看见 RRULE 语法。
 > 但存储层保留完整 RRULE 表达能力 —— 从导入的 `.ics` 来的复杂规则能被正确保存与展开，只是 UI 显示为「自定义规则」且编辑时提示会简化。
+
+### 2.2 `UNTIL` 的时间域必须显式换算
+
+这是本引擎**唯一一处**时间域会被搞混的地方，且错了不会报错，只会静默多一次或少一次。
+
+**两条互相矛盾的约束**：
+
+| 约束 | 来源 |
+|---|---|
+| DTSTART 为「local time + TZID」时，`UNTIL` **MUST** 是真 UTC | RFC 5545 §3.3.10 原文：<br>"If the 'DTSTART' property is specified as a date with UTC time **or a date with local time and time zone reference**, then the UNTIL rule part MUST be specified as a date with UTC time."（已回原文核对） |
+| 展开全程在「假 UTC 墙钟域」进行（§4） | `rrule` 包的设计 |
+
+而 **`rrule` 对 `UNTIL` 只做朴素比较，不做任何时区换算**（已实测，见下）。
+两者直接冲突：把真 UTC 的 `UNTIL` 丢进墙钟域比较，边界必错。
+
+**实测证据**（纯 Dart 探针，`rrule 0.2.18`）：
+
+```
+FREQ=DAILY;UNTIL=20260930T095959Z，start = 墙钟 09-28T23:00
+  → 实例 = [09-28T23:00, 09-29T23:00]      09-30T23:00 被丢掉
+FREQ=DAILY;UNTIL=20260930T235959Z，同一 start
+  → 实例 = [09-28T23:00, 09-29T23:00, 09-30T23:00]
+```
+
+没有任何时区参数参与，边界完全由裸值比较决定 —— 证实是朴素比较。
+
+**具体后果**（若不换算，直接把真 UTC 的 UNTIL 喂进去）：
+
+| 场景 | 错误 |
+|---|---|
+| `Pacific/Kiritimati` (UTC+14)，「每天 23:00，到 9/30 止」 | 最后一次**凭空消失** |
+| `America/New_York` (UTC-4)，「每天 01:00，到 9/30 止」 | **多出一次** 10/1 |
+
+反过来，若为了让展开正确而存「墙钟值加个 `Z`」，则导出的 RRULE 串不符合 RFC，
+服务端与外部 `.ics` 会按真 UTC 解读，偏差最多 ±14 小时 ——
+而「服务端能独立解析」与「`.ics` 互通不失真」正是 [ADR-0004](../06-adr/ADR-0004-rfc5545-recurrence.md) 立论的两根支柱。
+
+#### 决定：存储用真 UTC，喂给 rrule 前换算成墙钟
+
+```
+        存储 / 导出（RFC 合规）              引擎内部（假 UTC 墙钟域）
+   RRULE:...;UNTIL=20260930T095959Z  ◄──────────────►  09-30T23:59:59
+                    ▲                                        ▲
+                    │  core/time:                            │
+                    │    untilForStorage(wall, tzid) ────────┘
+                    └─── untilForExpansion(utc, tzid) ◄───────
+```
+
+`core/time` 暴露且**仅暴露**这一对函数，禁止在别处做 `UNTIL` 的时区拼接：
+
+```dart
+/// 墙钟结束点 → 可写入 RRULE 的真 UTC（导出、落库时用）
+DateTime untilForStorage(LocalWallTime wallEnd, String timeZoneId);
+
+/// 存储中的真 UTC UNTIL → 可喂给 rrule 的假 UTC 墙钟值（展开时用）
+DateTime untilForExpansion(DateTime utcUntil, String timeZoneId);
+```
+
+两者必须满足**往返恒等**：`untilForExpansion(untilForStorage(w, tz), tz) == w`，这条本身就是一条测试。
+
+同样受影响的还有[数据模型 §4.4](data-model.md#44-本次及以后修改怎么实现fr-task-06) 的「本次及以后」分裂点。
+
+> `COUNT` **不受此影响**（纯计数，与时区无关），因此在测试中作为对照组：
+> 同一规则用 `COUNT` 表达时四个时区结果应完全一致，用 `UNTIL` 表达时若换算错则会分叉。
+
+### 2.3 编码 RRULE 必须显式开启 `isTimeUtc`（强制）
+
+**`rrule` 的 `toString()` 默认会丢掉 `UNTIL` 的 `Z` 后缀**（实测）：
+
+```
+输入 : RRULE:FREQ=DAILY;UNTIL=20260930T235959Z
+toString() 输出 : RRULE:FREQ=DAILY;UNTIL=20260930T235959     ← Z 没了，往返有损
+```
+
+根因：`RecurrenceRuleToStringOptions.isTimeUtc` 默认为 `false`（已读包源码确认）。
+
+丢掉 `Z` 之后的串按 RFC 5545 是**浮动本地时间**，而 §2.2 引用的条款明确要求此处必须是真 UTC ——
+也就是说，**我们自己的导出路径会产出不合规的规则串**，外部解析器会按浮动时间理解它。
+`rrule` 自己解析回来仍是等值的（它把无 `Z` 的值也当 UTC），所以**本地测试不会发现**，只有外部消费者会错。
+
+**强制做法**：项目内**禁止直接调用 `rule.toString()`**，一律走封装：
+
+```dart
+// core/time 或 domain/recurrence 内唯一的编码出口
+const _codec = RecurrenceRuleStringCodec(
+  toStringOptions: RecurrenceRuleToStringOptions(isTimeUtc: true),
+);
+String encodeRrule(RecurrenceRule r) => _codec.encode(r);
+```
+
+已实测：加上 `isTimeUtc: true` 后 `RRULE:FREQ=DAILY;UNTIL=20260930T235959Z` 严格无损往返。
+lint 规则：`lib/` 下出现 `RecurrenceRule` 实例的 `.toString()` 调用即报错。
+
+> **这条是我们自己写文档时犯的错被探针抓出来的**：初版仅用一条不含 `UNTIL` 的规则测了往返，
+> 就写下了「RRULE 字符串严格往返」的全称结论。教训已写入
+> [测试策略 §1.1](../05-engineering/testing-strategy.md)：**单样本不能支撑全称结论**。
 
 ## 3. 展开算法
 
@@ -94,6 +190,9 @@ List<Occurrence> expand({
 
 **绝不**把用户的本地 `DateTime.now()` 直接喂给 `rrule`。统一走 `core/time` 的转换器（见[横切关注点](../01-architecture/cross-cutting.md) §1）。
 
+⚠️ **`UNTIL` 是这条流程唯一的例外入口**：它在存储中是**真 UTC**，必须先经 `untilForExpansion()`
+换算成墙钟值才能进入上图，否则边界会静默错一次。完整论证见 §2.2。
+
 ### 4.1 夏令时的两种坑
 
 | 情形 | 现象 | 本项目的处理 |
@@ -124,7 +223,22 @@ NFR-PERF-04 要求「展开 1 年实例 ≤ 50ms」。措施：
 | R-02 | `FREQ=DAILY;INTERVAL=3` | 9/7, 9/10, 9/13 |
 | R-03 | `FREQ=WEEKLY;BYDAY=MO,WE,FR` | 只落在周一三五 |
 | R-04 | `FREQ=DAILY;COUNT=3` | 恰好 3 个，第 4 个不出现 |
-| R-05 | `FREQ=DAILY;UNTIL=20260910T000000Z` | 含 9/10 与否符合 RFC（闭区间） |
+| R-05 | `FREQ=DAILY;UNTIL=<恰为某实例时刻>` | **包含**该实例。依据：RFC 5545 §3.3.10「bounds the recurrence rule in an **inclusive** manner」（原文核对），实测亦确认 |
+| R-06 | `UNTIL` 早于某实例 1 秒 | 排除该实例（闭区间的另一侧边界） |
+
+### 6.1b `UNTIL` 的时区边界（§2.2 的直接验收，初版一条都没有）
+
+这组用例的期望值来自 RFC + 手算，**不是**跑一遍看输出。
+
+| # | 时区 | 规则（用户视角） | 期望 |
+|---|---|---|---|
+| R-07 | `Pacific/Kiritimati` (UTC+14) | 每天 **23:00**，到 9/30 止 | 9/30 那次**存在**（最容易被错误丢弃的情形） |
+| R-08 | `America/New_York` (UTC-4/-5) | 每天 **01:00**，到 9/30 止 | 10/1 那次**不存在**（最容易被错误多出的情形） |
+| R-09 | `Pacific/Niue` (UTC-11) | 每天 **00:30**，到 9/30 止 | 9/30 那次存在，10/1 不存在 |
+| R-09b | `Asia/Shanghai` (UTC+8) | 每天 23:30，到 9/30 止 | 9/30 那次存在 |
+| R-09c | **对照组**：R-07..R-09b 改用 `COUNT` 表达 | 四个时区结果**完全一致**（`COUNT` 与时区无关）。若 `UNTIL` 组分叉而 `COUNT` 组一致，即定位到换算缺陷 |
+| R-09d | `untilForExpansion(untilForStorage(w, tz), tz) == w` | 对上述全部时区往返恒等 |
+| R-09e | `encodeRrule()` 输出含 `UNTIL` 的规则 | 字符串**带 `Z`** 且与输入严格相等（§2.3 的回归锁） |
 
 ### 6.2 月末与闰年（最容易错）
 
@@ -147,6 +261,9 @@ NFR-PERF-04 要求「展开 1 年实例 ≤ 50ms」。措施：
 | R-23 | **把窗口内的一次挪出窗口** | 该次消失，原位置不留残影 |
 | R-24 | 对同一次先 modify 再 skip | 最终不出现 |
 | R-25 | 完成某一次后，任务 `status` 仍为 `pending` | 其它次不受影响（data-model §4.3） |
+| R-26 | 导入含 `EXDATE` 的 `.ics` | 每个 EXDATE 转成一条 `action=skip` 的 override；展开时该日不出现。**引擎不读 `recurrenceExDates` 列**（[data-model §4.5](data-model.md#45-recurrenceexdates-在-v1-不参与展开决定)） |
+| R-27 | 全天重复任务已有 override，切换为定时任务 | 相关 override 的 `occurrenceKey` 在同一事务内从 `yyyy-MM-dd` 迁移为 `yyyy-MM-ddTHH:mm`，例外不失联（[data-model §4.6](data-model.md#46-occurrencekey-的格式区分全天与定时)） |
+| R-28 | 全天重复任务的 override | `occurrenceKey` 为纯日期，无 `T00:00` 后缀 |
 
 ### 6.4 「本次及以后」分裂
 
@@ -175,15 +292,21 @@ NFR-PERF-04 要求「展开 1 年实例 ≤ 50ms」。措施：
 
 ## 7. 实现前必须做的探针（M1 第一件事）
 
-`rrule` 包的以下行为**必须实测确认**，不得凭文档或记忆断言：
+**探针的定位（重要）**：期望值来自**规范**，探针只是**验证库是否符合规范**。
+反过来「跑一遍看输出、把输出当期望」正是[测试策略 §1.1](../05-engineering/testing-strategy.md) 明令禁止的「对着实现抄」。
+因此下表每一项都必须先填「规范依据」，再谈实测结果；两者不一致时，**以规范为准，在引擎内加显式修正层**。
 
-| 探针 | 要确认什么 | 状态 |
-|---|---|---|
-| P-1 | `RRULE:FREQ=MONTHLY;BYMONTHDAY=31` 在无 31 号的月份是跳过还是顺延 | ✅ **已实测：跳过**（2026 年结果为 `01-31, 03-31, 05-31, 07-31`，2/4/6 月缺席）。R-10 的期望值据此写死 |
-| P-2 | `toString()` 与 `fromString()` 是否严格往返 | ✅ **已实测：严格往返** |
-| P-3 | `UNTIL` 是闭区间还是开区间 | ⬜ M1 待测 |
-| P-4 | `BYDAY=-1FR` 等负序号支持情况 | ⬜ M1 待测 |
-| P-5 | 大范围展开（10 年 `FREQ=DAILY`）的耗时与内存 | ⬜ M1 待测 |
+| 探针 | 要确认什么 | 规范依据（期望的来源） | 实测结果 |
+|---|---|---|---|
+| P-1 | `FREQ=MONTHLY;BYMONTHDAY=31` 在无 31 号的月份 | RFC 5545 §3.3.10：`BYMONTHDAY` 指定的日期在该月不存在时，该次不产生（不顺延） | ✅ **符合**：2026 年得 `01-31, 03-31, 05-31, 07-31`，2/4/6 月缺席 |
+| P-2 | `fromString()` / 编码 是否严格往返 | RFC 5545 §3.3.10：DTSTART 带 TZID 时 `UNTIL` MUST 为真 UTC（故必须带 `Z`） | ⚠️ **不符合（默认配置下）**：`toString()` 丢掉 `Z`，往返有损。加 `isTimeUtc: true` 后无损。**已在 §2.3 加强制封装** |
+| P-3 | `UNTIL` 是闭区间还是开区间 | RFC 5545 §3.3.10 原文："bounds the recurrence rule in an **inclusive** manner" → **闭区间**，期望值现在即可写死 | ✅ **符合**：`UNTIL` 恰为某实例时刻时该实例被包含 |
+| P-3b | `UNTIL` 是否按时区换算 | RFC 要求真 UTC；包本身无时区输入 | ✅ **已实测：朴素比较，不做换算** → 换算责任归 `core/time`（§2.2） |
+| P-4 | `BYDAY=-1FR` 等负序号 | RFC 5545 §3.3.10 允许 `BYDAY` 带正负序号 | ⬜ M1 待测 |
+| P-5 | 大范围展开（10 年 `FREQ=DAILY`）耗时与内存 | 无规范依据，属性能预算（NFR-PERF-04） | ⬜ M1 待测 |
 
 > **规矩**：探针结论写进[环境探针结论](../05-engineering/environment-notes.md)并转化为测试用例后，才允许写引擎实现。
-> 若某项行为与需求不符（例如 P-1 的语义我们想要「顺延」），则在引擎内做**显式修正层**，而不是改需求去迁就库。
+>
+> P-2 是这条规矩价值的最好例证：初版只用一条**不含 `UNTIL`** 的规则测了往返，就写下了
+> 「RRULE 字符串严格往返」的结论。补上带 `UNTIL` 的样本后，结论当场被推翻。
+> **单样本不能支撑全称结论** —— 这条已写进测试策略。

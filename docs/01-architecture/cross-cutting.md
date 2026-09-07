@@ -25,6 +25,11 @@ abstract interface class TimeZoneResolver {                     // 可注入
   String currentZoneId();
   DateTime toInstant(LocalWallTime wall);                       // 墙钟 → 绝对时刻
   LocalWallTime toWallTime(DateTime instant, String zoneId);    // 绝对时刻 → 墙钟
+
+  // RRULE 的 UNTIL 专用：存储是真 UTC（RFC 要求），展开需墙钟（rrule 的域）。
+  // 这一对是项目内唯一允许做 UNTIL 域换算的地方，见 02-domain/recurrence-engine.md §2.2。
+  DateTime untilForStorage(LocalWallTime wallEnd, String zoneId);
+  DateTime untilForExpansion(DateTime utcUntil, String zoneId);
 }
 ```
 
@@ -53,10 +58,29 @@ abstract interface class TimeZoneResolver {                     // 可注入
 |---|---|---|
 | **领域失败**（预期内） | 阶段时间早于任务开始、重复规则非法 | 返回 `Result.failure(DomainFailure)`，UI 显示可读文案。**不抛异常** |
 | **基础设施失败** | DB 写入失败、文件不可写 | 抛 `InfraException`，在 Application 层捕获转 `Result` |
-| **程序缺陷** | 空断言失败、状态机非法迁移 | 让它崩（debug）/ 记录并上报（release），**绝不静默吞掉** |
+| **程序缺陷** | 状态机非法迁移、领域不变量被破坏 | 抛出显式异常；记录并上报，**绝不静默吞掉** |
 
 顶层由 `bootstrap.dart` 安装 `FlutterError.onError` 与 `PlatformDispatcher.instance.onError`，
 统一落本地日志文件（NFR-REL-01）。
+
+### 3.1 🔴 领域不变量一律不用 `assert` 表达
+
+**Dart 的 `assert` 只在 debug/JIT 下执行，AOT release 构建会把整条语句移除。**
+因此用 `assert` 写的不变量在正式 APK 里**完全不存在**，等于零保护。
+
+更糟的是它对测试的影响：依赖 `assert` 的用例在 debug 下会绿，
+而 release 包的行为与之不同 —— 按[测试策略 §1](../05-engineering/testing-strategy.md) 的标准，
+那是一条**测不出真实缺陷的测试**，正是本项目要消灭的东西。
+
+| 场景 | 正确写法 |
+|---|---|
+| 领域不变量（如「重复任务 status 恒为 pending」） | `if (违反) throw DomainInvariantViolation(...)` |
+| 非法状态迁移 | `throw IllegalTransitionException(...)` |
+| 预期内的业务失败 | `return Result.failure(DomainFailure(...))` |
+| 纯粹的开发期自检（不承载正确性） | 可以用 `assert`，但**不得**是唯一防线 |
+
+守卫：lint 规则禁止 `lib/domain/**` 与 `lib/data/**` 中出现 `assert(`。
+该条同时列入[评审要点](../05-engineering/conventions.md#9-评审要点按重要性排序)。
 
 ## 4. 日志
 

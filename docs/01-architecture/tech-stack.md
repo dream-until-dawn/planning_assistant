@@ -3,6 +3,10 @@
 > 表中版本号**全部来自实际解析结果**（`flutter pub get` 后的 `pubspec.lock`），不是估计值。
 > 解析环境：Flutter 3.47.0 / Dart 3.13.0，日期 2026-09-07。
 > 该组合已通过构建 + 模拟器运行时双重验证，见[环境探针结论](../05-engineering/environment-notes.md)。
+>
+> **可复现**：产出本表的 `pubspec.yaml` + `pubspec.lock` 已入库于
+> [`docs/05-engineering/probe-artifacts/dependency-matrix/`](../05-engineering/probe-artifacts/README.md)，
+> 任何人都能重跑解析并逐条比对，不依赖本机 pub cache 是否还在。
 
 ## 1. 选型总览
 
@@ -71,15 +75,25 @@
 ## 5. `rrule` 包的已知特性
 
 - **时区无关**：要求所有 `DateTime` 的 `isUtc == true`，但内部按纯墙钟处理。这正好匹配我们的时间模型（[ADR-0005](../06-adr/ADR-0005-local-time-model.md)），把时区换算的责任留在 `core/time`。
-- **RRULE 字符串严格往返**（已实测）。
-- `BYMONTHDAY=31` 在无 31 号的月份**跳过而非顺延**（已实测），UI 需据此设计提示。
+- `BYMONTHDAY=31` 在无 31 号的月份**跳过而非顺延**（已实测，符合 RFC），UI 需据此设计提示。
+- 🔴 **`toString()` 默认丢掉 `UNTIL` 的 `Z` 后缀，往返有损**（已实测）。
+  根因是 `RecurrenceRuleToStringOptions.isTimeUtc` 默认 `false`。
+  必须走封装并显式传 `isTimeUtc: true`，否则导出的规则串不符合 RFC 5545 ——
+  见[重复引擎 §2.3](../02-domain/recurrence-engine.md#23-编码-rrule-必须显式开启-istimeutc强制)。
+  不含 `UNTIL` 的规则往返无损。
+- 🔴 **`UNTIL` 只做朴素比较，不做任何时区换算**（已实测）。存储为真 UTC、展开在墙钟域，
+  两者之间必须显式换算，否则边界静默错一次 —— 见[重复引擎 §2.2](../02-domain/recurrence-engine.md#22-until-的时间域必须显式换算)。
+
+> ⚠️ 本节前两版曾写「RRULE 字符串严格往返（已实测）」。那个结论是**只用一条不含 `UNTIL`
+> 的规则**测出来的，属于单样本推全称，补测后被推翻。教训见
+> [测试策略 §1.1](../05-engineering/testing-strategy.md)。
 
 ## 6. 依赖解析的硬约束（踩过的坑）
 
 | 约束 | 原因 | 处置 |
 |---|---|---|
-| **不要显式声明 `custom_lint`** | `riverpod_lint ≥3.1.9` 需 `analyzer_plugin ^0.14`，而所有版本的 `custom_lint` 都锁死 `^0.13`，直接版本求解失败 | 由 `riverpod_lint` 自行管理插件依赖 |
-| `freezed` 必须 `^4.0.1` | `riverpod_generator 4.0.9` 要 `analyzer 13–15`，`freezed 3.x` 只到 `analyzer 11` | 锁 `freezed: ^4.0.1` |
+| **不要显式声明 `custom_lint`** | `riverpod_lint 3.1.9` 需 `analyzer_plugin ^0.14.0`；`custom_lint 0.8.1`（当前最新）需 `analyzer_plugin ^0.13.0`。pub 求解器的原话是 "every version of custom_lint requires freezed_annotation ^2.2.0 or uuid ^3.0.6 or analyzer_plugin ^0.13.0"，与 riverpod 3.x 的依赖不可共存 | 由 `riverpod_lint` 自行管理插件依赖 |
+| `freezed` 必须 `^4.0.1` | `riverpod_generator 4.0.9` 需 `analyzer >=13.0.0 <15.0.0`（读其 pubspec 确认）；`freezed 4.0.1` 需 `analyzer >=13.0.0 <15.0.0`，可共存。`freezed 3.x` 各版本的 analyzer 约束分段为 `3.2.3 → >=7.5.9 <9.0.0`、`3.2.4 → ^9.0.0`、`3.2.5 → >=9.0.0 <11.0.0`（求解器输出），**均不含 13–15** | 锁 `freezed: ^4.0.1` |
 | `compileSdk = 37` | `permission_handler_android` 强制要求 | 本机 android-37.0 是 **rc2 预览版**；M0 评估移除该依赖后降回 36 |
 | core library desugaring 必开 | `flutter_local_notifications` 硬性要求 | `desugar_jdk_libs:2.1.4` |
 | Gradle 仓库必须配镜像 | Maven Central 在本网络环境返回 403 | 见[环境探针结论](../05-engineering/environment-notes.md) §3.1 |

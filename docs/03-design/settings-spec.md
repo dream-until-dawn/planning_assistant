@@ -123,7 +123,7 @@ Stream<T> watchSetting<T>(SettingSpec<T> spec);
 | `behavior.confirmOnDelete` | bool | `true` | ✅ | |
 | `behavior.undoDurationSeconds` | int | `5` | 🔒 | 撤销 Snackbar 停留时长 |
 | `behavior.quickAddSnapMinutes` | int | `15` | 🔒 | 长按新增时的时间吸附粒度 |
-| `behavior.autoStartOnFirstStage` | bool | `true` | 🔒 | 完成首个阶段时父任务自动转 inProgress |
+| `behavior.autoStartOnFirstStage` | bool | `true` | 🔒 | 阶段**部分完成**时父任务是否自动转 `inProgress`。关闭时保持 `pending`，其余状态推导不受影响 —— 精确语义见[任务生命周期 §4.1](../02-domain/task-lifecycle.md#41-配置项-behaviorautostartonfirststage-的作用范围此处消除了与配置规格的冲突) |
 
 ### 2.5 数据 `data.*`
 
