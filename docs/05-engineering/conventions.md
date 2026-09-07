@@ -79,6 +79,15 @@ dart run build_runner build --delete-conflicting-outputs
 CI 用一个脚本检查：若 PR 触及左列路径而未触及右列文件，**报错并要求作者显式说明原因**
 （可以用 `[skip-doc-check: 理由]` 放行，但理由会留在 PR 记录里）。
 
+此外 CI 跑文档链接校验，**带自检**：
+
+```bash
+python tool/check_doc_links.py --self-test
+```
+
+`--self-test` 会先用已知坏链证明校验器能正确变红，再校验全仓。
+不带自检的校验结果不予采信 —— 理由见[测试策略 §1.4](testing-strategy.md)。
+
 > 这条规则的价值在于：文档过期比没有文档更有害 —— 它会让人相信错的东西。
 
 ## 6. Lint
