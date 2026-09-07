@@ -17,6 +17,7 @@
 library;
 
 import 'package:drift/native.dart';
+import 'package:planning_assistant/core/time/clock.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/core/time/time_zone_resolver.dart';
@@ -35,7 +36,7 @@ import 'package:timezone/data/latest.dart' as tzdata;
 
 const _writer = FixedWriterIdentity('device-A');
 final _now = DateTime.utc(2026, 3, 10, 12);
-DateTime _clock() => _now;
+final _clock = FixedClock(_now);
 
 const _today = PlanDate(2026, 3, 10);
 

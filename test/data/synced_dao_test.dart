@@ -14,6 +14,7 @@ library;
 import 'package:drift/drift.dart' hide isNotNull, isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:planning_assistant/core/time/clock.dart';
 import 'package:planning_assistant/data/database/app_database.dart';
 import 'package:planning_assistant/data/database/dao/synced_dao.dart';
 import 'package:planning_assistant/data/database/dao/table_daos.dart';
@@ -22,9 +23,12 @@ import 'package:planning_assistant/data/database/dao/table_daos.dart';
 ///
 /// 用 `DateTime.now()` 的话，`updatedAt` 的断言只能写成「大于某个值」，
 /// 那种断言在 `updatedAt` 完全没被更新时**照样通过**（旧值也大于起始值）。
-class _FakeClock {
+class _FakeClock implements Clock {
   DateTime value = DateTime.utc(2026, 3, 8, 12);
-  DateTime call() => value;
+
+  @override
+  DateTime nowUtc() => value;
+
   int get ms => value.millisecondsSinceEpoch;
   void advance(Duration d) => value = value.add(d);
 }
@@ -52,7 +56,7 @@ void main() {
   List<DaoCase> cases() => [
     (
       label: 'tasks',
-      dao: () => TaskDao(db, writer, clock.call),
+      dao: () => TaskDao(db, writer, clock),
       makeRow: (id) => TasksCompanion.insert(
         id: id,
         title: '任务 $id',
@@ -63,7 +67,7 @@ void main() {
     ),
     (
       label: 'categories',
-      dao: () => CategoryDao(db, writer, clock.call),
+      dao: () => CategoryDao(db, writer, clock),
       makeRow: (id) => CategoriesCompanion.insert(
         id: id,
         name: '分类 $id',
@@ -75,14 +79,14 @@ void main() {
     ),
     (
       label: 'tags',
-      dao: () => TagDao(db, writer, clock.call),
+      dao: () => TagDao(db, writer, clock),
       makeRow: (id) =>
           TagsCompanion.insert(id: id, name: '标签 $id', colorArgb: 2),
       entityType: EntityTypes.tag,
     ),
     (
       label: 'settings',
-      dao: () => SettingDao(db, writer, clock.call),
+      dao: () => SettingDao(db, writer, clock),
       makeRow: (id) => SettingsCompanion.insert(
         key: id,
         valueJson: '{"v":1}',
@@ -92,7 +96,7 @@ void main() {
     ),
     (
       label: 'stages',
-      dao: () => StageDao(db, writer, clock.call),
+      dao: () => StageDao(db, writer, clock),
       makeRow: (id) => StagesCompanion.insert(
         id: id,
         taskId: _seedTaskId,
@@ -103,7 +107,7 @@ void main() {
     ),
     (
       label: 'checklist_items',
-      dao: () => ChecklistItemDao(db, writer, clock.call),
+      dao: () => ChecklistItemDao(db, writer, clock),
       makeRow: (id) => ChecklistItemsCompanion.insert(
         id: id,
         taskId: _seedTaskId,
@@ -114,7 +118,7 @@ void main() {
     ),
     (
       label: 'occurrence_overrides',
-      dao: () => OccurrenceOverrideDao(db, writer, clock.call),
+      dao: () => OccurrenceOverrideDao(db, writer, clock),
       makeRow: (id) => OccurrenceOverridesCompanion.insert(
         id: id,
         taskId: _seedTaskId,
@@ -125,7 +129,7 @@ void main() {
     ),
     (
       label: 'stage_occurrence_states',
-      dao: () => StageOccurrenceStateDao(db, writer, clock.call),
+      dao: () => StageOccurrenceStateDao(db, writer, clock),
       makeRow: (id) => StageOccurrenceStatesCompanion.insert(
         id: id,
         taskId: _seedTaskId,
@@ -137,7 +141,7 @@ void main() {
     ),
     (
       label: 'reminders',
-      dao: () => ReminderDao(db, writer, clock.call),
+      dao: () => ReminderDao(db, writer, clock),
       makeRow: (id) => RemindersCompanion.insert(
         id: id,
         taskId: _seedTaskId,
@@ -150,7 +154,7 @@ void main() {
 
   /// 依赖任务/阶段存在的表需要先铺底 —— 外键是真开着的。
   Future<void> seedParents() async {
-    await TaskDao(db, writer, clock.call).upsert(
+    await TaskDao(db, writer, clock).upsert(
       TasksCompanion.insert(
         id: _seedTaskId,
         title: '母任务',
@@ -158,7 +162,7 @@ void main() {
         timeZoneId: 'Asia/Shanghai',
       ),
     );
-    await StageDao(db, writer, clock.call).upsert(
+    await StageDao(db, writer, clock).upsert(
       StagesCompanion.insert(
         id: _seedStageId,
         taskId: _seedTaskId,
@@ -315,7 +319,7 @@ void main() {
     test('outbox 写入失败时，数据写入一并回滚', () async {
       // 分开写的话中途失败会留下「数据变了但 outbox 没记」——
       // 那条变更永远不会被推送，且回放一致性测试要很久以后才发现。
-      final dao = TaskDao(db, writer, clock.call);
+      final dao = TaskDao(db, writer, clock);
       await dao.upsert(
         TasksCompanion.insert(
           id: 't-ok',
@@ -380,11 +384,11 @@ void main() {
       // task_tags 的主键是 (taskId, tagId)，单串 id 无从定位。
       // 这里必须抛，否则「删了个标签关联」会静默无效。
       await seedParents();
-      final tagDao = TagDao(db, writer, clock.call);
+      final tagDao = TagDao(db, writer, clock);
       await tagDao.upsert(
         TagsCompanion.insert(id: 'tag-1', name: '标签', colorArgb: 1),
       );
-      final dao = TaskTagDao(db, writer, clock.call);
+      final dao = TaskTagDao(db, writer, clock);
 
       expect(
         () => dao.softDelete('$_seedTaskId:tag-1'),
@@ -405,9 +409,9 @@ void main() {
       await TagDao(
         db,
         writer,
-        clock.call,
+        clock,
       ).upsert(TagsCompanion.insert(id: 'tag-1', name: '标签', colorArgb: 1));
-      final dao = TaskTagDao(db, writer, clock.call);
+      final dao = TaskTagDao(db, writer, clock);
 
       final before = await changeLogCount();
       await dao.upsert(
@@ -430,9 +434,9 @@ void main() {
       await TagDao(
         db,
         writer,
-        clock.call,
+        clock,
       ).upsert(TagsCompanion.insert(id: 'tag-1', name: '标签', colorArgb: 1));
-      final dao = TaskTagDao(db, writer, clock.call);
+      final dao = TaskTagDao(db, writer, clock);
       final row = TaskTagsCompanion.insert(taskId: _seedTaskId, tagId: 'tag-1');
 
       await dao.upsert(row);
@@ -455,7 +459,7 @@ void main() {
 
     test('SyncedDao 用在无信封的表上会直接抛，而不是不过滤', () async {
       // 退化成「不过滤」比报错危险得多：查询照跑，只是墓碑全漏出来。
-      final dao = _BadDao(db, writer, clock.call);
+      final dao = _BadDao(db, writer, clock);
       expect(() => dao.getAll(), throwsA(isA<StateError>()));
     });
   });

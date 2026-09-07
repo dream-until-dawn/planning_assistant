@@ -15,6 +15,7 @@ import 'dart:io';
 
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:planning_assistant/core/time/clock.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/data/database/app_database.dart';
@@ -29,9 +30,11 @@ import 'package:planning_assistant/domain/entities/task.dart';
 const _writer = FixedWriterIdentity('device-A');
 final _exportedAt = DateTime.utc(2026, 3, 8, 12);
 
-class _Clock {
+class _SteppingClock implements Clock {
   DateTime value = DateTime.utc(2026, 3, 8, 9);
-  DateTime call() {
+
+  @override
+  DateTime nowUtc() {
     value = value.add(const Duration(minutes: 1));
     return value;
   }
@@ -61,17 +64,17 @@ Future<Map<String, List<Map<String, Object?>>>> snapshot(AppDatabase db) async {
 
 void main() {
   late AppDatabase db;
-  late _Clock clock;
+  late _SteppingClock clock;
   late ExportService service;
   late CommandDispatcher dispatcher;
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
-    clock = _Clock();
+    clock = _SteppingClock();
     service = ExportService(db);
     dispatcher = CommandDispatcher(
-      DriftTaskRepository(db, _writer, clock.call),
-      clock.call,
+      DriftTaskRepository(db, _writer, clock),
+      clock,
     );
   });
   tearDown(() => db.close());
@@ -81,10 +84,10 @@ void main() {
   ///
   /// 只放一条最简任务的话，往返测试会漏掉所有可空字段与二次编码列。
   Future<void> seed() async {
-    final cat = CategoryDao(db, _writer, clock.call);
-    final tag = TagDao(db, _writer, clock.call);
-    final taskTag = TaskTagDao(db, _writer, clock.call);
-    final setting = SettingDao(db, _writer, clock.call);
+    final cat = CategoryDao(db, _writer, clock);
+    final tag = TagDao(db, _writer, clock);
+    final taskTag = TaskTagDao(db, _writer, clock);
+    final setting = SettingDao(db, _writer, clock);
 
     await cat.upsert(
       CategoriesCompanion.insert(

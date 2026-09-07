@@ -17,6 +17,7 @@ import 'dart:convert';
 
 import 'package:drift/drift.dart';
 
+import '../../../core/time/clock.dart';
 import '../app_database.dart';
 
 /// outbox 的操作类型（data-model §3.11）。
@@ -48,13 +49,16 @@ final class FixedWriterIdentity implements WriterIdentity {
 /// 泛型参数 [Tbl] 是 drift 生成的表类（如 `$TasksTable`），[Row] 是行数据类。
 abstract class SyncedDao<Tbl extends Table, Row extends DataClass>
     extends DatabaseAccessor<AppDatabase> {
-  SyncedDao(super.attachedDatabase, this._writer, this._now);
+  SyncedDao(super.attachedDatabase, this._writer, this._clock);
 
   final WriterIdentity _writer;
 
-  /// 注入时钟：`DateTime.now()` 会让所有涉及 `updatedAt` 的断言变成
-  /// 「跑得快就过、跑得慢就挂」。见 `core/time/clock.dart`。
-  final DateTime Function() _now;
+  /// 注入时钟。用具名的 [Clock] 而不是裸 `DateTime Function()`：
+  /// 后者在生产代码里传一个 `DateTime.now` 就绕过了 cross-cutting §1
+  /// 的禁令，且架构守卫扫不出来。
+  final Clock _clock;
+
+  DateTime _now() => _clock.nowUtc();
 
   /// 具体表。
   TableInfo<Tbl, Row> get table;

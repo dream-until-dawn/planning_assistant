@@ -13,6 +13,7 @@ library;
 
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:planning_assistant/core/time/clock.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/data/database/app_database.dart';
@@ -29,9 +30,11 @@ const _writer = FixedWriterIdentity('device-A');
 
 /// 可推进的时钟：每条命令的效果都带时刻，固定不动的话
 /// 「updatedAt 有没有被正确记录」就无从分辨。
-class _Clock {
+class _SteppingClock implements Clock {
   DateTime value = DateTime.utc(2026, 3, 8, 9);
-  DateTime call() {
+
+  @override
+  DateTime nowUtc() {
     value = value.add(const Duration(minutes: 1));
     return value;
   }
@@ -62,16 +65,16 @@ Future<Map<String, List<Map<String, Object?>>>> snapshot(AppDatabase db) async {
 
 void main() {
   late AppDatabase db;
-  late _Clock clock;
+  late _SteppingClock clock;
   late CommandDispatcher dispatcher;
   late ChangeLogReplayer replayer;
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
-    clock = _Clock();
+    clock = _SteppingClock();
     dispatcher = CommandDispatcher(
-      DriftTaskRepository(db, _writer, clock.call),
-      clock.call,
+      DriftTaskRepository(db, _writer, clock),
+      clock,
     );
     replayer = ChangeLogReplayer(db);
   });
@@ -82,7 +85,7 @@ void main() {
   /// 全是 create 的话，覆盖不到「同一行被改多次」这条最容易在回放里
   /// 出问题的路径（顺序错了就还原成中间某个版本）。
   Future<void> runScript() async {
-    await CategoryDao(db, _writer, clock.call).upsert(
+    await CategoryDao(db, _writer, clock).upsert(
       CategoriesCompanion.insert(
         id: 'cat-1',
         name: '工作',
@@ -238,7 +241,7 @@ void main() {
       // 所以这条测试**不**声称「绕过 dispatcher 会被抓到」——
       // 它抓的是绕过 DAO 的裸 SQL。把这个边界写下来，
       // 免得将来有人以为它的保护范围更大。
-      await CategoryDao(db, _writer, clock.call).upsert(
+      await CategoryDao(db, _writer, clock).upsert(
         CategoriesCompanion.insert(
           id: 'direct',
           name: '直接经 DAO 写的',

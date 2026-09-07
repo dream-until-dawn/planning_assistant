@@ -11,6 +11,7 @@ library;
 
 import 'package:drift/drift.dart';
 
+import '../../core/time/clock.dart';
 import '../../domain/entities/stage.dart';
 import '../../domain/entities/task.dart';
 import '../../domain/policies/task_lifecycle.dart';
@@ -21,15 +22,15 @@ import '../database/dao/table_daos.dart';
 import '../mappers/task_mapper.dart';
 
 final class DriftTaskRepository implements TaskRepository {
-  DriftTaskRepository(this._db, WriterIdentity writer, DateTime Function() now)
-    : _tasks = TaskDao(_db, writer, now),
-      _stages = StageDao(_db, writer, now),
-      _now = now;
+  DriftTaskRepository(this._db, WriterIdentity writer, Clock clock)
+    : _tasks = TaskDao(_db, writer, clock),
+      _stages = StageDao(_db, writer, clock),
+      _clock = clock;
 
   final AppDatabase _db;
   final TaskDao _tasks;
   final StageDao _stages;
-  final DateTime Function() _now;
+  final Clock _clock;
 
   /// 三个可见性谓词翻译成 SQL 的**唯一出处**。
   ///
@@ -136,7 +137,7 @@ final class DriftTaskRepository implements TaskRepository {
       final stages = await findStagesOfTask(id, scope: TaskScope.all);
 
       // 级联规则在领域层，这里只负责把结果落盘。
-      final result = softDeleteTaskCascade(task, stages, now: _now());
+      final result = softDeleteTaskCascade(task, stages, now: _clock.nowUtc());
       await _tasks.upsert(result.task.toCompanion());
       for (final s in result.stages) {
         await _stages.upsert(s.toCompanion());

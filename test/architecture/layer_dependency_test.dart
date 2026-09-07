@@ -675,8 +675,17 @@ import
       final lines = file.readAsLinesSync();
       for (var i = 0; i < lines.length; i++) {
         if (lines[i].trim().startsWith('//')) continue;
+        // 去掉字符串字面量再匹配。
+        //
+        // 不去的话，测试**标题**里提一句 DateTime.now() 就会被判违规 ——
+        // 实测踩到过：clock_and_result_test.dart 里那条
+        // 「SystemClock 返回 UTC —— 全项目唯一允许 ... 的地方」被误报，
+        // 而它实际调用的是 SystemClock().nowUtc()。
+        //
+        // 守卫误报的代价不只是烦：它会训练人改测试标题去迁就守卫，
+        // 或者干脆把文件加进白名单 —— 后者是真正的损失。
         if (RegExp(r'\bDateTime\s*\.\s*(now|timestamp)\s*\(')
-            .hasMatch(lines[i])) {
+            .hasMatch(_stripStringLiterals(lines[i]))) {
           violations.add(
             '  - ${_norm(file.path)}:${i + 1}\n      ${lines[i].trim()}\n'
             '      违反: 测试必须注入 FixedClock 或用 fake_async',
@@ -859,4 +868,30 @@ import
     ];
     expect(missing, isEmpty, reason: '白名单指向已不存在的文件：$missing');
   });
+}
+
+/// 去掉一行里的字符串字面量，只留代码部分。
+///
+/// 粗糙但够用：守卫要判的是「这行代码有没有调用某个 API」，
+/// 而字面量里出现同名文本从来不是调用。
+/// 不处理跨行的三引号串 —— 目前没有这种用法，出现了再说，
+/// 而不是先写一套用不上的完整词法分析。
+String _stripStringLiterals(String line) {
+  final buffer = StringBuffer();
+  String? quote;
+  for (var i = 0; i < line.length; i++) {
+    final c = line[i];
+    if (quote == null) {
+      if (c == "'" || c == '"') {
+        quote = c;
+      } else {
+        buffer.write(c);
+      }
+    } else if (c == r'\') {
+      i++; // 跳过转义字符，避免 \' 被当成收尾引号
+    } else if (c == quote) {
+      quote = null;
+    }
+  }
+  return buffer.toString();
 }

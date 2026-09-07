@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -42,6 +43,10 @@ THRESHOLDS: list[tuple[str, float]] = [
     # 门槛比领域层低一档：MethodChannel 的失败分支要真机才能触发，
     # 定成 90% 会逼人写「为覆盖而覆盖」的假测试。
     ("lib/platform/", 80.0),
+    # **兜底**：放在最后，前面没匹配上的一律落这里。
+    # 有了它就不存在「不受任何阈值管的文件」——
+    # 新建一个顶层目录时不会因为没人想起来配阈值而白白免检。
+    ("lib/", 80.0),
 ]
 
 GENERATED_SUFFIXES = (".g.dart", ".freezed.dart")
@@ -60,6 +65,13 @@ GENERATED_SUFFIXES = (".g.dart", ".freezed.dart")
 # **这个清单必须短，且每条都要能说清「为什么运行时不执行」。**
 # 拿它当「这块不好测」的垃圾桶，覆盖率门禁就废了。
 CODEGEN_INPUT_PREFIXES = ("lib/data/database/tables/",)
+
+# 入口文件：不被任何东西 import，因此永远不会出现在 lcov 里。
+#
+# 豁免它**必须自我失效** —— 否则「入口文件」会变成塞逻辑的暗格。
+# 所以配一个行数上限：超过就不再豁免，门禁直接失败并要求把逻辑挪走。
+# 现状 `lib/main.dart` 只有一行 `void main() => bootstrap(...)`。
+ENTRY_POINTS = {"lib/main.dart": 10}
 
 
 def parse_lcov(text: str) -> dict[str, tuple[int, int]]:
@@ -81,6 +93,101 @@ def parse_lcov(text: str) -> dict[str, tuple[int, int]]:
             result[current] = (hit, total)
             current = None
     return result
+
+
+def enumerate_source_files(lib_dir: Path) -> list[str]:
+    """磁盘上所有该被统计的源文件（仓库相对路径，正斜杠）。"""
+    out: list[str] = []
+    for path in sorted(lib_dir.rglob("*.dart")):
+        rel = path.relative_to(lib_dir.parent).as_posix()
+        rel = "lib/" + rel.split("lib/", 1)[1] if "lib/" in rel else rel
+        out.append(rel)
+    return out
+
+
+def merge_missing(
+    files: dict[str, tuple[int, int]],
+    source_files: list[str],
+) -> tuple[dict[str, tuple[int, int]], list[str], list[str]]:
+    """把 lcov 里缺席的源文件按 0 覆盖补进来。
+
+    **这是本工具最要紧的一段。**
+
+    `flutter test --coverage` 只对**被至少一个测试加载过**的文件插桩。
+    一个谁都没 import 的文件根本不会出现在 lcov 里 —— 于是它既不在分子、
+    也不在分母，覆盖率照样「达标」。
+
+    实测踩到过：`lib/bootstrap.dart`（时区初始化、顶层错误兜底、
+    ProviderScope 装配）零测试覆盖，而门禁报四层全部达标。
+    **「没测到」和「测得很差」在 lcov 里长得完全不一样**：后者是低百分比，
+    前者是彻底消失。只看 lcov 的门禁，对前者是瞎的。
+    """
+    merged = dict(files)
+    added: list[str] = []
+    problems: list[str] = []
+    imported = _imported_paths()
+
+    for rel in source_files:
+        if rel in merged:
+            continue
+        if rel.endswith(GENERATED_SUFFIXES) or rel.startswith(CODEGEN_INPUT_PREFIXES):
+            continue
+
+        lines = _rough_line_count(REPO_ROOT / rel)
+
+        # 入口文件：豁免，但**豁免会随文件长大而失效**。
+        limit = ENTRY_POINTS.get(rel)
+        if limit is not None:
+            if lines > limit:
+                problems.append(
+                    "{}：入口文件已有 {} 行（上限 {}），不再豁免 —— "
+                    "把逻辑挪到可测的模块里".format(rel, lines, limit))
+            continue
+
+        # 被别处 import 却仍不在 lcov 里 ⇒ 它被编译加载过，却一行可执行代码
+        # 都没有（纯接口 / 纯声明）。lcov 不收录它是对的，不该按 0 计入。
+        #
+        # 反过来：**没人 import 又不在 lcov 里 = 死代码或没人测的代码**，
+        # 那正是要抓的。这两种情况在 lcov 里长得一模一样，
+        # 只看 lcov 分不出来 —— 必须回到源码问「谁 import 了它」。
+        if rel in imported:
+            continue
+
+        merged[rel] = (0, lines)
+        added.append(rel)
+
+    return merged, added, problems
+
+
+def _imported_paths() -> set[str]:
+    """`lib/` 下被其它源文件 import 的所有路径（仓库相对）。"""
+    lib = REPO_ROOT / "lib"
+    out: set[str] = set()
+    for path in lib.rglob("*.dart"):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for m in re.finditer(r"""import\s+['"]([^'"]+)['"]""", text):
+            target = m.group(1)
+            if target.startswith("package:planning_assistant/"):
+                out.add("lib/" + target.split("planning_assistant/", 1)[1])
+            elif not target.startswith(("dart:", "package:")):
+                resolved = (path.parent / target).resolve()
+                try:
+                    out.add(resolved.relative_to(REPO_ROOT).as_posix())
+                except ValueError:
+                    pass
+    return out
+
+
+def _rough_line_count(path: Path) -> int:
+    if not path.exists():
+        return 1
+    n = 0
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("//", "///", "/*", "*")):
+            continue
+        n += 1
+    return max(n, 1)
 
 
 def summarize(
@@ -106,7 +213,12 @@ def summarize(
     return {k: (v[0], v[1]) for k, v in buckets.items()}, sorted(unmatched)
 
 
-def report(files: dict[str, tuple[int, int]], *, quiet: bool = False) -> bool:
+def report(
+    files: dict[str, tuple[int, int]],
+    *,
+    quiet: bool = False,
+    missing_from_lcov: list[str] | None = None,
+) -> bool:
     buckets, unmatched = summarize(files)
     ok = True
 
@@ -123,6 +235,12 @@ def report(files: dict[str, tuple[int, int]], *, quiet: bool = False) -> bool:
             print("  {:<16} {:6.2f}%  ({}/{})  门槛 {:.0f}%  {}".format(
                 prefix, pct, hit, total, threshold,
                 "达标" if passed else "**未达标**"))
+
+    if missing_from_lcov and not quiet:
+        print("  以下文件**未被任何测试加载**，按 0 覆盖计入（{} 个）：".format(
+            len(missing_from_lcov)))
+        for path in missing_from_lcov:
+            print("    - {}".format(path))
 
     if unmatched and not quiet:
         # 不报错但要说出来：新增的顶层目录没设阈值时，它是完全没人管的。
@@ -174,6 +292,13 @@ def _self_test() -> bool:
             "lib/data/b.dart": (0, 500),
             "lib/core/c.dart": (90, 100),
         }, False),
+        ("完全没被加载的文件按 0 计入后应判未达标", {
+            "lib/domain/a.dart": (95, 100),
+            # 模拟 merge_missing 补进来的条目。
+            "lib/domain/never_loaded.dart": (0, 60),
+            "lib/data/b.dart": (85, 100),
+            "lib/core/c.dart": (90, 100),
+        }, False),
         ("同层多文件按行数加权，不是按文件平均", {
             # 900/1000 = 90%，达标；若按文件平均则是 (100+80)/2 = 90% 也达标，
             # 所以再加一个极端样本区分两种算法。
@@ -217,8 +342,16 @@ def main() -> int:
         sys.stderr.write("lcov 文件里没有任何记录 —— 覆盖率采集失败了？\n")
         return 2
 
-    print("覆盖率（{} 个文件）：".format(len(files)))
-    ok = report(files)
+    files, missing, problems = merge_missing(
+        files, enumerate_source_files(REPO_ROOT / "lib"))
+    if problems:
+        print("豁免规则已失效：")
+        for line in problems:
+            print("  - {}".format(line))
+
+    print("覆盖率（{} 个文件，其中 {} 个未被任何测试加载）：".format(
+        len(files), len(missing)))
+    ok = report(files, missing_from_lcov=missing) and not problems
     if not ok:
         print("\n未达到 testing-strategy §3.3 的门槛。")
     return 0 if ok else 1

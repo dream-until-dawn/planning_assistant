@@ -10,6 +10,7 @@ library;
 
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:planning_assistant/core/time/clock.dart';
 import 'package:planning_assistant/data/database/app_database.dart';
 import 'package:planning_assistant/data/database/dao/synced_dao.dart';
 import 'package:planning_assistant/data/repositories/task_repository_impl.dart';
@@ -22,7 +23,7 @@ import 'package:planning_assistant/domain/value_objects/task_status.dart';
 
 const _writer = FixedWriterIdentity('device-A');
 final _now = DateTime.utc(2026, 3, 8, 12);
-DateTime _clock() => _now;
+final _clock = FixedClock(_now);
 
 Task makeTask(
   String id, {

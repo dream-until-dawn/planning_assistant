@@ -6,6 +6,7 @@
 library;
 
 import '../../core/patch/unset.dart';
+import '../../core/time/clock.dart';
 import '../entities/stage.dart';
 import '../entities/task.dart';
 import '../policies/task_lifecycle.dart';
@@ -29,13 +30,15 @@ final class EntityNotFoundException implements Exception {
 
 /// 执行 [TaskCommand]。
 final class CommandDispatcher {
-  const CommandDispatcher(this._repo, this._now);
+  const CommandDispatcher(this._repo, this._clock);
 
   final TaskRepository _repo;
 
   /// 注入时钟。**不读系统时钟** —— 否则命令的效果不可复现，
   /// 回放一致性测试也就无从谈起。
-  final DateTime Function() _now;
+  final Clock _clock;
+
+  DateTime _now() => _clock.nowUtc();
 
   /// 分发一条命令。
   ///

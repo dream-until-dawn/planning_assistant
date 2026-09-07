@@ -45,7 +45,7 @@ abstract final class EntityTypes {
 }
 
 class TaskDao extends SyncedDao<$TasksTable, TaskRow> {
-  TaskDao(super.db, super.writer, super.now);
+  TaskDao(super.db, super.writer, super.clock);
 
   @override
   TableInfo<$TasksTable, TaskRow> get table => attachedDatabase.tasks;
@@ -61,7 +61,7 @@ class TaskDao extends SyncedDao<$TasksTable, TaskRow> {
 }
 
 class StageDao extends SyncedDao<$StagesTable, StageRow> {
-  StageDao(super.db, super.writer, super.now);
+  StageDao(super.db, super.writer, super.clock);
 
   @override
   TableInfo<$StagesTable, StageRow> get table => attachedDatabase.stages;
@@ -78,7 +78,7 @@ class StageDao extends SyncedDao<$StagesTable, StageRow> {
 
 class ChecklistItemDao
     extends SyncedDao<$ChecklistItemsTable, ChecklistItemRow> {
-  ChecklistItemDao(super.db, super.writer, super.now);
+  ChecklistItemDao(super.db, super.writer, super.clock);
 
   @override
   TableInfo<$ChecklistItemsTable, ChecklistItemRow> get table =>
@@ -96,7 +96,7 @@ class ChecklistItemDao
 
 class OccurrenceOverrideDao
     extends SyncedDao<$OccurrenceOverridesTable, OccurrenceOverrideRow> {
-  OccurrenceOverrideDao(super.db, super.writer, super.now);
+  OccurrenceOverrideDao(super.db, super.writer, super.clock);
 
   @override
   TableInfo<$OccurrenceOverridesTable, OccurrenceOverrideRow> get table =>
@@ -114,7 +114,7 @@ class OccurrenceOverrideDao
 
 class StageOccurrenceStateDao
     extends SyncedDao<$StageOccurrenceStatesTable, StageOccurrenceStateRow> {
-  StageOccurrenceStateDao(super.db, super.writer, super.now);
+  StageOccurrenceStateDao(super.db, super.writer, super.clock);
 
   @override
   TableInfo<$StageOccurrenceStatesTable, StageOccurrenceStateRow> get table =>
@@ -131,7 +131,7 @@ class StageOccurrenceStateDao
 }
 
 class ReminderDao extends SyncedDao<$RemindersTable, ReminderRow> {
-  ReminderDao(super.db, super.writer, super.now);
+  ReminderDao(super.db, super.writer, super.clock);
 
   @override
   TableInfo<$RemindersTable, ReminderRow> get table =>
@@ -148,7 +148,7 @@ class ReminderDao extends SyncedDao<$RemindersTable, ReminderRow> {
 }
 
 class CategoryDao extends SyncedDao<$CategoriesTable, CategoryRow> {
-  CategoryDao(super.db, super.writer, super.now);
+  CategoryDao(super.db, super.writer, super.clock);
 
   @override
   TableInfo<$CategoriesTable, CategoryRow> get table =>
@@ -165,7 +165,7 @@ class CategoryDao extends SyncedDao<$CategoriesTable, CategoryRow> {
 }
 
 class TagDao extends SyncedDao<$TagsTable, TagRow> {
-  TagDao(super.db, super.writer, super.now);
+  TagDao(super.db, super.writer, super.clock);
 
   @override
   TableInfo<$TagsTable, TagRow> get table => attachedDatabase.tags;
@@ -182,7 +182,7 @@ class TagDao extends SyncedDao<$TagsTable, TagRow> {
 
 /// 配置项。主键是 `key` 而不是 `id`。
 class SettingDao extends SyncedDao<$SettingsTable, SettingRow> {
-  SettingDao(super.db, super.writer, super.now);
+  SettingDao(super.db, super.writer, super.clock);
 
   @override
   TableInfo<$SettingsTable, SettingRow> get table => attachedDatabase.settings;
@@ -210,7 +210,7 @@ class SettingDao extends SyncedDao<$SettingsTable, SettingRow> {
 
 /// 任务 ⇄ 标签联结表。**联合主键**，因此 [softDelete] 不适用。
 class TaskTagDao extends SyncedDao<$TaskTagsTable, TaskTagRow> {
-  TaskTagDao(super.db, super.writer, super.now);
+  TaskTagDao(super.db, super.writer, super.clock);
 
   @override
   TableInfo<$TaskTagsTable, TaskTagRow> get table => attachedDatabase.taskTags;

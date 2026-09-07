@@ -8,6 +8,7 @@ library;
 
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:planning_assistant/core/time/clock.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/data/database/app_database.dart';
@@ -22,7 +23,7 @@ import 'package:planning_assistant/domain/value_objects/task_status.dart';
 
 const _writer = FixedWriterIdentity('device-A');
 final _now = DateTime.utc(2026, 3, 8, 12);
-DateTime _clock() => _now;
+final _clock = FixedClock(_now);
 
 const _create = CreateTaskCommand(
   taskId: 't1',
