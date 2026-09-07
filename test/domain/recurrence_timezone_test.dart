@@ -142,6 +142,157 @@ void main() {
     });
   });
 
+  group('B1 / §4.1.1　end 也必须解析 DST，且两端各自独立', () {
+    // 评审阻断项。初版只解析了 start，`01:30 + 60min` 会给出
+    // `end = 02:30` —— 跳表当天不存在的墙钟。
+    //
+    // 后果不止显示错：`reminders.kind = relativeToEnd` 排期时会对 end
+    // 做换算，得到 03:00 对应的瞬时，而 UI 显示 02:30，两边永久对不上。
+
+    Occurrence occurrenceOf({
+      required PlanDate date,
+      required int hour,
+      required int minute,
+      required int durationMinutes,
+      String zone = 'America/New_York',
+    }) => _engine
+        .expand(
+          context: RecurrenceContext(
+            taskId: 't1',
+            isAllDay: false,
+            durationMinutes: durationMinutes,
+            dtStart: LocalWallTime(
+              date: date,
+              minuteOfDay: MinuteOfDay.of(hour, minute),
+              timeZoneId: zone,
+            ),
+            recurrence: Recurrence.parse('RRULE:FREQ=DAILY'),
+          ),
+          window: DateRange(date, date),
+        )
+        .single;
+
+    test('end 落进空隙时顺延到 03:00，并单独打 endDstAdjusted', () {
+      final o = occurrenceOf(
+        date: const PlanDate(2026, 3, 8),
+        hour: 1,
+        minute: 30,
+        durationMinutes: 60,
+      );
+
+      expect(o.start.minuteOfDay, MinuteOfDay.of(1, 30), reason: 'start 本就合法');
+      expect(o.dstAdjusted, isFalse, reason: '只有 end 落进空隙');
+      expect(o.end!.minuteOfDay, MinuteOfDay.of(3, 0), reason: '02:30 不存在');
+      expect(o.endDstAdjusted, isTrue);
+    });
+
+    test('两端的标记独立 —— 只有 start 落进空隙时 endDstAdjusted 为假', () {
+      // 合成一个标记的话，UI 无从知道该解释哪一端。
+      final o = occurrenceOf(
+        date: const PlanDate(2026, 3, 8),
+        hour: 2,
+        minute: 30,
+        durationMinutes: 60,
+      );
+      expect(o.dstAdjusted, isTrue, reason: '02:30 不存在，start 被顺延到 03:00');
+      expect(o.start.minuteOfDay, MinuteOfDay.of(3, 0));
+      expect(o.end!.minuteOfDay, MinuteOfDay.of(4, 0), reason: '03:00+60 合法');
+      expect(o.endDstAdjusted, isFalse);
+    });
+
+    test('每一个产出的 end 墙钟都必须真实存在', () {
+      // 不变式而非点断言：它不依赖「猜到问题出在哪个具体时刻」。
+      final offenders = <String>[];
+      for (final date in [
+        const PlanDate(2026, 3, 8),
+        const PlanDate(2026, 11, 1),
+        const PlanDate(2026, 6, 15),
+      ]) {
+        for (var h = 0; h < 24; h++) {
+          for (final dur in [30, 60, 90, 180]) {
+            final o = occurrenceOf(
+              date: date,
+              hour: h,
+              minute: 30,
+              durationMinutes: dur,
+            );
+            // 断的是「最终值真实存在」，不是「曾被顺延」——
+            // 顺延**之后**的 03:00 当然是合法墙钟，拿它的 dstAdjusted
+            // 去比 endDstAdjusted 是两回事（第一版就这么写错了，当场变红）。
+            if (_resolver.resolve(o.end!).effectiveWallTime != o.end) {
+              offenders.add('  $date $h:30 +$dur → end ${o.end}');
+            }
+          }
+        }
+      }
+      expect(
+        offenders,
+        isEmpty,
+        reason:
+            '${offenders.length} 处 end 未被解析：\n'
+            '${offenders.take(10).join('\n')}',
+      );
+    });
+
+    test('§4.1.1 表格：跨 DST 时实际经过时长与声明值可以不同', () {
+      // 这是墙钟语义的**必然结果**，不是缺陷。钉住它，
+      // 免得将来有人看到「声明 180 实际 120」就去「修」。
+      int elapsed(Occurrence o) => _resolver
+          .toInstant(o.end!)
+          .difference(_resolver.toInstant(o.start))
+          .inMinutes;
+
+      // 春季跳表当日：01:00 + 180min → 04:00，实际 120 分钟。
+      expect(
+        elapsed(
+          occurrenceOf(
+            date: const PlanDate(2026, 3, 8),
+            hour: 1,
+            minute: 0,
+            durationMinutes: 180,
+          ),
+        ),
+        120,
+      );
+      // 秋季回拨当日：同样声明 180，实际 240 分钟。
+      expect(
+        elapsed(
+          occurrenceOf(
+            date: const PlanDate(2026, 11, 1),
+            hour: 1,
+            minute: 0,
+            durationMinutes: 180,
+          ),
+        ),
+        240,
+      );
+      // 普通日对照 —— 没有这条的话，上面两条可能因为「一律算错」而假绿。
+      expect(
+        elapsed(
+          occurrenceOf(
+            date: const PlanDate(2026, 6, 15),
+            hour: 1,
+            minute: 0,
+            durationMinutes: 180,
+          ),
+        ),
+        180,
+      );
+      // 跨天且无 DST：正常。
+      expect(
+        elapsed(
+          occurrenceOf(
+            date: const PlanDate(2026, 6, 15),
+            hour: 23,
+            minute: 0,
+            durationMinutes: 120,
+          ),
+        ),
+        120,
+      );
+    });
+  });
+
   group('R-42 秋季回拨日：重复的墙钟只出现一次', () {
     test('America/New_York 每天 01:30，回拨日只有一次且取较早的瞬时', () {
       // 01:30 在这天出现两遍（EDT 与 EST）。展开成两次的话，

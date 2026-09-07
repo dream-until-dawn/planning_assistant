@@ -141,12 +141,44 @@ final class ChangeLogReplayer {
     int occurredAt,
     String deviceId,
   ) {
-    final pk = table.$primaryKey.single.name;
+    // 主键可能是复合的（`task_tags` 是 `(taskId, tagId)`），此时 outbox 的
+    // `entityId` 是 `SyncedDao.primaryKeyOf()` 拼出的 `taskId:tagId`。
+    //
+    // 初版这里写的是 `$primaryKey.single`，靠 `_tableFor` 对 taskTag 返回 null
+    // 兜住 —— 而那个 null 判断在 `switch (op)` **之前**，于是连 upsert 一起
+    // 被跳过：taskTag 写得进库、回放不回来、`skipped` 计数没人看。
+    // 三层同时失明。修的时候两处必须一起改。
+    final pk = [for (final c in table.$primaryKey) c.name];
+    final values = _splitCompositeKey(entityId, pk.length, table);
+
+    final where = pk.map((c) => '$c = ?').join(' AND ');
     return _db.customStatement(
       'UPDATE ${table.actualTableName} SET deleted_at = ?, updated_at = ?, '
-      'revision = revision + 1, last_writer_id = ? WHERE $pk = ?',
-      [occurredAt, occurredAt, deviceId, entityId],
+      'revision = revision + 1, last_writer_id = ? WHERE $where',
+      [occurredAt, occurredAt, deviceId, ...values],
     );
+  }
+
+  /// 把 outbox 的 `entityId` 拆回主键各列的值。
+  ///
+  /// 分隔符与 `SyncedDao.primaryKeyOf()` 约定一致，用 `:` 而不是 `-`
+  /// —— 两侧都是 UUID v7，本身含 `-`。
+  List<String> _splitCompositeKey(
+    String entityId,
+    int columnCount,
+    TableInfo<Table, dynamic> table,
+  ) {
+    if (columnCount == 1) return [entityId];
+    final parts = entityId.split(':');
+    if (parts.length != columnCount) {
+      // 拆不开就**抛**，不猜。猜错会更新到别的行上去，
+      // 而那种损坏在回放报告里看不出来。
+      throw StateError(
+        '${table.actualTableName} 的复合主键有 $columnCount 列，'
+        '但 entityId「$entityId」拆出 ${parts.length} 段',
+      );
+    }
+    return parts;
   }
 
   /// drift 的 `toJson()` 用 Dart 字段名（lowerCamelCase），列名是 snake_case。
@@ -182,8 +214,7 @@ final class ChangeLogReplayer {
         EntityTypes.category => _db.categories,
         EntityTypes.tag => _db.tags,
         EntityTypes.setting => _db.settings,
-        // taskTag 是联合主键，entityId 形如 `taskId:tagId`，
-        // 单列 UPDATE 定位不了。留待 V3 同步一并处理。
+        EntityTypes.taskTag => _db.taskTags,
         _ => null,
       };
 

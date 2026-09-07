@@ -51,19 +51,24 @@ THRESHOLDS: list[tuple[str, float]] = [
 
 GENERATED_SUFFIXES = (".g.dart", ".freezed.dart")
 
-# 只被代码生成器读取、运行时从不执行的文件。
+# 声明式文件：只有列声明，没有可执行逻辑。
 #
-# Drift 的表定义（`TextColumn get id => text()();` 这类）是 **codegen 的输入**：
-# 生成出的 `$TasksTable extends Tasks` 自己声明了全部 149 个
-# `late final GeneratedColumn` 字段，把基类的 getter 全覆盖掉了。
-# 实测 399 条测试重度使用数据库，这些行的命中数仍是 0 —— 不是没测到，
-# 是它们本就不执行。
+# **排除它们的理由不是「基类 getter 被生成代码覆盖了」。** 那个论证有洞：
+# 生成代码只覆盖 `$primaryKey`，**没有覆盖手写的 `primaryKey`**
+# （实测生成文件里 `get $primaryKey` 出现 12 次，`get primaryKey` 0 次）——
+# 后者是被继承下来的，理论上可被调用。评审指出后复核确认：
+# 「399 条测试下命中数为 0」是**行为证据**，成立；但拿它当机制证据的佐证，
+# 就是从行为反推机制 —— 正是本项目反复栽过的那类推理。
 #
-# 与 `.g.dart` 同类：把它们计入分母，只会用「永远不可能覆盖的行」
-# 稀释真正该被覆盖的那部分。
+# 换成两条站得住的理由：
 #
-# **这个清单必须短，且每条都要能说清「为什么运行时不执行」。**
-# 拿它当「这块不好测」的垃圾桶，覆盖率门禁就废了。
+#  1. 这几个文件里**只有声明**（列定义 + primaryKey），没有分支、没有循环、
+#     没有可出错的逻辑。对声明式文件用行覆盖度量，工具本身就是错的。
+#  2. **schema 的正确性由迁移测试保证，而那条测试被证明能红**：
+#     `test/data/migration_test.dart` 的「当前表定义与 v1 快照逐列一致」
+#     拿「代码建库」与「快照建库」逐列比对，加一列即变红
+#     （`categories.probe_column  代码=TEXT|0|-  快照=(无)`）。
+#     真正守住这些文件的是它，不是行覆盖率。
 CODEGEN_INPUT_PREFIXES = ("lib/data/database/tables/",)
 
 # 入口文件：不被任何东西 import，因此永远不会出现在 lcov 里。

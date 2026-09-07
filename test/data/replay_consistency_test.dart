@@ -50,6 +50,9 @@ const _businessTables = [
   'reminders',
   'categories',
   'tags',
+  // **曾经漏在这里**。少一张表，快照比对就对它完全失明 ——
+  // 就算回放把它整张丢了，逐表逐列断言照样全绿。
+  'task_tags',
   'settings',
 ];
 
@@ -94,6 +97,12 @@ void main() {
         orderIndex: 0,
       ),
     );
+
+    await TagDao(
+      db,
+      _writer,
+      clock,
+    ).upsert(TagsCompanion.insert(id: 'tag-1', name: '重要', colorArgb: 2));
 
     await dispatcher.dispatchAll([
       const CreateTaskCommand(
@@ -144,6 +153,15 @@ void main() {
       const RestoreTaskCommand('t3'),
       const ChangeTaskStatusCommand(taskId: 't3', status: TaskStatus.skipped),
     ]);
+
+    // **联结表必须进脚本**。它是唯一的联合主键表，而回放器按单列主键
+    // 定位 —— 不建一条的话，`expect(skipped, 0)` 这条断言永远没有输入
+    // 能让它变红。
+    await TaskTagDao(
+      db,
+      _writer,
+      clock,
+    ).upsert(TaskTagsCompanion.insert(taskId: 't1', tagId: 'tag-1'));
   }
 
   group('回放一致性（V3 验收项）', () {
@@ -155,6 +173,11 @@ void main() {
       expect(before['tasks']!.length, 3);
       expect(before['stages']!.length, 3);
       expect(before['categories']!.length, 1);
+      expect(
+        before['task_tags']!.length,
+        1,
+        reason: '前提：联结表有数据，否则下面的等价断言对它是空对空',
+      );
 
       final report = await replayer.replayAll();
       expect(report.skipped, 0, reason: '有变更没被回放：$report');
@@ -304,11 +327,71 @@ void main() {
       expect(tombstoned, {'s2'}, reason: '第二次 ReplaceStages 移除了 s2');
     });
   });
+
+  group('联结表的回放（B2 补漏）', () {
+    test('taskTag 的 upsert 与 delete 都能回放，且不被 skip', () async {
+      // 修之前：`_tableFor` 对 taskTag 返回 null，而那个判断在 switch(op)
+      // 之前，于是 upsert 和 delete 一起被跳过 —— 实测
+      // `applied=2 skipped=1`、task_tags 从 1 行变 0 行，而报告看着正常。
+      await runScript();
+      expect(await _rowCount(db, 'task_tags'), 1, reason: '前提：确有关联');
+
+      final report = await replayer.replayAll();
+      expect(report.skipped, 0, reason: '联结表不该被静默跳过：$report');
+      expect(await _rowCount(db, 'task_tags'), 1, reason: '回放后关联应还在');
+    });
+
+    test('解除关联（打墓碑）同样能回放', () async {
+      // 联结表的墓碑是「解除了一个标签关联」这件事的唯一表达 ——
+      // 回放不回来的话，对端会以为关联还在。
+      await runScript();
+      await db.customStatement(
+        '''
+        UPDATE task_tags SET deleted_at = ?, revision = revision + 1
+        WHERE task_id = 't1' AND tag_id = 'tag-1'
+      ''',
+        [clock.value.millisecondsSinceEpoch],
+      );
+      await db.customStatement(
+        '''
+        INSERT INTO change_log (entity_type, entity_id, op, occurred_at, device_id)
+        VALUES ('taskTag', 't1:tag-1', 'delete', ?, 'device-A')
+      ''',
+        [clock.value.millisecondsSinceEpoch],
+      );
+
+      final report = await replayer.replayAll();
+      expect(report.skipped, 0);
+
+      final row = await db.customSelect('''
+        SELECT deleted_at FROM task_tags
+        WHERE task_id = 't1' AND tag_id = 'tag-1'
+      ''').getSingle();
+      expect(row.read<int?>('deleted_at'), isNotNull, reason: '墓碑必须被还原');
+    });
+
+    test('复合 entityId 拆不开时抛错，不猜', () async {
+      // 猜错会更新到别的行上，而那种损坏在回放报告里看不出来。
+      await runScript();
+      await db.customStatement('''
+        INSERT INTO change_log (entity_type, entity_id, op, occurred_at, device_id)
+        VALUES ('taskTag', '缺了冒号的键', 'delete', 1, 'device-A')
+      ''');
+      await expectLater(replayer.replayAll(), throwsA(isA<StateError>()));
+    });
+  });
 }
 
 Future<int> _changeLogCount(AppDatabase db) async {
   final row = await db
       .customSelect('SELECT COUNT(*) AS c FROM change_log')
+      .getSingle();
+  return row.read<int>('c');
+}
+
+Future<int> _rowCount(AppDatabase db, String table) async {
+  final row = await db
+      .customSelect('SELECT COUNT(*) AS c FROM $table')
       .getSingle();
   return row.read<int>('c');
 }

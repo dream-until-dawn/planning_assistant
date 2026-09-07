@@ -227,6 +227,21 @@ final class RecurrenceEngine {
       end = start.addMinutes(c.durationMinutes!);
     }
 
+    // **`end` 必须走同一条解析路径**（§4.1.1）。
+    //
+    // 初版只解析了 start，于是 `01:30 + 60min` 会给出 `end = 02:30` ——
+    // 那个墙钟在跳表当天根本不存在。后果不止显示错：
+    // `reminders.kind = relativeToEnd` 排期时会对 end 做换算，得到 03:00
+    // 对应的瞬时，而 UI 显示 02:30，两边永久对不上。
+    //
+    // 两端**各自**解析、互不影响：完全可能只有一端落进空隙。
+    var endDstAdjusted = false;
+    if (end != null) {
+      final resolvedEnd = _tz.resolve(end);
+      endDstAdjusted = resolvedEnd.dstAdjusted;
+      end = resolvedEnd.effectiveWallTime;
+    }
+
     return Occurrence(
       taskId: c.taskId,
       key: key,
@@ -238,6 +253,7 @@ final class RecurrenceEngine {
       noteOverride: o?.noteOverride,
       isModified: o != null,
       dstAdjusted: dstAdjusted,
+      endDstAdjusted: endDstAdjusted,
     );
   }
 

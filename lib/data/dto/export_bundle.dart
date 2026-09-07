@@ -206,6 +206,8 @@ final class ExportService {
       }
     }
 
+    _validateForeignKeys(data);
+
     // counts 是**校验用**的，不是装饰。对不上说明包被截断或改过。
     final counts = bundle['counts'];
     if (counts is Map) {
@@ -217,6 +219,85 @@ final class ExportService {
           );
         }
       });
+    }
+  }
+
+  /// 外键完整性预检。
+  ///
+  /// **不做的话行为仍是对的**（写入在事务里，撞外键会整体回滚），
+  /// 但用户拿到的是一句 `SqliteException(787): FOREIGN KEY constraint failed`
+  /// —— 既不知道是哪条数据有问题，也无从自救。导入是用户直面的操作，
+  /// 「回滚正确」和「失败可读」是两件事。
+  ///
+  /// 预检还有一个附带好处：它在**清库之前**跑完。撞库才发现的话，
+  /// 用户的库已经被清空了，即便回滚也经历了一次没必要的惊吓。
+  void _validateForeignKeys(Map<String, Object?> data) {
+    List<Map<String, Object?>> rows(String section) =>
+        ((data[section] as List?) ?? const []).cast<Map<String, Object?>>();
+
+    Set<String> idsOf(String section, [String key = 'id']) => {
+      for (final r in rows(section))
+        if (r[key] is String) r[key]! as String,
+    };
+
+    final taskIds = idsOf('tasks');
+    final tagIds = idsOf('tags');
+    final categoryIds = idsOf('categories');
+    final stageIds = idsOf('stages');
+
+    final problems = <String>[];
+
+    void requireRef(
+      String section,
+      String column,
+      Set<String> known,
+      String targetName, {
+      bool nullable = false,
+    }) {
+      for (final row in rows(section)) {
+        final value = row[column];
+        if (value == null) {
+          if (!nullable) {
+            problems.add('$section/${row['id']}：$column 不能为空');
+          }
+          continue;
+        }
+        if (!known.contains(value)) {
+          problems.add(
+            '$section/${row['id']}：$column「$value」'
+            '指向不存在的$targetName',
+          );
+        }
+      }
+    }
+
+    requireRef('tasks', 'categoryId', categoryIds, '分类', nullable: true);
+    for (final section in const [
+      'stages',
+      'checklistItems',
+      'occurrenceOverrides',
+      'stageOccurrenceStates',
+      'reminders',
+    ]) {
+      requireRef(section, 'taskId', taskIds, '任务');
+    }
+    requireRef('stageOccurrenceStates', 'stageId', stageIds, '阶段');
+
+    // 联结表两端都要查，且它没有 id 列。
+    for (final row in rows('taskTags')) {
+      if (!taskIds.contains(row['taskId'])) {
+        problems.add('taskTags：taskId「${row['taskId']}」指向不存在的任务');
+      }
+      if (!tagIds.contains(row['tagId'])) {
+        problems.add('taskTags：tagId「${row['tagId']}」指向不存在的标签');
+      }
+    }
+
+    if (problems.isNotEmpty) {
+      throw ExportFormatException(
+        '包的外键不完整（${problems.length} 处）：\n'
+        '${problems.take(10).join('\n')}',
+      );
     }
   }
 

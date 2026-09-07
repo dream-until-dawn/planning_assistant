@@ -13,6 +13,8 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+// drift 的 isNull/isNotNull 与 matcher 的同名匹配器冲突。
+import 'package:drift/drift.dart' hide isNotNull, isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/core/time/clock.dart';
@@ -151,6 +153,24 @@ void main() {
       const DeleteTaskCommand('task-deleted'),
     ]);
 
+    // **带 UNTIL 的规则必须进样例。**
+    //
+    // 评审指出：样例此前只有一条 `FREQ=WEEKLY;BYDAY=MO,WE`，不含 UNTIL，
+    // 于是「含 UNTIL 的规则必带 Z」这条 —— ADR-0004 里「服务端能独立算出
+    // 下次发生」的关键 —— 在导出侧**一次都没被校验过**。
+    // 校验器是对的，喂给它的东西太少。
+    await dispatcher.dispatch(
+      const CreateTaskCommand(
+        taskId: 'task-until',
+        title: '到月底为止的日程',
+        kind: TaskKind.single,
+        timeZoneId: 'America/New_York',
+        planDate: PlanDate(2026, 3, 1),
+        startMinute: MinuteOfDay.midnight,
+        recurrenceRule: 'RRULE:FREQ=DAILY;UNTIL=20260331T235959Z',
+      ),
+    );
+
     await taskTag.upsert(
       TaskTagsCompanion.insert(taskId: 'task-full', tagId: 'tag-1'),
     );
@@ -168,6 +188,43 @@ void main() {
         key: 'device.lastOpenedView',
         valueJson: '"timeline"',
         scope: 'device',
+      ),
+    );
+
+    // 另外三个集合此前全是空的，导出侧对它们的形状零校验。
+    // V1 的命令还不产出这些，直接经 DAO 写入。
+    await OccurrenceOverrideDao(db, _writer, clock).upsert(
+      OccurrenceOverridesCompanion.insert(
+        id: 'ovr-1',
+        taskId: 'task-until',
+        occurrenceKey: '2026-03-10T00:00',
+        action: 'skip',
+      ),
+    );
+    await ReminderDao(db, _writer, clock).upsert(
+      RemindersCompanion.insert(
+        id: 'rem-1',
+        taskId: 'task-full',
+        kind: 'relativeToStart',
+        offsetMinutes: const Value(-15),
+      ),
+    );
+    await ChecklistItemDao(db, _writer, clock).upsert(
+      ChecklistItemsCompanion.insert(
+        id: 'chk-1',
+        taskId: 'task-full',
+        title: '带上电脑',
+        orderIndex: 0,
+      ),
+    );
+
+    await StageOccurrenceStateDao(db, _writer, clock).upsert(
+      StageOccurrenceStatesCompanion.insert(
+        id: 'sos-1',
+        taskId: 'task-full',
+        stageId: 'stage-0',
+        occurrenceKey: '2026-03-10T09:30',
+        status: 'done',
       ),
     );
 
@@ -334,6 +391,61 @@ void main() {
       );
     });
 
+    test('外键不完整时给出可读错误，而不是 SqliteException', () async {
+      // 评审建议项 S4。回滚正确与失败可读是两件事 ——
+      // 用户拿到 `FOREIGN KEY constraint failed` 既不知道哪条有问题，
+      // 也无从自救。而且预检在**清库之前**跑完，
+      // 撞库才发现的话用户的库已经被清空过一次了。
+      await seed();
+      final bundle = await exportNow();
+      final data = Map<String, Object?>.from(bundle['data']! as Map);
+      final stages =
+          List<Map<String, Object?>>.from(
+            (data['stages']! as List).cast<Map<String, Object?>>(),
+          )..add({
+            ...(data['stages']! as List).first as Map<String, Object?>,
+            'id': 'orphan',
+            'taskId': '不存在的任务',
+          });
+      data['stages'] = stages;
+      final counts = Map<String, Object?>.from(bundle['counts']! as Map)
+        ..['stages'] = stages.length;
+      final bad = Map<String, Object?>.from(bundle)
+        ..['data'] = data
+        ..['counts'] = counts;
+
+      await expectLater(
+        service.import(bad),
+        throwsA(
+          isA<ExportFormatException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('orphan'), contains('不存在的任务')),
+          ),
+        ),
+      );
+    });
+
+    test('预检失败时库没被动过', () async {
+      await seed();
+      final before = await snapshot(db);
+      final bundle = await exportNow();
+      final data = Map<String, Object?>.from(bundle['data']! as Map);
+      data['taskTags'] = [
+        {
+          ...(data['taskTags']! as List).first as Map<String, Object?>,
+          'tagId': '不存在的标签',
+        },
+      ];
+      final bad = Map<String, Object?>.from(bundle)..['data'] = data;
+
+      await expectLater(
+        service.import(bad),
+        throwsA(isA<ExportFormatException>()),
+      );
+      expect(await snapshot(db), before, reason: '预检必须在清库之前');
+    });
+
     test('缺少 data 段时拒绝', () async {
       await expectLater(
         service.import({'formatVersion': 1}),
@@ -364,9 +476,43 @@ void main() {
       expect(out.existsSync(), isTrue);
       // 前提断言：样例得有内容，否则 schema 校验是空对空。
       final data = bundle['data']! as Map<String, Object?>;
-      expect((data['tasks']! as List).length, 3);
+      expect((data['tasks']! as List).length, 4);
       expect((data['stages']! as List).length, 2);
       expect((data['taskTags']! as List).length, 1);
+      // 10 个集合里不能再有空的 —— 空集合等于该集合的形状没被校验过。
+      const nonEmpty = [
+        'categories',
+        'tags',
+        'taskTags',
+        'tasks',
+        'stages',
+        'checklistItems',
+        'occurrenceOverrides',
+        'reminders',
+        'settings',
+      ];
+      for (final key in nonEmpty) {
+        expect(
+          (data[key]! as List),
+          isNotEmpty,
+          reason: '$key 是空的，导出侧对它的形状零校验',
+        );
+      }
+
+      // ADR-0004 的关键：含 UNTIL 的规则必须带 Z。
+      final rules = [
+        for (final t in (data['tasks']! as List).cast<Map<String, Object?>>())
+          if (t['recurrenceRule'] != null) t['recurrenceRule']! as String,
+      ];
+      final withUntil = rules.where((r) => r.contains('UNTIL=')).toList();
+      expect(withUntil, isNotEmpty, reason: '样例里必须有带 UNTIL 的规则');
+      for (final r in withUntil) {
+        expect(
+          RegExp(r'UNTIL=\d{8}T\d{6}Z').hasMatch(r),
+          isTrue,
+          reason: 'UNTIL 必须是带 Z 的真 UTC：$r',
+        );
+      }
     });
   });
 }
