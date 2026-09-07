@@ -36,6 +36,47 @@ def slugify(heading: str) -> str:
     return re.sub(r"\s+", "-", s.strip())
 
 
+# 带字母后缀的小节（`6.1b` / `2.1g`）必须整体捕获。
+# 不带 `[a-z]?` 的话，`### 6.1b` 会回溯成 `6` —— 于是同一文件里的
+# `6.1b/6.1c/6.1d` 全塌成 `6`，报出一堆假重号。
+# 这个 bug 是新检查上线时自己报出来的：它在 recurrence-engine 与
+# m0-record 上各报了一处「重复」，一查全是自己的回溯问题。
+# **校验器的报告同样要先验证再采信**，与对待兄弟会话的结论同一条规矩。
+SECTION_NUM_RE = re.compile(r"^#{2,6}\s+(\d+(?:\.\d+)*[a-z]?)[.、\s]", re.M)
+
+
+def check_duplicate_section_numbers(
+    files: list[str],
+) -> list[tuple[str, str, str]]:
+    """同一文件内的 `§X.Y` 编号不得重复。
+
+    ## 为什么这条比「锚点可达」更接近我们实际依赖的性质
+
+    锚点可达只保证「点了能跳」。但本项目的 prose 与测试名普遍用
+    **「§X.Y」当寻址方式**（`对应 recurrence-engine §6`、`见 cross-cutting §3.1`），
+    而人是**按编号去翻**的，不是按锚点跳的。编号唯一是这套寻址的前提。
+
+    实际踩到过：`design-system.md` 一度有两个 `### 3.1`
+    （字体打包 / 缩放相乘）。两个标题文字不同 → slug 不同 → 锚点都能解析
+    → **252 条链接全绿**。而另外两份文档的链接文案写的是「设计系统 §3.1」，
+    读者按编号翻，一半概率落到错的那节。
+
+    「全绿且没用」正是这个项目反复在抓的形状 —— 校验器验的是它能验的，
+    不是我们依赖的。
+    """
+    problems: list[tuple[str, str, str]] = []
+    for f in files:
+        text = open(f, encoding="utf-8").read()
+        seen: dict[str, int] = {}
+        for m in SECTION_NUM_RE.finditer(text):
+            num = m.group(1)
+            seen[num] = seen.get(num, 0) + 1
+        for num, count in sorted(seen.items()):
+            if count > 1:
+                problems.append((f, f"§{num} 出现 {count} 次", "DUPLICATE_SECTION_NUM"))
+    return problems
+
+
 def collect_markdown(root: str) -> list[str]:
     out: list[str] = []
     for dirpath, _dirnames, filenames in os.walk(root):
@@ -144,15 +185,38 @@ def self_test() -> bool:
             )
         problems, total, anchors = check([a, b])
 
+        # 编号重复：两个 §3.1 标题文字不同，slug 不同，锚点都能解析 ——
+        # 「链接全绿」而编号已经撞了。这一组证明新加的检查能看见它。
+        dup = os.path.join(d, "dup.md").replace("\\", "/")
+        with open(dup, "w", encoding="utf-8") as fh:
+            fh.write(
+                "# D\n\n## 3. 字体\n\n### 3.1 字体必须打包\n\n"
+                "### 3.2 字族\n\n### 3.1 缩放是两层相乘\n"
+            )
+        clean = os.path.join(d, "clean.md").replace("\\", "/")
+        with open(clean, "w", encoding="utf-8") as fh:
+            fh.write(
+                "# C\n\n## 3. 字体\n\n### 3.1 字体必须打包\n\n"
+                "### 3.2 字族\n\n### 3.3 缩放是两层相乘\n"
+            )
+        dup_problems = check_duplicate_section_numbers([dup])
+        clean_problems = check_duplicate_section_numbers([clean])
+
     kinds = sorted(k for _f, _l, k in problems)
     expected = ["ANCHOR_NOT_FOUND", "FILE_NOT_FOUND"]
-    ok = kinds == expected and total == 4 and anchors == 2
+    link_ok = kinds == expected and total == 4 and anchors == 2
+
+    dup_kinds = [k for _f, _l, k in dup_problems]
+    dup_ok = dup_kinds == ["DUPLICATE_SECTION_NUM"] and not clean_problems
+
+    ok = link_ok and dup_ok
 
     print(f"  样本: 2 条好链 + 1 条坏文件 + 1 条坏锚点 + 1 条外链(应跳过)")
     print(f"  检出: {kinds}")
     print(f"  统计: 站内链接={total}(期望4)  带锚点={anchors}(期望2)")
+    print(f"  编号重复: 重号样本检出={dup_kinds}  正常样本误报={len(clean_problems)} 处")
     if ok:
-        print("  结果: PASS —— 坏链能让它变红，好链不误报，全角括号锚点不误报")
+        print("  结果: PASS —— 坏链能让它变红，好链不误报，重号能被检出且不误报正常编号")
     else:
         print("  结果: FAIL —— 校验器本身有问题，其对仓库的结论一律不可信")
     return ok
@@ -171,6 +235,7 @@ def main() -> int:
         files.append(readme)
 
     problems, total, anchors = check(files)
+    problems += check_duplicate_section_numbers(files)
     print(f"文档 {len(files)} 篇 · 站内链接 {total} 条 · 其中带锚点 {anchors} 条")
     if problems:
         print(f"发现 {len(problems)} 处问题：")
