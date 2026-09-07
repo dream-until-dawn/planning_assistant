@@ -3,16 +3,25 @@
 /// 强制 docs/01-architecture/module-map.md §3 的依赖规则，以及
 /// docs/05-engineering/testing-strategy.md §6 的额外守卫。
 ///
-/// **本文件被变异演练打回过三轮**，每一轮的失效方式都不同：
-///  1. 漏了三条规则 + 一处假阳性 —— 注入违规能发现。
-///  2. 三层 feature 路径整片不被分类，六条规则**静默**失效而守卫报绿 ——
-///     注入违规也发现不了，因为违规文件本身在盲区里。
-///  3. 修第 2 条时**过冲**：把 `views/shared` 判成了独立 feature，
-///     于是 view-specs §0.3 明文规定的共享筛选条会被判违规 ——
+/// **本文件被变异演练打回过四轮**，每一轮的失效原理都不同：
+///  1. 规则写错 / 漏写 —— 注入违规能发现。
+///  2. 三层 feature 路径整片不被分类，规则**静默**失效而守卫报绿 ——
+///     注入违规发现不了，因为违规文件本身在盲区里。
+///  3. 修第 2 条时**过冲**，把 view-specs 明文规定的共享组件判成违规 ——
 ///     症状是**正确代码变红**，注入违规的验法永远发现不了。
+///  4. `feature_domain` 桶存在但规则表里没有条目 —— 文件**分类是成功的**，
+///     所以第 2 条加的「未分类即违规」也抓不到。
 ///
-/// 由此定下：守卫的验收必须是**双向**的。
-/// 本文件末尾的夹具表同时锁住「违规必红」与「文档规定的正常写法必绿」。
+/// 由此定下三件事：
+///  · 验收必须**双向**（违规必红 + 文档规定的正常写法必绿）
+///  · 结构性断言要覆盖**两跳**：文件 → 层，层 → 规则
+///  · 每次实质性改动后重跑变异演练，不是建立时做一次的仪式
+///
+/// **已知未封的一扇（B6，M1 待办）**：约束是关于**可达性**的，而本守卫看的是
+/// **相邻性**。application 合法 import Repository 再 re-export，presentation 合法
+/// import 本 feature 的 application —— 没有任何一条边违规，但复合起来破坏 FR-AI-01。
+/// 此处只用 `_forbiddenExportOnly` 堵住了这一个具体入口，**通用解（传递闭包 /
+/// 符号级分析）留到 M1** —— 那时才有真实样本可验证它抓得住真的、放得过假的。
 @TestOn('vm')
 library;
 
@@ -177,6 +186,37 @@ const Map<String, List<(String, String)>> _forbiddenRaw = {
   ],
 };
 
+/// **仅对 `export` 生效**的禁止项（`import` 不受这些约束）。
+///
+/// 存在的理由见 B6：两条各自合法的边复合起来会破坏约束 ——
+/// application 合法地 import `domain/repositories/`，再把它 re-export 出去，
+/// presentation 合法地 import 本 feature 的 application，于是 presentation
+/// 拿到了 Repository，FR-AI-01 被破坏，而**没有任何一条边违规**。
+///
+/// 通用解（跟着 export 边算传递闭包）留到 M1 —— 那时才有真实样本可以验证
+/// 「抓得住真的、放得过假的」。这里先用一条窄规则堵住 FR-AI-01 这面承重墙上的洞：
+/// application **可以** import Repository 接口，但**不得转手再导出**。
+const Map<String, List<(String, String)>> _forbiddenExportOnlyRaw = {
+  'feature_application': [
+    (
+      '/domain/repositories/',
+      'application 不得 re-export Repository —— 那会让 presentation 经本 feature '
+          '的 barrel 间接拿到它，绕过 TaskCommand（FR-AI-01）。import 它是允许的',
+    ),
+  ],
+};
+
+final Map<String, List<(String, String)>> _forbiddenExportOnly = {
+  for (final e in _forbiddenExportOnlyRaw.entries)
+    e.key: [
+      for (final (pattern, rule) in e.value)
+        if (pattern.startsWith('/') && pattern.endsWith('/'))
+          ...(_withBarrel(pattern).map((p) => (p, rule)))
+        else
+          (pattern, rule),
+    ],
+};
+
 final Map<String, List<(String, String)>> _forbidden = {
   for (final e in _forbiddenRaw.entries)
     e.key: [
@@ -192,7 +232,11 @@ final Map<String, List<(String, String)>> _forbidden = {
 ///
 /// 抽成纯函数，是为了让夹具表能用合成输入**双向**验证它 ——
 /// 只跑真实文件的话，「正常写法被误判」这类缺陷要等到 M2 写页面时才暴露。
-List<String> checkImport(String fileRelToLib, String importTarget) {
+List<String> checkImport(
+  String fileRelToLib,
+  String importTarget, {
+  bool isExport = false,
+}) {
   final c = _classify(fileRelToLib);
   if (c == null) return const [];
   final out = <String>[];
@@ -202,6 +246,12 @@ List<String> checkImport(String fileRelToLib, String importTarget) {
   for (final (pattern, rule)
       in _forbidden[c.layer] ?? const <(String, String)>[]) {
     if (matchable.contains(pattern)) out.add(rule);
+  }
+  if (isExport) {
+    for (final (pattern, rule)
+        in _forbiddenExportOnly[c.layer] ?? const <(String, String)>[]) {
+      if (matchable.contains(pattern)) out.add(rule);
+    }
   }
 
   if (c.layer == 'feature_presentation' && c.feature != null) {
@@ -224,25 +274,33 @@ List<String> checkImport(String fileRelToLib, String importTarget) {
 /// 逐行正则会被两种合法写法绕过：
 ///  · 条件 import：`import 'a.dart' if (dart.library.io) 'b.dart';` 只看得到第一个
 ///  · 跨行 import：`import\n    'a.dart';`
-List<({int lineNo, String raw, String uri})> _importUris(String source) {
+List<({int lineNo, String raw, String uri, bool isExport})> _importUris(
+  String source,
+) {
   // 先去掉注释，避免注释里的 import 字样与字符串被当真
   final cleaned = source
       .replaceAll(RegExp(r'/\*.*?\*/', dotAll: true), '')
       .replaceAll(RegExp(r'//[^\n]*'), '');
 
-  final out = <({int lineNo, String raw, String uri})>[];
+  final out = <({int lineNo, String raw, String uri, bool isExport})>[];
   final directive = RegExp(
-    r'(?:^|\n)\s*(?:import|export)\b([^;]*);',
+    r'(?:^|\n)\s*(import|export)\b([^;]*);',
     dotAll: true,
   );
   final literal = RegExp('''['"]([^'"]+)['"]''');
 
   for (final m in directive.allMatches(cleaned)) {
     final lineNo = '\n'.allMatches(cleaned.substring(0, m.start)).length + 1;
-    final body = m.group(1)!;
+    final isExport = m.group(1) == 'export';
+    final body = m.group(2)!;
     final raw = m.group(0)!.trim().replaceAll(RegExp(r'\s+'), ' ');
     for (final lit in literal.allMatches(body)) {
-      out.add((lineNo: lineNo, raw: raw, uri: lit.group(1)!));
+      out.add((
+        lineNo: lineNo,
+        raw: raw,
+        uri: lit.group(1)!,
+        isExport: isExport,
+      ));
     }
   }
   return out;
@@ -482,6 +540,35 @@ void main() {
       );
     });
 
+    test('export 专属规则：application 可以 import Repository，但不得 re-export', () {
+      // 双向：同一对 (文件, 目标)，import 判绿、export 判红。
+      // 若只验 export 变红，会区分不出「修对了」和「把 application 依赖
+      // Repository 整个禁掉」—— 后者会在 M1 写 UseCase 时立刻炸。
+      const file = 'features/task/application/repo_exports.dart';
+      const target =
+          'package:planning_assistant/domain/repositories/task_repository.dart';
+
+      expect(
+        checkImport(file, target),
+        isEmpty,
+        reason: 'application **import** Repository 接口是正常方向，不得误判',
+      );
+      expect(
+        checkImport(file, target, isExport: true),
+        anyElement(contains('不得 re-export Repository')),
+        reason: 'export 会让 presentation 经本 feature 的 barrel 间接拿到它（FR-AI-01）',
+      );
+      // barrel 变体同样要挡住
+      expect(
+        checkImport(
+          file,
+          'package:planning_assistant/domain/repositories.dart',
+          isExport: true,
+        ),
+        anyElement(contains('不得 re-export Repository')),
+      );
+    });
+
     test('条件 import 与跨行 import 的每个 URI 都被取出', () {
       const source = '''
 import 'stub.dart'
@@ -529,7 +616,7 @@ import
       final rel = _relToLib(file.path);
       if (rel == null) continue;
       for (final imp in _importUris(file.readAsStringSync())) {
-        for (final rule in checkImport(rel, imp.uri)) {
+        for (final rule in checkImport(rel, imp.uri, isExport: imp.isExport)) {
           violations.add(
             '  - lib/$rel:${imp.lineNo}\n      ${imp.raw}\n      违反: $rule',
           );

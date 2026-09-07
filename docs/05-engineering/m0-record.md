@@ -375,6 +375,77 @@ module-map §2 明文允许建 `features/<name>/domain/`，而 **§3 的依赖�
 > · 完备性断言 → 规则**有没有被套到所有该套的地方**。
 > B3/B5 这一类失效，规则内容全是对的。这两者需要不同的断言，缺一不可。
 
+### 2.1g ⚠️ B6：已知未封的一扇门（**M1 待办，不要当成已解决**）
+
+评审方在 M0 通过时找到第五种失效，并**建议不要在 M0 修**。我同意，记录如下。
+
+```dart
+// lib/features/task/application/repo_exports.dart
+export 'package:planning_assistant/domain/repositories/task_repository.dart';
+// ↑ application 依赖 domain 接口，合法
+
+// lib/features/task/presentation/task_page.dart
+import '../application/repo_exports.dart';
+class TaskPage { TaskRepository? repo; }
+// ↑ presentation 依赖本 feature 的 application，合法
+```
+```
+00:00 +13: All tests passed!
+```
+
+**presentation 拿到了 `TaskRepository`，FR-AI-01 被破坏，而没有任何一条 import 边违规。**
+
+#### 与前四种不同类
+
+| | 问题出在哪 |
+|---|---|
+| B3 / B5 | 规则**没被套到**某些文件上 → 枚举式结构断言可以封死 |
+| **B6** | 规则**被正确套到了每一个文件上**，判定也没错 —— 约束本身是关于**可达性**的，而守卫看的是**相邻性** |
+
+路径分析在原理上看不到它：要抓它得跟着 `export` 边算传递闭包，或做符号级分析。
+
+**这不是刁钻构造**：application 层放一个 `exports.dart` 汇总本 feature 对外类型，
+是 Dart 里很常见的写法。有人为少写几行 import 建了这么个 barrel，
+FR-AI-01 就悄悄失效了 —— 而它是 [ADR-0002](../06-adr/ADR-0002-riverpod-clean-layering.md)「写入路径唯一」
+与 V4 Agent 链路的承重墙。
+
+#### 为什么不在 M0 修通用解
+
+1. **当前代码库里没有任何可被它利用的实例** —— 没有 Repository、没有 barrel、没有 presentation。
+   现在建闭包分析，是给一个还不存在的东西上锁，**而且锁的正确性无从验证**：
+   没有真实样本可以拿来验「抓得住真的、放得过假的」。这恰好违反本项目
+   [§1.4](testing-strategy.md) 反复确认的规矩。
+2. **正确修法要等 M1 的形状定了才知道**。传递闭包只是一种；也可能一条更窄的规则就够。
+   现在定，多半会像 B4 一样过冲。
+
+#### M0 只做了可验证的那一半（窄规则）
+
+给 `feature_application` 加了一条**仅对 `export` 生效**的规则：
+可以 `import` Repository 接口，**不得转手 re-export**。一行规则，堵住 FR-AI-01 这面承重墙上的入口。
+
+它是**现在就能双向验证**的，因此符合准入标准：
+
+```
+export 专属规则：application 可以 import Repository，但不得 re-export   ✅
+  · checkImport(file, target)                → 空（import 判绿，不得误判）
+  · checkImport(file, target, isExport: true) → 命中「不得 re-export Repository」
+  · barrel 变体 domain/repositories.dart      → 同样命中
+```
+
+真实探针注入后：
+
+```
+分层依赖与跨 feature 规则 [E]
+    违反: application 不得 re-export Repository —— 那会让 presentation 经本 feature
+          的 barrel 间接拿到它，绕过 TaskCommand（FR-AI-01）。import 它是允许的
+```
+
+#### 明确的未完成状态
+
+**通用的可达性分析没有做。** 只要出现「application 之外的层做 re-export」或「多跳 barrel」，
+这扇门仍然开着。M1 第一次出现真实 barrel 或第一个 Repository 进 presentation 的诱惑点时，
+必须当场决定修法并给双向输出 —— 已写进 §4 的移交清单。
+
 ### 2.1c 坏测试扫描器 `tool/lint_tests.dart`（补齐 S3）
 
 [测试策略 §3.4](testing-strategy.md) 写了这个工具，但此前**只写在文档里没有实现** ——
@@ -432,7 +503,7 @@ module-map §2 明文允许建 `features/<name>/domain/`，而 **§3 的依赖�
 | `AndroidManifest`：`RECEIVE_BOOT_COMPLETED` / `SCHEDULE_EXACT_ALARM` / 启动接收器 | ✅ |
 | `analysis_options.yaml`（含 riverpod_lint） | ✅ |
 | `core/result`、`core/time`、`core/id` 最小实现 | ✅ |
-| 架构守卫测试（**13 条**，含双向夹具 + 完备性断言） | ✅ 经四轮变异演练，四种失效方式各修一轮 |
+| 架构守卫测试（**14 条**：双向夹具 + 完备性断言 + export 专属规则） | ✅ 四种失效方式各修一轮；第五种（B6 可达性）已记录，通用解移交 M1 |
 | 坏测试扫描器 `tool/lint_tests.dart` | ✅ 自检 + 真实仓库失败演示 |
 | rrule 契约测试（14 条） | ✅ |
 | uuid v7 测试（5 条） | ✅ |
@@ -440,7 +511,7 @@ module-map §2 明文允许建 `features/<name>/domain/`，而 **§3 的依赖�
 | CI（analyze / format / codegen 校验 / test / **守卫有效性** / build） | ✅ |
 | `flutter build apk --debug` | ✅ |
 
-**测试总数 35，`dart analyze --fatal-infos --fatal-warnings` 零问题，`dart format` 无差异。**
+**测试总数 36，`dart analyze --fatal-infos --fatal-warnings` 零问题，`dart format` 无差异。**
 
 ---
 
@@ -452,6 +523,7 @@ module-map §2 明文允许建 `features/<name>/domain/`，而 **§3 的依赖�
 
 | 项 | 说明 |
 |---|---|
+| **B6 可达性绕过（通用解）** | ⚠️ **未解决**。只封了 `application` re-export 这一个入口；「多跳 barrel」「其它层 re-export」仍然开着。M1 出现第一个真实 barrel 或第一个 Repository 进 presentation 的诱惑点时，当场决定修法并给双向输出。见 §2.1g |
 | 断网启动验证（字体已打包） | M0 未引入自定义字体，暂无可验对象；随 M2 设计系统一并验 |
 | `flutter_timezone` 的取舍 | 见 §1.4，M1 需要读系统时区时再定 |
 | 代码生成校验在 CI 中的实效 | 当前无带注解的源文件，该步骤形同空跑；M1 引入 drift/freezed 后才真正生效 |
