@@ -392,6 +392,67 @@ void main() {
       );
     });
 
+    test('联合主键的表 upsert 可用（曾经不可用）', () async {
+      // **这条是补漏。** 上面的参数化用例声称「覆盖每一张可同步表」，
+      // 但 task_tags 因为主键是复合的，不符合 `makeRow(String id)` 的形状，
+      // 被排除在外 —— 而缺陷恰恰就在那里：`upsert` 内部也走了
+      // `_primaryKeyColumn()`（只支持单列），于是 TaskTagDao.upsert
+      // **完全不可用**，一调就抛 StateError。
+      //
+      // 是导出往返测试先撞上的，不是这个文件。参数化用例的覆盖声明
+      // 与实际覆盖范围之间的缺口，就是缺陷藏身的地方。
+      await seedParents();
+      await TagDao(
+        db,
+        writer,
+        clock.call,
+      ).upsert(TagsCompanion.insert(id: 'tag-1', name: '标签', colorArgb: 1));
+      final dao = TaskTagDao(db, writer, clock.call);
+
+      final before = await changeLogCount();
+      await dao.upsert(
+        TaskTagsCompanion.insert(taskId: _seedTaskId, tagId: 'tag-1'),
+      );
+
+      expect((await dao.getAll()).length, 1);
+      expect(await changeLogCount(), before + 1, reason: '联结表也要写 outbox');
+
+      // 复合键在 outbox 里拼成 `taskId:tagId`。
+      final log = await db.customSelect('''
+        SELECT entity_id FROM change_log
+        WHERE entity_type = 'taskTag' ORDER BY seq DESC LIMIT 1
+      ''').getSingle();
+      expect(log.read<String>('entity_id'), '$_seedTaskId:tag-1');
+    });
+
+    test('联合主键的表重复 upsert 递增 revision 且不重复建行', () async {
+      await seedParents();
+      await TagDao(
+        db,
+        writer,
+        clock.call,
+      ).upsert(TagsCompanion.insert(id: 'tag-1', name: '标签', colorArgb: 1));
+      final dao = TaskTagDao(db, writer, clock.call);
+      final row = TaskTagsCompanion.insert(taskId: _seedTaskId, tagId: 'tag-1');
+
+      await dao.upsert(row);
+      clock.advance(const Duration(minutes: 1));
+      await dao.upsert(row);
+
+      expect((await dao.getAll()).length, 1, reason: '主键相同不该建出第二行');
+      final env = await db
+          .customSelect(
+            '''
+        SELECT revision, updated_at FROM task_tags
+        WHERE task_id = ? AND tag_id = 'tag-1'
+      ''',
+            variables: [const Variable<String>(_seedTaskId)],
+          )
+          .getSingle();
+      expect(env.read<int>('revision'), 2);
+      expect(env.read<int>('updated_at'), clock.ms);
+    });
+
     test('SyncedDao 用在无信封的表上会直接抛，而不是不过滤', () async {
       // 退化成「不过滤」比报错危险得多：查询照跑，只是墓碑全漏出来。
       final dao = _BadDao(db, writer, clock.call);

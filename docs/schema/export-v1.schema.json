@@ -1,0 +1,973 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dream-until-dawn/planning_assistant/docs/schema/export-v1.schema.json",
+  "title": "planning_assistant 导出格式 v1",
+  "description": "V3 云端的解析契约：服务端**不依赖任何客户端代码**即可解析本格式。字段名 = 列名（lowerCamelCase），逐字段对应，无嵌套加工。注意标了 contentMediaType: application/json 的两列是二次编码的，需再 JSON.parse 一次。墓碑行（deletedAt 非空）照常导出 —— 不导的话导入方无从知道某条被删了。",
+  "type": "object",
+  "required": [
+    "formatVersion",
+    "schemaVersion",
+    "appVersion",
+    "exportedAt",
+    "deviceId",
+    "counts",
+    "data"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "formatVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "导出格式版本，与 DB schemaVersion 解耦"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "appVersion": {
+      "type": "string"
+    },
+    "exportedAt": {
+      "type": "integer",
+      "description": "Instant ms"
+    },
+    "deviceId": {
+      "type": "string"
+    },
+    "counts": {
+      "type": "object",
+      "description": "各段行数，**校验用**：对不上说明包被截断或改过",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "categories",
+        "tags",
+        "taskTags",
+        "tasks",
+        "stages",
+        "checklistItems",
+        "occurrenceOverrides",
+        "stageOccurrenceStates",
+        "reminders",
+        "settings"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "categories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/category"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tag"
+          }
+        },
+        "taskTags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/taskTag"
+          }
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/task"
+          }
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/stage"
+          }
+        },
+        "checklistItems": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/checklistItem"
+          }
+        },
+        "occurrenceOverrides": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/occurrenceOverride"
+          }
+        },
+        "stageOccurrenceStates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/stageOccurrenceState"
+          }
+        },
+        "reminders": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reminder"
+          }
+        },
+        "settings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/setting"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "category": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "colorArgb": {
+          "type": "integer"
+        },
+        "icon": {
+          "type": "string",
+          "description": "图标标识串，不是二进制"
+        },
+        "orderIndex": {
+          "type": "integer"
+        },
+        "isSystemDefault": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ],
+          "description": "SQLite 无布尔类型，存 0/1"
+        },
+        "createdAt": {
+          "type": "integer",
+          "description": "Instant ms，创建后不变"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "description": "Instant ms，每次本地写入更新"
+        },
+        "deletedAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "非空即墓碑"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lastWriterId": {
+          "type": "string"
+        },
+        "remoteVersion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "V1 恒为 null"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "colorArgb",
+        "icon",
+        "orderIndex",
+        "isSystemDefault",
+        "createdAt",
+        "updatedAt",
+        "revision",
+        "lastWriterId"
+      ],
+      "additionalProperties": false
+    },
+    "tag": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "colorArgb": {
+          "type": "integer"
+        },
+        "createdAt": {
+          "type": "integer",
+          "description": "Instant ms，创建后不变"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "description": "Instant ms，每次本地写入更新"
+        },
+        "deletedAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "非空即墓碑"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lastWriterId": {
+          "type": "string"
+        },
+        "remoteVersion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "V1 恒为 null"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "colorArgb",
+        "createdAt",
+        "updatedAt",
+        "revision",
+        "lastWriterId"
+      ],
+      "additionalProperties": false
+    },
+    "taskTag": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "tagId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "integer",
+          "description": "Instant ms，创建后不变"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "description": "Instant ms，每次本地写入更新"
+        },
+        "deletedAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "非空即墓碑"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lastWriterId": {
+          "type": "string"
+        },
+        "remoteVersion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "V1 恒为 null"
+        }
+      },
+      "required": [
+        "taskId",
+        "tagId",
+        "createdAt",
+        "updatedAt",
+        "revision",
+        "lastWriterId"
+      ],
+      "additionalProperties": false
+    },
+    "task": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "single",
+            "staged"
+          ]
+        },
+        "categoryId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4,
+          "description": "0 无 / 1 低 / 2 普通 / 3 高 / 4 紧急"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "inProgress",
+            "done",
+            "skipped"
+          ],
+          "description": "重复任务此列恒为 pending，每次发生的状态在 occurrenceOverrides"
+        },
+        "statusBeforeArchive": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "pending",
+            "inProgress",
+            "done",
+            "skipped",
+            null
+          ]
+        },
+        "isAllDay": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "planDate": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "startMinute": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1439
+        },
+        "endDate": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "endMinute": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1439
+        },
+        "timeZoneId": {
+          "type": "string",
+          "description": "IANA 时区标识。时间是墙钟 + 时区，不是 UTC 时间戳"
+        },
+        "recurrenceRule": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "RFC 5545 RRULE 规范形；含 UNTIL 时必带 Z"
+        },
+        "recurrenceExDates": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "contentMediaType": "application/json",
+          "description": "**二次编码**：本身是 JSON 字符串，解析时需再 JSON.parse 一次。内容为日期字符串数组。V1 不参与展开。"
+        },
+        "splitFromTaskId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "colorArgb": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "icon": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sortOrder": {
+          "type": "number"
+        },
+        "completedAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "实际点击完成的瞬时，不是计划时间"
+        },
+        "archivedAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "非空即已归档。归档不是 status 的取值"
+        },
+        "createdAt": {
+          "type": "integer",
+          "description": "Instant ms，创建后不变"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "description": "Instant ms，每次本地写入更新"
+        },
+        "deletedAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "非空即墓碑"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lastWriterId": {
+          "type": "string"
+        },
+        "remoteVersion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "V1 恒为 null"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "kind",
+        "priority",
+        "status",
+        "isAllDay",
+        "timeZoneId",
+        "sortOrder",
+        "createdAt",
+        "updatedAt",
+        "revision",
+        "lastWriterId"
+      ],
+      "additionalProperties": false
+    },
+    "stage": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "orderIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "从 0 起连续"
+        },
+        "startOffsetMinutes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "相对任务（或该次发生）开始的分钟偏移"
+        },
+        "durationMinutes": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "colorArgb": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "inProgress",
+            "done",
+            "skipped"
+          ]
+        },
+        "completedAt": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "type": "integer",
+          "description": "Instant ms，创建后不变"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "description": "Instant ms，每次本地写入更新"
+        },
+        "deletedAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "非空即墓碑"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lastWriterId": {
+          "type": "string"
+        },
+        "remoteVersion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "V1 恒为 null"
+        }
+      },
+      "required": [
+        "id",
+        "taskId",
+        "title",
+        "orderIndex",
+        "status",
+        "createdAt",
+        "updatedAt",
+        "revision",
+        "lastWriterId"
+      ],
+      "additionalProperties": false
+    },
+    "checklistItem": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "isDone": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "orderIndex": {
+          "type": "integer"
+        },
+        "createdAt": {
+          "type": "integer",
+          "description": "Instant ms，创建后不变"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "description": "Instant ms，每次本地写入更新"
+        },
+        "deletedAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "非空即墓碑"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lastWriterId": {
+          "type": "string"
+        },
+        "remoteVersion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "V1 恒为 null"
+        }
+      },
+      "required": [
+        "id",
+        "taskId",
+        "title",
+        "isDone",
+        "orderIndex",
+        "createdAt",
+        "updatedAt",
+        "revision",
+        "lastWriterId"
+      ],
+      "additionalProperties": false
+    },
+    "occurrenceOverride": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "occurrenceKey": {
+          "type": "string",
+          "description": "**原始**发生时刻的墙钟串。全天任务为纯日期，定时任务形如 yyyy-MM-ddTHH:mm"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "skip",
+            "modify"
+          ]
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "completedAt": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "titleOverride": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "noteOverride": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "planDateOverride": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "startMinuteOverride": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "endDateOverride": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "endMinuteOverride": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "type": "integer",
+          "description": "Instant ms，创建后不变"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "description": "Instant ms，每次本地写入更新"
+        },
+        "deletedAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "非空即墓碑"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lastWriterId": {
+          "type": "string"
+        },
+        "remoteVersion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "V1 恒为 null"
+        }
+      },
+      "required": [
+        "id",
+        "taskId",
+        "occurrenceKey",
+        "action",
+        "createdAt",
+        "updatedAt",
+        "revision",
+        "lastWriterId"
+      ],
+      "additionalProperties": false
+    },
+    "stageOccurrenceState": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "stageId": {
+          "type": "string"
+        },
+        "occurrenceKey": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "completedAt": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "type": "integer",
+          "description": "Instant ms，创建后不变"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "description": "Instant ms，每次本地写入更新"
+        },
+        "deletedAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "非空即墓碑"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lastWriterId": {
+          "type": "string"
+        },
+        "remoteVersion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "V1 恒为 null"
+        }
+      },
+      "required": [
+        "id",
+        "taskId",
+        "stageId",
+        "occurrenceKey",
+        "status",
+        "createdAt",
+        "updatedAt",
+        "revision",
+        "lastWriterId"
+      ],
+      "additionalProperties": false
+    },
+    "reminder": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "relativeToStart",
+            "relativeToEnd",
+            "absolute"
+          ]
+        },
+        "offsetMinutes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "负数 = 提前；kind 为相对时必填"
+        },
+        "absoluteDate": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "absoluteMinute": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "isEnabled": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "createdAt": {
+          "type": "integer",
+          "description": "Instant ms，创建后不变"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "description": "Instant ms，每次本地写入更新"
+        },
+        "deletedAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "非空即墓碑"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lastWriterId": {
+          "type": "string"
+        },
+        "remoteVersion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "V1 恒为 null"
+        }
+      },
+      "required": [
+        "id",
+        "taskId",
+        "kind",
+        "isEnabled",
+        "createdAt",
+        "updatedAt",
+        "revision",
+        "lastWriterId"
+      ],
+      "additionalProperties": false
+    },
+    "setting": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "valueJson": {
+          "type": "string",
+          "contentMediaType": "application/json",
+          "description": "**二次编码**：本身是 JSON 字符串，解析时需再 JSON.parse 一次。"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "global"
+          ],
+          "description": "导出只含 global；device 域不同步不导出"
+        },
+        "createdAt": {
+          "type": "integer",
+          "description": "Instant ms，创建后不变"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "description": "Instant ms，每次本地写入更新"
+        },
+        "deletedAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "非空即墓碑"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lastWriterId": {
+          "type": "string"
+        },
+        "remoteVersion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "V1 恒为 null"
+        }
+      },
+      "required": [
+        "key",
+        "valueJson",
+        "scope",
+        "createdAt",
+        "updatedAt",
+        "revision",
+        "lastWriterId"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

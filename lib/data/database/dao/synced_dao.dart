@@ -115,11 +115,13 @@ abstract class SyncedDao<Tbl extends Table, Row extends DataClass>
       final columns = Map<String, Expression<Object>>.from(
         entry.toColumns(false),
       );
-      final pkName = _primaryKeyColumn();
-      final id = _stringValueOf(columns[pkName], pkName);
+      // 主键可能是复合的（task_tags 是 (taskId, tagId)），所以按**列集合**
+      // 定位，而不是假设只有一列。假设单列的话联结表的 upsert 直接抛，
+      // 而联结表恰恰是最不起眼、最容易漏测的那张。
+      final keyValues = _primaryKeyValuesOf(columns);
 
       final nowMs = _now().millisecondsSinceEpoch;
-      final prior = await _envelopeOf(id);
+      final prior = await _envelopeOf(keyValues);
 
       // 已存在时保留原 createdAt —— 覆盖它会让「这条何时建的」永久丢失，
       // 且 V3 的冲突解析拿它做兜底比较。
@@ -131,17 +133,45 @@ abstract class SyncedDao<Tbl extends Table, Row extends DataClass>
       await into(table)
           .insertOnConflictUpdate(RawValuesInsertable<Row>(columns));
 
-      final row = await _requireRow(id);
+      final row = await _requireRow(keyValues);
       await _appendChangeLog(ChangeOp.upsert, primaryKeyOf(row), toJson(row));
     });
   }
 
+  /// 从待写入的列里取出主键各列的值。
+  Map<String, String> _primaryKeyValuesOf(
+    Map<String, Expression<Object>> columns,
+  ) {
+    final result = <String, String>{};
+    for (final col in table.$primaryKey) {
+      final expr = columns[col.name];
+      if (expr is! Variable) {
+        throw StateError('无法从写入内容中取出主键 ${col.name}');
+      }
+      final value = expr.value;
+      if (value is! String) {
+        throw StateError('主键 ${col.name} 不是字符串：$value');
+      }
+      result[col.name] = value;
+    }
+    return result;
+  }
+
+  /// `WHERE k1 = ? AND k2 = ?` 及其绑定值。
+  (String, List<Variable<Object>>) _whereByKey(Map<String, String> keyValues) =>
+      (
+        keyValues.keys.map((k) => '$k = ?').join(' AND '),
+        [for (final v in keyValues.values) Variable<String>(v)],
+      );
+
   /// 现有行的信封快照；行不存在时为 null。
-  Future<({int createdAt, int revision})?> _envelopeOf(String id) async {
+  Future<({int createdAt, int revision})?> _envelopeOf(
+    Map<String, String> keyValues,
+  ) async {
+    final (where, vars) = _whereByKey(keyValues);
     final rows = await customSelect(
-      'SELECT created_at, revision FROM ${table.actualTableName} '
-      'WHERE ${_primaryKeyColumn()} = ?',
-      variables: [Variable<String>(id)],
+      'SELECT created_at, revision FROM ${table.actualTableName} WHERE $where',
+      variables: vars,
       readsFrom: {table},
     ).get();
     if (rows.isEmpty) return null;
@@ -149,17 +179,6 @@ abstract class SyncedDao<Tbl extends Table, Row extends DataClass>
       createdAt: rows.first.read<int>('created_at'),
       revision: rows.first.read<int>('revision'),
     );
-  }
-
-  String _stringValueOf(Expression<Object>? expr, String columnName) {
-    if (expr is! Variable) {
-      throw StateError('无法从写入内容中取出主键 $columnName');
-    }
-    final value = expr.value;
-    if (value is! String) {
-      throw StateError('主键 $columnName 不是字符串：$value');
-    }
-    return value;
   }
 
   /// 软删除：打墓碑，**不物理删行**。
@@ -188,8 +207,11 @@ abstract class SyncedDao<Tbl extends Table, Row extends DataClass>
     });
   }
 
-  /// 主键列名。联合主键的表（`task_tags`）不能用 [softDelete]，
-  /// 由子类覆写自己的删除方法。
+  /// 单列主键的列名。
+  ///
+  /// **只有 [softDelete] 用它** —— 它的签名是单个 `String id`，
+  /// 复合主键无从表达。其余路径都按主键**列集合**处理，
+  /// 见 [_primaryKeyValuesOf]。
   String _primaryKeyColumn() {
     final pk = table.$primaryKey;
     if (pk.length != 1) {
@@ -201,16 +223,19 @@ abstract class SyncedDao<Tbl extends Table, Row extends DataClass>
     return pk.first.name;
   }
 
-  Future<Row> _requireRow(String id) async {
-    final pkName = _primaryKeyColumn();
-    final rows =
-        await (select(table)..where(
-              (_) =>
-                  table.columnsByName[pkName]!.equalsExp(Variable<String>(id)),
-            ))
-            .get();
+  Future<Row> _requireRow(Map<String, String> keyValues) async {
+    var query = select(table);
+    for (final entry in keyValues.entries) {
+      query = query
+        ..where(
+          (_) => table.columnsByName[entry.key]!.equalsExp(
+            Variable<String>(entry.value),
+          ),
+        );
+    }
+    final rows = await query.get();
     if (rows.isEmpty) {
-      throw StateError('刚写入的行不见了：${table.actualTableName} $pkName=$id');
+      throw StateError('刚写入的行不见了：${table.actualTableName} $keyValues');
     }
     return rows.first;
   }

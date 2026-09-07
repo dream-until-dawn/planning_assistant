@@ -58,6 +58,18 @@ jobs:
       - name: 测试
         run: flutter test --coverage
 
+      # ── 导出格式的服务端契约（overview §6，V3 那一格）────────────
+      # 关键在「独立」：用 Python + 标准 jsonschema 校验，
+      # 不 import 本项目任何代码。Dart 侧自己读自己写的东西，
+      # 证明不了「服务端无需客户端逻辑即可解析」。
+      # 样例由 test/data/export_import_test.dart 产出到 build/。
+      # 同样带 --self-test：先用已知畸形包证明校验器能变红。
+      - name: 安装 jsonschema
+        run: pip install jsonschema
+
+      - name: 导出格式 Schema 校验（独立于客户端）
+        run: python tool/validate_export.py --self-test build/export-sample.json
+
       # ── 守卫必须被证明能失败 ─────────────────────────────────────
       # 这一步不是走过场：注入一个真实违规，断言守卫**确实变红**。
       # 若守卫因任何原因失灵（正则写错、路径判断错、文件扫不到），

@@ -356,7 +356,11 @@ effectiveEnd(task) = max(
   否则「服务端无需客户端逻辑即可解析」这句话对这两列不成立。
 - 墓碑行**照常导出**（否则导入方无法知道某条被删了）。
 - 导出/导入必须通过**往返测试**：导出 → 清库 → 导入 → 逐表逐字段比对（FR-CFG-06）。
-- 同时在 `docs/schema/export-v1.schema.json` 维护 JSON Schema，服务端（V3）以此为契约。
+- 同时在 [`docs/schema/export-v1.schema.json`](../schema/export-v1.schema.json) 维护 JSON Schema，服务端（V3）以此为契约。
+
+> **契约由独立脚本守着，不由 Dart 测试守着。** `tool/validate_export.py` 用 Python + 标准 `jsonschema` 库校验，不 import 本项目任何代码 —— 「服务端无需客户端逻辑即可解析」这句话，只有让一个不认识 Flutter/Drift 的程序独立判定才算证明。
+> 该脚本带 `--self-test`（6 个合法样本 + 15 个已知畸形包），先证明校验器本身能变红。CI 每次跑测试产出真实样例后立即校验。
+
 
 ## 7. 迁移策略
 
