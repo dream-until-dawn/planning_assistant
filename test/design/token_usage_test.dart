@@ -26,6 +26,8 @@ import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
 import 'package:planning_assistant/design/tokens/colors.dart';
 import 'package:planning_assistant/design/tokens/contrast.dart';
+import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/views/shared/application/view_kind.dart';
 
 /// 一段文字与它压着的背景。
 typedef Pairing = ({String text, int fg, int bg, double ratio});
@@ -110,9 +112,31 @@ List<Pairing> pairingsIn(WidgetTester tester) {
   return result;
 }
 
-/// 禁用态豁免（§2.3：`text.disabled` 2.34，仅用于禁用态、不承载信息）。
-bool _isExempt(Pairing p) =>
+/// 用的是不是禁用态那个色。
+///
+/// **注意这只是「颜色对不对得上」，不是「这个控件真的禁用了」。**
+/// 所以它不能单独当豁免依据 —— 见 [_Case.disabledState]。
+bool _usesDisabledColor(Pairing p) =>
     p.fg == TextColors.disabled || p.fg == TextColors.disabledDark;
+
+/// 画廊里的一格。
+typedef _Case = ({String name, Widget widget, bool disabledState});
+
+/// 一个正常控件，不豁免任何东西。
+_Case _live(String name, Widget widget) =>
+    (name: name, widget: widget, disabledState: false);
+
+/// 一个**处于禁用态**的控件。只有它才准用 `text.disabled`。
+///
+/// 豁免必须挂在**用例**上，不能挂在颜色上。初版是按颜色豁免的：
+/// 「前景色等于 disabled 就跳过」。那样的话，把 `disabledText` 用在一个
+/// **能点**的控件上（写外壳的视图切换器时我就这么干了：未选中的标签
+/// 用了 disabledText），守卫会安静地放过 —— 而未选中不是禁用，
+/// 那是个 2.34:1 的可点标签。
+///
+/// WCAG 1.4.3 豁免的是「失效的用户界面组件」，不是「长得像失效的颜色」。
+_Case _disabled(String name, Widget widget) =>
+    (name: name, widget: widget, disabledState: true);
 
 String _describe(Pairing p) =>
     '「${p.text}」 #${p.fg.toRadixString(16).padLeft(6, '0')} '
@@ -203,64 +227,117 @@ void main() {
 
   group('组件画廊：每段文字都达标', () {
     // **新增组件请加进这里** —— 守卫只覆盖渲染得到的东西。
-    final gallery = <String, Widget>{
-      '任务卡片（普通）': const TaskCard(
-        data: TaskCardData(
-          title: '买菜',
-          categoryName: '生活',
-          categoryColor: Color(0xFF7FD1C1),
-          timeLabel: '14:00',
+    final gallery = <_Case>[
+      _live(
+        '任务卡片（普通）',
+        const TaskCard(
+          data: TaskCardData(
+            title: '买菜',
+            categoryName: '生活',
+            categoryColor: Color(0xFF7FD1C1),
+            timeLabel: '14:00',
+          ),
         ),
       ),
-      '任务卡片（逾期）': const TaskCard(
-        data: TaskCardData(
-          title: '预约体检',
-          categoryName: '健康',
-          categoryColor: Color(0xFFFFB7C5),
-          timeLabel: '昨天 18:00',
-          isOverdue: true,
+      _live(
+        '任务卡片（逾期）',
+        const TaskCard(
+          data: TaskCardData(
+            title: '预约体检',
+            categoryName: '健康',
+            categoryColor: Color(0xFFFFB7C5),
+            timeLabel: '昨天 18:00',
+            isOverdue: true,
+          ),
         ),
       ),
-      '任务卡片（已完成）': const TaskCard(
-        data: TaskCardData(
-          title: '交水电费',
-          categoryName: '生活',
-          categoryColor: Color(0xFF7FD1C1),
-          timeLabel: '10:00',
-          isDone: true,
+      _live(
+        '任务卡片（已完成）',
+        const TaskCard(
+          data: TaskCardData(
+            title: '交水电费',
+            categoryName: '生活',
+            categoryColor: Color(0xFF7FD1C1),
+            timeLabel: '10:00',
+            isDone: true,
+          ),
         ),
       ),
-      '任务卡片（阶段）': const TaskCard(
-        data: TaskCardData(
-          title: '写季度总结',
-          categoryName: '工作',
-          categoryColor: Color(0xFFA8C8F0),
-          timeLabel: '09:30',
-          stageProgress: (2, 5),
+      _live(
+        '任务卡片（阶段）',
+        const TaskCard(
+          data: TaskCardData(
+            title: '写季度总结',
+            categoryName: '工作',
+            categoryColor: Color(0xFFA8C8F0),
+            timeLabel: '09:30',
+            stageProgress: (2, 5),
+          ),
         ),
       ),
       for (final v in AppButtonVariant.values)
-        '按钮（${v.name}）': AppButton(label: '保存', variant: v, onPressed: () {}),
+        _live(
+          '按钮（${v.name}）',
+          AppButton(label: '保存', variant: v, onPressed: () {}),
+        ),
       for (final v in AppButtonVariant.values)
-        '按钮（${v.name}·禁用）': AppButton(label: '保存', variant: v),
-      '分类 Chip': const CategoryChip(name: '工作', color: Color(0xFFA8C8F0)),
-      'Chip（选中）': const SelectableChip(label: '今天', selected: true),
-      'Chip（未选中）': const SelectableChip(label: '今天', selected: false),
-    };
+        _disabled('按钮（${v.name}·禁用）', AppButton(label: '保存', variant: v)),
+      _live(
+        '分类 Chip',
+        const CategoryChip(name: '工作', color: Color(0xFFA8C8F0)),
+      ),
+      _live('Chip（选中）', const SelectableChip(label: '今天', selected: true)),
+      _live('Chip（未选中）', const SelectableChip(label: '今天', selected: false)),
+      // 外壳的视图切换器。未选中的标签**不是禁用态**，所以是 _live ——
+      // 它当初正是用 disabledText 写的，按颜色豁免时守卫放过了。
+      _live(
+        '外壳（单视图）',
+        AppShell(
+          currentView: ViewKind.list,
+          availableViews: const [ViewKind.list],
+          viewBuilder: (_, _) => const SizedBox.shrink(),
+          onViewSelected: (_) {},
+        ),
+      ),
+      _live(
+        '外壳（多视图切换器）',
+        AppShell(
+          currentView: ViewKind.list,
+          availableViews: ViewKind.values,
+          viewBuilder: (_, _) => const SizedBox.shrink(),
+          onViewSelected: (_) {},
+        ),
+      ),
+    ];
 
     for (final brightness in Brightness.values) {
-      for (final entry in gallery.entries) {
-        testWidgets('${brightness.name} · ${entry.key}', (tester) async {
-          await _pump(tester, brightness, entry.value);
+      for (final entry in gallery) {
+        testWidgets('${brightness.name} · ${entry.name}', (tester) async {
+          await _pump(tester, brightness, entry.widget);
 
           final pairings = pairingsIn(tester);
           expect(pairings, isNotEmpty, reason: '一段文字都没量到，等于空对空');
 
           final bad = pairings
-              .where((p) => !_isExempt(p) && p.ratio < kTextThreshold)
+              .where(
+                (p) =>
+                    p.ratio < kTextThreshold &&
+                    // 只有**标成禁用态的用例**才准用那个色。
+                    !(entry.disabledState && _usesDisabledColor(p)),
+              )
               .map(_describe)
               .toList();
           expect(bad, isEmpty, reason: '这些文字压在背景上不达标：${bad.join(' / ')}');
+
+          // 反向：标成禁用态的用例，必须真的用上了那个色。
+          // 否则这个标记会慢慢变成一张「谁都能进」的白名单。
+          if (entry.disabledState) {
+            expect(
+              pairings.any(_usesDisabledColor),
+              isTrue,
+              reason: '这个用例标了禁用态，却没有一段文字用 text.disabled',
+            );
+          }
         });
       }
     }

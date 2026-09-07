@@ -67,6 +67,11 @@ const _unlayeredAllowList = {
   'main.dart', // 入口，只调 bootstrap
   'app.dart', // MaterialApp 装配
   'bootstrap.dart', // 初始化编排
+  // 组合根的 Provider **声明**（实现全部在 bootstrap 里覆盖）。
+  // 不能塞进 core/：那样 core 就要 import flutter_riverpod，而 domain
+  // 合法地 import core 且禁止 Flutter —— 两条合法的边复合出一条违规，
+  // 且分层守卫只看直接 import，抓不到。同 B6 的形状。
+  'app_providers.dart',
 };
 
 bool _isGeneratedPath(String relToLib) =>

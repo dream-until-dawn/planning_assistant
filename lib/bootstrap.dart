@@ -11,15 +11,11 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 
+import 'app_providers.dart';
+import 'core/time/clock.dart';
 import 'core/time/time_zone_bootstrap.dart';
+import 'core/time/time_zone_resolver.dart';
 import 'platform/timezone/platform_time_zone.dart';
-
-/// 时区初始化的结果，供 UI 在降级时提示用户。
-///
-/// 用 Provider 暴露而不是全局变量，是为了让 Widget 测试能覆盖它。
-final timeZoneSetupProvider = Provider<TimeZoneSetupResult>(
-  (ref) => throw StateError('必须在 ProviderScope 的 overrides 中提供'),
-);
 
 /// 启动应用。
 ///
@@ -28,6 +24,7 @@ final timeZoneSetupProvider = Provider<TimeZoneSetupResult>(
 Future<void> bootstrap(
   Widget Function() appBuilder, {
   PlatformTimeZoneSource timeZoneSource = const MethodChannelTimeZoneSource(),
+  Clock clock = const SystemClock(),
 }) async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -60,7 +57,12 @@ Future<void> bootstrap(
 
   runApp(
     ProviderScope(
-      overrides: [timeZoneSetupProvider.overrideWithValue(tzResult)],
+      // 组合根：`app_providers.dart` 里的声明在这里、且只在这里拿到实现。
+      overrides: [
+        clockProvider.overrideWithValue(clock),
+        timeZoneResolverProvider.overrideWithValue(const TzTimeZoneResolver()),
+        timeZoneSetupProvider.overrideWithValue(tzResult),
+      ],
       child: appBuilder(),
     ),
   );
