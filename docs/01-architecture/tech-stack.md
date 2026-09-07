@@ -42,7 +42,6 @@
 | `flutter_local_notifications` | 22.3.0 | 本地通知 | 需 desugaring；`initialize` 是具名参数 |
 | `timezone` | 0.11.1 | IANA 时区库 | |
 | `flutter_timezone` | 5.1.0 | 读系统时区 | ⚠️ AGP 9 已警告其 KGP 用法 |
-| `permission_handler` | 13.0.2 | 权限申请 | ⚠️ 强制 compileSdk 37，见 §6 |
 | `table_calendar` | 3.2.1 | 日历视图基础 | 仅作为月/周格子骨架，样式全部自定义 |
 
 ## 3. 开发期依赖
@@ -94,7 +93,7 @@
 |---|---|---|
 | **不要显式声明 `custom_lint`** | `riverpod_lint 3.1.9` 需 `analyzer_plugin ^0.14.0`；`custom_lint 0.8.1`（当前最新）需 `analyzer_plugin ^0.13.0`。pub 求解器的原话是 "every version of custom_lint requires freezed_annotation ^2.2.0 or uuid ^3.0.6 or analyzer_plugin ^0.13.0"，与 riverpod 3.x 的依赖不可共存 | 由 `riverpod_lint` 自行管理插件依赖 |
 | `freezed` 必须 `^4.0.1` | 见下方 §6.1 的完整论证 | 锁 `freezed: ^4.0.1` |
-| `compileSdk = 37` | `permission_handler_android` 强制要求 | 本机 android-37.0 是 **rc2 预览版**；M0 评估移除该依赖后降回 36 |
+| ~~`compileSdk = 37`~~ | 曾因 `permission_handler_android` 强制 | **M0 已解决**：移除该依赖，`compileSdk = 36`（稳定版），不再依赖预览版 SDK |
 | core library desugaring 必开 | `flutter_local_notifications` 硬性要求 | `desugar_jdk_libs:2.1.4` |
 | Gradle 仓库必须配镜像 | Maven Central 在本网络环境返回 403 | 见[环境探针结论](../05-engineering/environment-notes.md) §3.1 |
 
@@ -135,6 +134,7 @@
 |---|---|
 | `sqlite3_flutter_libs` | 已 EOL（§4） |
 | `custom_lint` 显式依赖 | 与 riverpod_lint 冲突（§6） |
+| `permission_handler` | 会强制 `compileSdk 37`（当前仍是预览版），而 `flutter_local_notifications` 已自带本项目所需的两个权限申请 API。M0 移除后 compileSdk 降回稳定版 36 |
 | 任何全局单例 / service locator | 与 Riverpod 的可测试性目标冲突，且难以在测试中隔离 |
 | 通用 UI 组件库（如 GetWidget） | 「可爱清新」需要自己的视觉语言，套通用库反而要打大量补丁 |
 | 状态管理二号方案 | 一个项目只允许一种状态管理范式 |
