@@ -8,6 +8,7 @@
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:meta/meta.dart';
 
 import '../../../app_providers.dart';
 import '../../../core/patch/unset.dart';
@@ -15,6 +16,25 @@ import '../../../core/time/minute_of_day.dart';
 import '../../../core/time/plan_date.dart';
 import '../../../domain/commands/task_command.dart';
 import '../../../domain/entities/task.dart';
+
+/// 表单里的一个阶段（FR-TASK-02）。
+///
+/// 与 `StageSpec` 分开：那个是**命令载荷**，要求 `orderIndex` 从 0 起连续；
+/// 这个是**编辑中的行**，用户增删拖拽时顺序是临时乱的，
+/// 到保存那一刻才按列表位置重排成连续的。
+///
+/// 混用一个类型的话，每次增删都得立刻重排一遍 orderIndex，
+/// 而中间任何一步出错都会写出不连续的序号 —— 那是领域层会直接拒绝的。
+@immutable
+final class StageDraft {
+  const StageDraft({required this.id, this.title = ''});
+
+  final String id;
+  final String title;
+
+  StageDraft copyWith({String? title}) =>
+      StageDraft(id: id, title: title ?? this.title);
+}
 
 /// 编辑器里那张表单。
 ///
@@ -29,6 +49,7 @@ final class TaskDraft {
     this.planDate,
     this.startMinute,
     this.categoryId,
+    this.stages = const [],
   });
 
   final String title;
@@ -45,11 +66,48 @@ final class TaskDraft {
   /// 不是「还没选」—— 库里没有「未分类」那一行，选它就是写 null。
   final String? categoryId;
 
+  /// 阶段。空 = 单项任务（FR-TASK-01）；≥2 = 阶段事项（FR-TASK-02）。
+  ///
+  /// **1 个是非法的**，领域层会拒绝 —— 一个只有一个阶段的阶段事项
+  /// 与单项任务毫无区别。界面上由 [canSave] 挡住。
+  final List<StageDraft> stages;
+
+  /// 有效阶段：标题非空的那些。
+  ///
+  /// 空白行不算 —— 用户点了「加阶段」还没来得及打字，那不该算一个阶段。
+  List<StageDraft> get filledStages => [
+    for (final s in stages)
+      if (s.title.trim().isNotEmpty) s,
+  ];
+
+  bool get isStaged => filledStages.length >= 2;
+
   /// 能不能保存。**只要求标题非空**（FR-TASK-01：仅填标题即可保存）。
   ///
   /// 用 `trim()`：一串空格不是标题。不 trim 的话用户能存出一条
   /// 看起来空白、却怎么也搜不到的任务。
-  bool get canSave => title.trim().isNotEmpty;
+  /// 能不能保存。
+  ///
+  /// 标题非空是底线（FR-TASK-01：仅填标题即可保存）。
+  /// 另外**动过阶段就得填够两个**：加了一行却只填一个，保存下去会得到
+  /// 一个领域层直接拒绝的命令 —— 与其让它在保存时炸，不如当场禁用按钮。
+  bool get canSave {
+    if (title.trim().isEmpty) return false;
+    // 一个阶段都没添 = 单项任务，随便存。
+    if (stages.isEmpty) return true;
+    // 添了就得够两个（0 也行，那是把加出来的空行全删了）。
+    final filled = filledStages.length;
+    return filled == 0 || filled >= 2;
+  }
+
+  /// 为什么不能存 —— 给界面显示用。null 表示能存。
+  String? get blockedReason {
+    if (title.trim().isEmpty) return null; // 标题为空时按钮本来就灰着，不用再说
+    if (stages.isNotEmpty && filledStages.length == 1) {
+      return '阶段事项至少要两个阶段';
+    }
+    return null;
+  }
 
   TaskDraft copyWith({
     String? title,
@@ -58,6 +116,7 @@ final class TaskDraft {
     Object? planDate = unset,
     Object? startMinute = unset,
     Object? categoryId = unset,
+    List<StageDraft>? stages,
   }) => TaskDraft(
     title: title ?? this.title,
     note: note ?? this.note,
@@ -71,6 +130,7 @@ final class TaskDraft {
     planDate: patch(planDate, this.planDate),
     startMinute: patch(startMinute, this.startMinute),
     categoryId: patch(categoryId, this.categoryId),
+    stages: stages ?? this.stages,
   );
 }
 
@@ -118,6 +178,49 @@ final class TaskEditorController extends Notifier<TaskDraft> {
           planDate: state.planDate ?? _today(),
         );
 
+  /// 加一个空阶段行。
+  void addStage() => state = state.copyWith(
+    stages: [
+      ...state.stages,
+      StageDraft(id: ref.read(idGeneratorProvider).newId()),
+    ],
+  );
+
+  void setStageTitle(String id, String title) => state = state.copyWith(
+    stages: [
+      for (final s in state.stages)
+        if (s.id == id) s.copyWith(title: title) else s,
+    ],
+  );
+
+  void removeStage(String id) => state = state.copyWith(
+    stages: [
+      for (final s in state.stages)
+        if (s.id != id) s,
+    ],
+  );
+
+  /// 上移一个阶段。**顺序就是列表位置**，保存时才转成连续的 orderIndex。
+  void moveStageUp(String id) {
+    final list = [...state.stages];
+    final i = list.indexWhere((s) => s.id == id);
+    if (i <= 0) return;
+    final tmp = list[i - 1];
+    list[i - 1] = list[i];
+    list[i] = tmp;
+    state = state.copyWith(stages: list);
+  }
+
+  void moveStageDown(String id) {
+    final list = [...state.stages];
+    final i = list.indexWhere((s) => s.id == id);
+    if (i < 0 || i >= list.length - 1) return;
+    final tmp = list[i + 1];
+    list[i + 1] = list[i];
+    list[i] = tmp;
+    state = state.copyWith(stages: list);
+  }
+
   /// 保存。返回新任务的 ID。
   ///
   /// 调用方应先看 [TaskDraft.canSave]；这里再挡一道，
@@ -144,7 +247,8 @@ final class TaskEditorController extends Notifier<TaskDraft> {
           CreateTaskCommand(
             taskId: id,
             title: draft.title.trim(),
-            kind: TaskKind.single,
+            // 有两个及以上阶段就是阶段事项（FR-TASK-02）。
+            kind: draft.isStaged ? TaskKind.staged : TaskKind.single,
             // 记**用户所在的时区**，不是 UTC（ADR-0005）：
             // 「每天 07:00 起床」飞到伦敦后仍应是当地 07:00。
             timeZoneId: resolver.currentZoneId(),
@@ -157,6 +261,29 @@ final class TaskEditorController extends Notifier<TaskDraft> {
             startMinute: draft.isAllDay ? null : draft.startMinute,
           ),
         );
+    // 阶段是**第二条命令** —— 任务得先存在才能给它挂阶段。
+    //
+    // 两条命令而不是一条大的：命令要可重放（FR-AI-01），
+    // 而「建任务」与「设阶段」本来就是两件可以分别发生的事
+    // （改已有任务的阶段时只发后一条）。
+    if (draft.isStaged) {
+      final filled = draft.filledStages;
+      await ref
+          .read(taskCommandDispatcherProvider)
+          .dispatch(
+            ReplaceStagesCommand(
+              taskId: id,
+              stages: [
+                // **这里才把列表位置转成连续的 orderIndex。**
+                // 编辑期间用户增删拖拽，序号一直是乱的；
+                // 领域层要求从 0 起连续，所以在边界上一次转好。
+                for (final (i, s) in filled.indexed)
+                  StageSpec(id: s.id, title: s.title.trim(), orderIndex: i),
+              ],
+            ),
+          );
+    }
+
     return id;
   }
 }

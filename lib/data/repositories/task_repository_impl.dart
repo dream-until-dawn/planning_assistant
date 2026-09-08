@@ -73,6 +73,10 @@ final class DriftTaskRepository implements TaskRepository {
   }
 
   @override
+  Stream<List<Stage>> watchAllStages() =>
+      _stages.watchAll().map((rows) => [for (final r in rows) r.toEntity()]);
+
+  @override
   Future<List<Stage>> findStagesOfTask(
     String taskId, {
     TaskScope scope = TaskScope.active,

@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app_providers.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
+import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/features/task/application/task_editor_controller.dart';
 
 import '../support/app_harness.dart';
@@ -206,6 +207,136 @@ void main() {
       expect(task.isAllDay, isFalse);
       expect(task.startMinute, MinuteOfDay.of(12, 32));
       expect(task.planDate, isNotNull, reason: '有时刻就必须有日期');
+    });
+  });
+
+  group('阶段（FR-TASK-02）', () {
+    test('默认没有阶段 —— 大多数任务是单项的', () {
+      expect(const TaskDraft().stages, isEmpty);
+      expect(const TaskDraft().isStaged, isFalse);
+    });
+
+    test('加两个填上标题就是阶段事项', () {
+      final c = _container();
+      final n = c.read(taskEditorProvider.notifier)
+        ..addStage()
+        ..addStage();
+      final ids = c.read(taskEditorProvider).stages.map((s) => s.id).toList();
+      n
+        ..setStageTitle(ids[0], '打草稿')
+        ..setStageTitle(ids[1], '定稿');
+
+      expect(c.read(taskEditorProvider).isStaged, isTrue);
+    });
+
+    test('空白行不算阶段', () {
+      // 点了「加阶段」还没来得及打字，那不该算一个阶段。
+      final c = _container();
+      final n = c.read(taskEditorProvider.notifier)
+        ..addStage()
+        ..addStage()
+        ..addStage();
+      final ids = c.read(taskEditorProvider).stages.map((s) => s.id).toList();
+      n
+        ..setStageTitle(ids[0], '打草稿')
+        ..setStageTitle(ids[1], '   ');
+
+      expect(c.read(taskEditorProvider).filledStages, hasLength(1));
+      expect(c.read(taskEditorProvider).isStaged, isFalse);
+    });
+
+    test('只填一个阶段时**不能保存**', () {
+      // 存下去会得到一个领域层直接拒绝的命令。与其在保存时炸，
+      // 不如当场禁用按钮并说明原因。
+      final c = _container();
+      final n = c.read(taskEditorProvider.notifier)
+        ..setTitle('写季度总结')
+        ..addStage();
+      final id = c.read(taskEditorProvider).stages.single.id;
+      n.setStageTitle(id, '只有这一步');
+
+      final draft = c.read(taskEditorProvider);
+      expect(draft.canSave, isFalse);
+      expect(draft.blockedReason, isNotNull);
+    });
+
+    test('对照组：把那一个删掉就又能存了（回到单项）', () {
+      final c = _container();
+      final n = c.read(taskEditorProvider.notifier)
+        ..setTitle('写季度总结')
+        ..addStage();
+      final id = c.read(taskEditorProvider).stages.single.id;
+      n.setStageTitle(id, '只有这一步');
+      expect(c.read(taskEditorProvider).canSave, isFalse);
+
+      n.removeStage(id);
+      expect(c.read(taskEditorProvider).canSave, isTrue);
+    });
+
+    test('上移下移换的是位置', () {
+      final c = _container();
+      final n = c.read(taskEditorProvider.notifier)
+        ..addStage()
+        ..addStage();
+      final ids = c.read(taskEditorProvider).stages.map((s) => s.id).toList();
+      n
+        ..setStageTitle(ids[0], '一')
+        ..setStageTitle(ids[1], '二')
+        ..moveStageUp(ids[1]);
+
+      expect(c.read(taskEditorProvider).stages.map((s) => s.title), ['二', '一']);
+    });
+
+    test('第一个上移、最后一个下移都是空操作', () {
+      // 不挡的话会越界，或者把列表转成环。
+      final c = _container();
+      final n = c.read(taskEditorProvider.notifier)
+        ..addStage()
+        ..addStage();
+      final ids = c.read(taskEditorProvider).stages.map((s) => s.id).toList();
+      n
+        ..moveStageUp(ids[0])
+        ..moveStageDown(ids[1]);
+
+      expect(c.read(taskEditorProvider).stages.map((s) => s.id), ids);
+    });
+
+    test('存下去：kind 是 staged，阶段按列表位置连续编号', () async {
+      // 编辑期间 orderIndex 一直不存在；领域层要求从 0 起连续，
+      // 转换只发生在保存这一刻。转错的话领域层会拒绝 —— 那正是要验的。
+      final c = _container();
+      final n = c.read(taskEditorProvider.notifier)
+        ..setTitle('写季度总结')
+        ..addStage()
+        ..addStage()
+        ..addStage();
+      final ids = c.read(taskEditorProvider).stages.map((s) => s.id).toList();
+      n
+        ..setStageTitle(ids[0], '一')
+        ..setStageTitle(ids[1], '二')
+        ..setStageTitle(ids[2], '三')
+        // 中间那个删掉 —— 剩下的位置是 0 和 2，若直接拿位置当序号就不连续了。
+        ..removeStage(ids[1]);
+      await n.save();
+
+      final repo = c.read(taskRepositoryProvider);
+      final task = (await repo.findTasks()).single;
+      expect(task.kind, TaskKind.staged);
+
+      final stages = await repo.findStagesOfTask(task.id);
+      expect(stages.map((s) => s.title), ['一', '三']);
+      expect(stages.map((s) => s.orderIndex), [0, 1], reason: '必须从 0 起连续');
+    });
+
+    test('没有阶段时 kind 是 single，也不发第二条命令', () async {
+      final c = _container();
+      final n = c.read(taskEditorProvider.notifier)..setTitle('买菜');
+      await n.save();
+
+      final repo = c.read(taskRepositoryProvider);
+      final task = (await repo.findTasks()).single;
+      expect(task.kind, TaskKind.single);
+      expect(await repo.findStagesOfTask(task.id), isEmpty);
     });
   });
 }

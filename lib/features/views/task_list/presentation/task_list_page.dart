@@ -13,6 +13,7 @@ import '../../../../design/components/empty_state.dart';
 import '../../../../design/components/task_card.dart';
 import '../../../../design/tokens/dimensions.dart';
 import '../../../../domain/entities/category.dart';
+import '../../../../domain/entities/stage.dart';
 import '../../../../domain/entities/task.dart';
 import '../../../../domain/value_objects/task_status.dart';
 import '../../shared/application/category_providers.dart';
@@ -62,6 +63,7 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
     final tasks = ref.watch(visibleTasksProvider);
     final categories = ref.watch(categoryByIdProvider);
     final groups = ref.watch(groupedTasksProvider);
+    final stages = ref.watch(stagesByTaskProvider);
 
     return tasks.when(
       // 加载中**不画转圈**：本地 SQLite 的首帧通常在一帧内就来了，
@@ -109,7 +111,7 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
                   if (!_isCollapsed(group))
                     for (final task in group.tasks) ...[
                       TaskCard(
-                        data: _toCardData(task, categories),
+                        data: _toCardData(task, categories, stages[task.id]),
                         // 就地完成（view-specs §0.3）。
                         //
                         // 完成后**不立即消失**（design-system §8.1）——
@@ -188,7 +190,11 @@ class _GroupHeader extends StatelessWidget {
 ///
 /// 卡片是纯展示的，不认识 [Task]（design-system §8.1 的分工），
 /// 所以整形放在这里。
-TaskCardData _toCardData(Task task, Map<String, Category> categories) {
+TaskCardData _toCardData(
+  Task task,
+  Map<String, Category> categories,
+  List<Stage>? stages,
+) {
   // `categoryId == null` 就是未分类（settings-spec §3.0）——
   // 查不到也当未分类：那说明分类被删了，而删分类不该让任务消失。
   final category = task.categoryId == null ? null : categories[task.categoryId];
@@ -200,8 +206,19 @@ TaskCardData _toCardData(Task task, Map<String, Category> categories) {
         ? Uncategorized.color
         : Color(category.colorArgb),
     timeLabel: _timeLabelOf(task),
+    stageProgress: _progressOf(stages),
     isDone: task.status == TaskStatus.done,
   );
+}
+
+/// 阶段进度 = 已完成阶段数 / 总数（FR-TASK-02）。
+///
+/// **没有阶段就是 null**，不是 `(0, 0)` —— 后者会让卡片显示「阶段 0/0」，
+/// 而单项任务压根没有阶段这个概念。
+(int, int)? _progressOf(List<Stage>? stages) {
+  if (stages == null || stages.isEmpty) return null;
+  final done = stages.where((s) => s.status == TaskStatus.done).length;
+  return (done, stages.length);
 }
 
 /// 卡片右侧那个时间标签。

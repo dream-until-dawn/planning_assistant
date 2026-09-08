@@ -354,4 +354,84 @@ void main() {
       await disposeTree(tester);
     });
   });
+
+  group('阶段事项（FR-TASK-02）', () {
+    testWidgets('建一条两阶段的任务，卡片上显示进度', (tester) async {
+      final harness = await _pumpApp(tester);
+
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '写季度总结');
+      await tester.pump();
+
+      await tester.tap(find.byKey(TaskEditorPage.addStageKey));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TaskEditorPage.addStageKey));
+      await tester.pumpAndSettle();
+
+      final fields = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == '这一步做什么',
+      );
+      expect(fields, findsNWidgets(2));
+      await tester.enterText(fields.at(0), '打草稿');
+      await tester.enterText(fields.at(1), '定稿');
+      await tester.pump();
+
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      // 卡片上的进度是**文字**（design-system §8.1：不靠颜色单独承载）。
+      expect(find.textContaining('0/2'), findsOneWidget);
+
+      // 真的落库了：kind 与两条阶段都在。
+      final task = (await harness.db.select(harness.db.tasks).get()).single;
+      expect(task.kind, 'staged');
+      final stages = await harness.db.select(harness.db.stages).get();
+      expect(stages.map((s) => s.title), containsAll(['打草稿', '定稿']));
+      expect(stages.map((s) => s.orderIndex), containsAll([0, 1]));
+
+      await disposeTree(tester);
+    });
+
+    testWidgets('只填一个阶段时保存按钮点不动，并说明原因', (tester) async {
+      // 存下去会得到一个领域层直接拒绝的命令 —— 与其让它在保存时炸，
+      // 不如当场挡住并告诉用户为什么。
+      final harness = await _pumpApp(tester);
+
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '写季度总结');
+      await tester.pump();
+      await tester.tap(find.byKey(TaskEditorPage.addStageKey));
+      await tester.pumpAndSettle();
+
+      final field = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == '这一步做什么',
+      );
+      await tester.enterText(field, '只有这一步');
+      await tester.pump();
+
+      expect(find.byKey(TaskEditorPage.blockedReasonKey), findsOneWidget);
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(TaskEditorPage), findsOneWidget, reason: '不该保存成功');
+      expect(await harness.db.select(harness.db.tasks).get(), isEmpty);
+
+      await disposeTree(tester);
+    });
+
+    testWidgets('对照组：不加阶段时不出现那句提示', (tester) async {
+      // 否则「一直显示」也能让上面那条绿。
+      await _pumpApp(tester);
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '买菜');
+      await tester.pump();
+
+      expect(find.byKey(TaskEditorPage.blockedReasonKey), findsNothing);
+
+      await disposeTree(tester);
+    });
+  });
 }

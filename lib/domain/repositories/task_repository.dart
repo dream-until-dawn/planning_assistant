@@ -44,6 +44,13 @@ abstract interface class TaskRepository {
   /// 监听某范围的任务变化。UI 靠它自动刷新。
   Stream<List<Task>> watchTasks({TaskScope scope = TaskScope.active});
 
+  /// **全部**未删除的阶段，持续推送。
+  ///
+  /// 不按 taskId 分别订阅：列表一屏可能有十几条阶段事项，那就是十几个流。
+  /// 一次取全、在展示层按 taskId 索引，对 V1 的数据量
+  /// （本地库、几百条任务）远够用。
+  Stream<List<Stage>> watchAllStages();
+
   /// 写入任务。**会校验领域不变量**，违反时抛异常而不是写进库。
   Future<void> saveTask(Task task);
 

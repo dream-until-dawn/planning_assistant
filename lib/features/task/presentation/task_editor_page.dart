@@ -38,6 +38,18 @@ class TaskEditorPage extends ConsumerStatefulWidget {
   /// 分类选择区。每个选项的 Key 见 [categoryChipKey]。
   static const Key categoryPickerKey = ValueKey('editor-category');
 
+  /// 阶段区。
+  static const Key stageSectionKey = ValueKey('editor-stages');
+  static const Key addStageKey = ValueKey('editor-add-stage');
+
+  /// 「为什么不能存」那句提示。
+  static const Key blockedReasonKey = ValueKey('editor-blocked');
+
+  static Key stageFieldKey(String stageId) => ValueKey('editor-stage-$stageId');
+  static Key stageRemoveKey(String stageId) =>
+      ValueKey('editor-stage-remove-$stageId');
+  static Key stageUpKey(String stageId) => ValueKey('editor-stage-up-$stageId');
+
   /// 某个分类选项的 Key。`null` 是「未分类」那一项。
   static Key categoryChipKey(String? categoryId) =>
       ValueKey('editor-category-${categoryId ?? 'none'}');
@@ -140,6 +152,17 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
                 minute: draft.startMinute,
                 onPick: controller.setStartMinute,
               ),
+            const SizedBox(height: Spacing.xl),
+            _StageSection(draft: draft, controller: controller),
+            if (draft.blockedReason != null) ...[
+              const SizedBox(height: Spacing.sm),
+              Text(
+                draft.blockedReason!,
+                key: TaskEditorPage.blockedReasonKey,
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: context.appColors.dangerText),
+              ),
+            ],
             const SizedBox(height: Spacing.xxxl),
             AppButton(
               key: TaskEditorPage.saveButtonKey,
@@ -283,4 +306,74 @@ class _CategoryPicker extends ConsumerWidget {
     selected: id == selectedId,
     onSelected: (_) => onSelected(id),
   );
+}
+
+/// 阶段区（FR-TASK-02）。
+///
+/// **默认不出现任何阶段行** —— 大多数任务是单项的（FR-TASK-01 的基调），
+/// 一进来就摆两个空行会把「填得越少越好」变成「先删两行」。
+///
+/// 拖拽重排（§FR-TASK-02 的验收里提到）先用上下箭头代替：
+/// 拖拽在两三个阶段时收益很小，而它要处理滚动冲突与无障碍替代操作。
+/// TODO(M3): 换成 ReorderableListView，并保留箭头作为读屏用户的替代路径。
+class _StageSection extends StatelessWidget {
+  const _StageSection({required this.draft, required this.controller});
+
+  final TaskDraft draft;
+  final TaskEditorController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+
+    return Column(
+      key: TaskEditorPage.stageSectionKey,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('阶段（可选）', style: text.bodySmall),
+        const SizedBox(height: Spacing.xs),
+        for (final (i, stage) in draft.stages.indexed)
+          Padding(
+            padding: const EdgeInsets.only(bottom: Spacing.xs),
+            child: Row(
+              children: [
+                // 序号跟着**列表位置**走，不是 orderIndex —— 编辑期间
+                // 后者还没算出来（保存时才转成连续的）。
+                SizedBox(
+                  width: Spacing.xxl,
+                  child: Text('${i + 1}.', style: text.bodySmall),
+                ),
+                Expanded(
+                  child: TextField(
+                    key: TaskEditorPage.stageFieldKey(stage.id),
+                    decoration: const InputDecoration(hintText: '这一步做什么'),
+                    onChanged: (v) => controller.setStageTitle(stage.id, v),
+                  ),
+                ),
+                IconButton(
+                  key: TaskEditorPage.stageUpKey(stage.id),
+                  onPressed: i == 0
+                      ? null
+                      : () => controller.moveStageUp(stage.id),
+                  icon: const Icon(Icons.arrow_upward),
+                  tooltip: '上移',
+                ),
+                IconButton(
+                  key: TaskEditorPage.stageRemoveKey(stage.id),
+                  onPressed: () => controller.removeStage(stage.id),
+                  icon: const Icon(Icons.close),
+                  tooltip: '删除这个阶段',
+                ),
+              ],
+            ),
+          ),
+        AppButton(
+          key: TaskEditorPage.addStageKey,
+          label: draft.stages.isEmpty ? '分成几个阶段' : '再加一个阶段',
+          variant: AppButtonVariant.secondary,
+          onPressed: controller.addStage,
+        ),
+      ],
+    );
+  }
 }

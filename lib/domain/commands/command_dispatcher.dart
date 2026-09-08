@@ -151,6 +151,7 @@ final class CommandDispatcher {
   }
 
   Future<void> _replaceStages(ReplaceStagesCommand c) async {
+    _requireStageCount(c.stages);
     _requireContiguousOrder(c.stages);
 
     final task = await _require(c.taskId);
@@ -181,6 +182,20 @@ final class CommandDispatcher {
     ];
 
     await _repo.saveTaskWithStages(task, stages);
+  }
+
+  /// 阶段数只能是 **0 或 ≥2**（FR-TASK-02：「包含 2..N 个有序阶段」）。
+  ///
+  /// 0 是合法的 —— 那是「把阶段事项改回单项」。
+  /// **1 个不合法**：一个只有一个阶段的阶段事项，进度永远是 0/1 或 1/1，
+  /// 与单项任务没有任何区别，却多担一套阶段的读写路径。
+  ///
+  /// 之所以在这里挡而不是只在界面挡：界面是**当前唯一**的入口，
+  /// 而 V4 的语音/Agent 会构造同一批命令（FR-AI-01）。
+  void _requireStageCount(List<StageSpec> stages) {
+    if (stages.length == 1) {
+      throw const DomainInvariantViolation('阶段事项至少要两个阶段，或者一个都没有（改回单项）');
+    }
   }
 
   /// `orderIndex` 必须从 0 起连续（data-model §3.2）。

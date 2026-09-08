@@ -247,6 +247,53 @@ void main() {
 
     test('移除的阶段打墓碑，不物理删', () async {
       // 物理删的话，V3 对端只会看到「这条还在」。
+      //
+      // 用 3 → 2 而不是 2 → 1：阶段数只能是 0 或 ≥2（FR-TASK-02），
+      // 1 个的话新加的那条不变量会先拦下来，这条就验不到墓碑了。
+      await dispatcher.dispatch(
+        const ReplaceStagesCommand(
+          taskId: 't1',
+          stages: [
+            StageSpec(id: 's0', title: '一', orderIndex: 0),
+            StageSpec(id: 's1', title: '二', orderIndex: 1),
+            StageSpec(id: 's2', title: '三', orderIndex: 2),
+          ],
+        ),
+      );
+      await dispatcher.dispatch(
+        const ReplaceStagesCommand(
+          taskId: 't1',
+          stages: [
+            StageSpec(id: 's0', title: '一', orderIndex: 0),
+            StageSpec(id: 's2', title: '三', orderIndex: 1),
+          ],
+        ),
+      );
+
+      expect((await repo.findStagesOfTask('t1')).map((s) => s.id), [
+        's0',
+        's2',
+      ]);
+      final all = await repo.findStagesOfTask('t1', scope: TaskScope.all);
+      expect(all.length, 3, reason: 's1 应该还在，只是打了墓碑');
+      expect(all.firstWhere((s) => s.id == 's1').deletedAt, _now);
+    });
+
+    test('阶段数只能是 0 或 ≥2（FR-TASK-02）', () async {
+      // 一个只有一个阶段的阶段事项，进度永远是 0/1 或 1/1，
+      // 与单项任务毫无区别，却多担一整套阶段的读写路径。
+      expect(
+        () => dispatcher.dispatch(
+          const ReplaceStagesCommand(
+            taskId: 't1',
+            stages: [StageSpec(id: 's0', title: '独苗', orderIndex: 0)],
+          ),
+        ),
+        throwsA(isA<DomainInvariantViolation>()),
+      );
+    });
+
+    test('对照组：0 个是合法的 —— 那是改回单项', () async {
       await dispatcher.dispatch(
         const ReplaceStagesCommand(
           taskId: 't1',
@@ -257,16 +304,9 @@ void main() {
         ),
       );
       await dispatcher.dispatch(
-        const ReplaceStagesCommand(
-          taskId: 't1',
-          stages: [StageSpec(id: 's0', title: '一', orderIndex: 0)],
-        ),
+        const ReplaceStagesCommand(taskId: 't1', stages: []),
       );
-
-      expect((await repo.findStagesOfTask('t1')).map((s) => s.id), ['s0']);
-      final all = await repo.findStagesOfTask('t1', scope: TaskScope.all);
-      expect(all.length, 2, reason: 's1 应该还在，只是打了墓碑');
-      expect(all.firstWhere((s) => s.id == 's1').deletedAt, _now);
+      expect(await repo.findStagesOfTask('t1'), isEmpty);
     });
 
     test('orderIndex 不连续时拒绝，且什么都不写', () async {

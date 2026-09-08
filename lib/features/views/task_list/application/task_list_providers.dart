@@ -9,6 +9,7 @@ library;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../app_providers.dart';
+import '../../../../domain/entities/stage.dart';
 import '../../../../domain/entities/task.dart';
 import '../../../settings/application/registry.dart';
 import '../../../settings/application/settings_providers.dart';
@@ -59,3 +60,38 @@ final groupedTasksProvider = Provider<List<TaskGroup>>((ref) {
     categories: ref.watch(categoryListProvider),
   );
 });
+
+/// 按 taskId 索引的阶段（FR-TASK-02：父任务进度 = 已完成阶段数 / 总数）。
+///
+/// 一次取全再索引，不按 taskId 分别订阅 —— 理由见
+/// `TaskRepository.watchAllStages` 的注释。
+/// 全部阶段的流。
+///
+/// **必须是顶层 provider。** 一度写成在 [stagesByTaskProvider] 体内
+/// 内联 `ref.watch(StreamProvider(...))` —— 那样每次重建都构造一个
+/// **新的 provider 对象**，`watch` 于是不停重新订阅，测试直接挂死
+/// （表现是「did not complete」，看不出是死循环）。
+final allStagesProvider = StreamProvider<List<Stage>>(
+  (ref) => ref.watch(taskRepositoryProvider).watchAllStages(),
+);
+
+final stagesByTaskProvider = Provider<Map<String, List<Stage>>>((ref) {
+  final stages = ref.watch(allStagesProvider);
+  return switch (stages) {
+    AsyncData(:final value) => _indexByTask(value),
+    _ => const {},
+  };
+});
+
+Map<String, List<Stage>> _indexByTask(List<Stage> stages) {
+  final map = <String, List<Stage>>{};
+  for (final s in stages) {
+    (map[s.taskId] ??= []).add(s);
+  }
+  // 组内按 orderIndex 排 —— 进度只数个数，但详情页要按顺序显示，
+  // 索引在这里排好，省得每个消费者各排一遍。
+  for (final list in map.values) {
+    list.sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
+  }
+  return map;
+}
