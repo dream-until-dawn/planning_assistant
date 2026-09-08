@@ -57,10 +57,21 @@ final class TaskCardData {
 
 /// 任务卡片。
 class TaskCard extends StatelessWidget {
-  const TaskCard({required this.data, this.onToggleDone, super.key});
+  const TaskCard({
+    required this.data,
+    this.onToggleDone,
+    this.onTap,
+    super.key,
+  });
 
   final TaskCardData data;
   final VoidCallback? onToggleDone;
+
+  /// 点卡片本身（view-specs §0.3：点击实例 → 打开详情）。
+  ///
+  /// 为 null 时整张卡片不可点 —— 一个点了没反应的卡片，
+  /// 比一张明确不可点的更让人困惑。
+  final VoidCallback? onTap;
 
   /// 完成钮的语义标签。屏幕阅读器读它。
   static const String toggleSemanticLabel = '切换完成状态';
@@ -99,7 +110,7 @@ class TaskCard extends StatelessWidget {
         : data.categoryColor;
     final timeColor = data.isOverdue ? colors.overdueText : null;
 
-    return Semantics(
+    final card = Semantics(
       container: true,
       // **卡片感由阴影承担，不画描边。**
       //
@@ -180,6 +191,18 @@ class TaskCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+
+    if (onTap == null) return card;
+    // **点击区包在外面，不换成 InkWell 当背景。**
+    // 卡片的圆角、阴影、左色条都在 DecoratedBox 上；
+    // 换成 Material 系的容器会把那三样重画一遍，golden 全线要重拍。
+    return GestureDetector(
+      // 卡片之间有间距，`opaque` 让整张卡片（含内边距）都可点，
+      // 而不只是文字所在的那几个像素。
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: card,
     );
   }
 }

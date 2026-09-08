@@ -44,11 +44,14 @@ abstract final class ListHorizon {
 ///
 /// [overrides] 是**全部任务**的例外，按 taskId 索引在这里做 ——
 /// 调用方逐条查库就是 N+1（`watchAllOverrides` 的注释里有同一条理由）。
+/// [includeSkipped] 见 `RecurrenceEngine.expand` 的同名参数：
+/// 默认不出现，用户显式筛「已跳过」时才现身 —— 否则跳错了就找不回来。
 List<TaskOccurrence> expandForList({
   required List<Task> tasks,
   required List<OccurrenceOverride> overrides,
   required PlanDate today,
   required RecurrenceEngine engine,
+  bool includeSkipped = false,
 }) {
   final byTask = <String, List<OccurrenceOverride>>{};
   for (final o in overrides) {
@@ -88,6 +91,7 @@ List<TaskOccurrence> expandForList({
       ),
       window: window,
       overrides: byTask[task.id] ?? const [],
+      includeSkipped: includeSkipped,
     );
 
     for (final o in occurrences) {

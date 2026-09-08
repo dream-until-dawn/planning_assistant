@@ -40,14 +40,19 @@ class FilterBar extends ConsumerWidget {
   static Key statusKey(TaskStatus status) =>
       ValueKey('filter-status-${status.name}');
 
-  /// 状态维度只暴露这两项。
+  /// 状态维度暴露哪几项。**只放设得出来的**。
   ///
-  /// `inProgress` 与 `skipped` 现在没有任何入口能设出来（编辑器只建
-  /// pending，勾完成只在 pending/done 之间切），摆出来是四个筛不出东西的
-  /// 按钮。等状态机接上入口再加。
+  /// `inProgress` 仍然没有入口（编辑器只建 pending，勾完成只在
+  /// pending/done 之间切），摆出来是个筛不出东西的按钮。
+  ///
+  /// `skipped` 是**后来加上的**，而且它不只是个筛选条件：跳过的那一次
+  /// 「不出现在任何视图」（FR-TASK-05 验收），勾上这个才让它们现身
+  /// （`expandForList` 的 `includeSkipped`）。**这是跳过之后唯一的
+  /// 反悔入口** —— 拿掉它，跳过就成了一条走进去出不来的路。
   static const List<(TaskStatus, String)> exposedStatuses = [
     (TaskStatus.pending, '待办'),
     (TaskStatus.done, '已完成'),
+    (TaskStatus.skipped, '已跳过'),
   ];
 
   @override

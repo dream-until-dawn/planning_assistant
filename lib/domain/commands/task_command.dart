@@ -62,6 +62,7 @@ sealed class TaskCommand {
       SetOccurrenceStatusCommand.kType => SetOccurrenceStatusCommand.fromJson(
         json,
       ),
+      SkipOccurrenceCommand.kType => SkipOccurrenceCommand.fromJson(json),
       CompleteTaskWithStagesCommand.kType =>
         CompleteTaskWithStagesCommand.fromJson(json),
       _ => throw UnknownCommandException(type),
@@ -345,6 +346,48 @@ final class SetOccurrenceStatusCommand extends TaskCommand {
         status: json['status'] == null
             ? null
             : OccurrenceStatus.fromWireName(json['status']! as String),
+      );
+}
+
+/// 跳过某一次发生（FR-TASK-05）。
+///
+/// ## 跳过与「标记为已跳过」不是一回事
+///
+/// | | 落库 | 效果 |
+/// |---|---|---|
+/// | 跳过（本命令） | `action = skip` | 那一次**从视图里消失**（验收原话） |
+/// | 状态改成 skipped | `status = skipped` | 行还在，进「已跳过」组 |
+///
+/// 前者是「这一次不发生」，后者是「这一次我没做」。
+/// 混用的话，「跳过的次数不出现在任何视图」这条验收就落空了。
+///
+/// 撤回用 [SetOccurrenceStatusCommand] 传 `status: null` —— 那会把整条
+/// 例外删掉，包括 `action`。所以不需要一条单独的「取消跳过」命令。
+final class SkipOccurrenceCommand extends TaskCommand {
+  const SkipOccurrenceCommand({
+    required this.taskId,
+    required this.occurrenceKey,
+  });
+
+  static const kType = 'skipOccurrence';
+
+  final String taskId;
+  final OccurrenceKey occurrenceKey;
+
+  @override
+  String get type => kType;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'type': kType,
+    'taskId': taskId,
+    'occurrenceKey': occurrenceKey.value,
+  };
+
+  static SkipOccurrenceCommand fromJson(Map<String, Object?> json) =>
+      SkipOccurrenceCommand(
+        taskId: json['taskId']! as String,
+        occurrenceKey: OccurrenceKey.parse(json['occurrenceKey']! as String),
       );
 }
 

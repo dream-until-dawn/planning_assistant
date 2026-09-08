@@ -23,6 +23,7 @@ import '../../shared/application/view_shared_state.dart';
 import '../application/task_grouping.dart';
 import '../application/task_list_actions.dart';
 import '../application/task_list_providers.dart';
+import 'occurrence_actions_sheet.dart';
 
 class TaskListPage extends ConsumerStatefulWidget {
   const TaskListPage({this.onCreateTask, super.key});
@@ -130,6 +131,12 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
                         // 怎么找回来，用户完全没有线索。
                         onToggleDone: () =>
                             ref.read(toggleTaskDoneProvider).call(task),
+                        // 点卡片打开这一次的动作（view-specs §0.3）。
+                        // 不重复的任务暂时没有可放的动作，所以不给点 ——
+                        // 弹一个空壳比不弹更让人以为坏了。
+                        onTap: task.isOccurrence
+                            ? () => showOccurrenceActions(context, task)
+                            : null,
                       ),
                       const SizedBox(height: Spacing.cardGap),
                     ],

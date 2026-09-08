@@ -68,6 +68,13 @@ final class CommandDispatcher {
         await _replaceStages(command);
       case SetOccurrenceStatusCommand():
         await _setOccurrenceStatus(command);
+      case SkipOccurrenceCommand():
+        await _repo.saveOverride(
+          OccurrenceOverride.skip(
+            taskId: command.taskId,
+            key: command.occurrenceKey,
+          ),
+        );
       case CompleteTaskWithStagesCommand():
         await _completeWithStages(command);
     }

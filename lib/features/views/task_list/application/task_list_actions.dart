@@ -64,3 +64,44 @@ final class ToggleTaskDone {
 }
 
 final toggleTaskDoneProvider = Provider<ToggleTaskDone>(ToggleTaskDone.new);
+
+/// 单次发生的操作（FR-TASK-05）。
+final class OccurrenceActions {
+  const OccurrenceActions(this._ref);
+
+  final Ref _ref;
+
+  /// 跳过这一次。**只对某一次有意义** —— 不重复的任务没有「某一次」，
+  /// 调它是调用方的错，所以直接返回而不是造一条指向空 key 的例外。
+  Future<void> skip(TaskOccurrence row) {
+    final key = row.key;
+    if (key == null) return Future<void>.value();
+    return _ref
+        .read(taskCommandDispatcherProvider)
+        .dispatch(
+          SkipOccurrenceCommand(taskId: row.taskId, occurrenceKey: key),
+        );
+  }
+
+  /// 撤回跳过：把整条例外删掉，回到跟随规则。
+  ///
+  /// 不是「把 action 改回 modify」—— 那会留下一条什么也没改的例外，
+  /// 让「这一次动过没有」多出一种说不清的中间态。
+  Future<void> unskip(TaskOccurrence row) {
+    final key = row.key;
+    if (key == null) return Future<void>.value();
+    return _ref
+        .read(taskCommandDispatcherProvider)
+        .dispatch(
+          SetOccurrenceStatusCommand(
+            taskId: row.taskId,
+            occurrenceKey: key,
+            status: null,
+          ),
+        );
+  }
+}
+
+final occurrenceActionsProvider = Provider<OccurrenceActions>(
+  OccurrenceActions.new,
+);

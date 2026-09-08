@@ -13,6 +13,7 @@ import '../../../../domain/entities/occurrence_override.dart';
 import '../../../../domain/entities/stage.dart';
 import '../../../../domain/entities/task.dart';
 import '../../../../domain/recurrence/recurrence_engine.dart';
+import '../../../../domain/value_objects/task_status.dart';
 import '../../../settings/application/registry.dart';
 import '../../../settings/application/settings_providers.dart';
 import '../../shared/application/category_providers.dart';
@@ -60,6 +61,14 @@ final visibleOccurrencesProvider = Provider<List<TaskOccurrence>>((ref) {
       },
       today: ref.watch(todayProvider),
       engine: RecurrenceEngine(ref.watch(timeZoneResolverProvider)),
+      // 被跳过的那一次默认不出现（FR-TASK-05 验收）。
+      // **只有用户显式筛「已跳过」时才让它现身** —— 不留这条路的话，
+      // 跳错了就再也找不回来，与「到某天为止」那条死路是同一种毛病。
+      includeSkipped: ref
+          .watch(viewSharedStateProvider)
+          .filter
+          .statuses
+          .contains(TaskStatus.skipped),
     ),
     _ => const [],
   };
