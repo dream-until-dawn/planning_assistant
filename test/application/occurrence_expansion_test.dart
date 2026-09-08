@@ -1,10 +1,17 @@
-/// 把任务展开成「一行一次发生」（view-specs §0.2、FR-TASK-05）。
+/// 把任务展开成列表的行（view-specs §0.2、FR-TASK-05）。
 ///
-/// 展开之前，一条「每天」的任务在列表里只占**一行** —— 用户看不到
-/// 明天那次、也勾不了昨天那次。而勾今天那次会直接抛
-/// `DomainInvariantViolation`（`tasks.status` 恒为 pending）。
+/// ## 规则：逾期的全留，未来只留「下一次」
 ///
-/// 这里验的是展开这条纯函数：给一批任务与例外，出来的行是确定的。
+/// 一度是「窗口内每次一行」—— 一条「每天」在列表里六十行，逾期组还会堆。
+/// 那不是一份计划，是一份日历的转录。现在：
+///
+/// | 那一次 | 显示吗 |
+/// |---|---|
+/// | 没做完，日期在今天之前 | 留着（逾期）—— 漏交一次房租不该无声消失 |
+/// | 没做完，今天或以后 | 只留最早的一条 |
+/// | 已完成，今天或以后 | 留着，给撤销留时间（§8.1） |
+/// | 已完成，且已是过去 | 不留，除非筛「已完成」 |
+/// | 已跳过 | 不留，除非筛「已跳过」 |
 @TestOn('vm')
 library;
 
@@ -43,14 +50,41 @@ Task _task(
   recurrence: rrule == null ? null : Recurrence.parse(rrule),
 );
 
+/// 一条从 [startDaysAgo] 天前开始的每日任务。
+///
+/// **默认从过去开始**：从今天开始的话「下一次」正好是第一次，
+/// 而「第一次」在好几条规则里是特例，用它当夹具会把特例当成常态。
+Task _daily({int startDaysAgo = 0}) => _task(
+  '晨会',
+  date: _today.addDays(-startDaysAgo),
+  rrule: 'RRULE:FREQ=DAILY',
+  isAllDay: true,
+);
+
 List<TaskOccurrence> _expand(
   List<Task> tasks, {
   List<OccurrenceOverride> overrides = const [],
+  bool includeSkipped = false,
+  bool includeCompleted = false,
 }) => expandForList(
   tasks: tasks,
   overrides: overrides,
   today: _today,
   engine: _engine,
+  includeSkipped: includeSkipped,
+  includeCompleted: includeCompleted,
+);
+
+OccurrenceOverride _override(
+  PlanDate date, {
+  OccurrenceStatus? status,
+  String? title,
+}) => OccurrenceOverride(
+  taskId: '晨会',
+  key: OccurrenceKey.allDay(date),
+  action: OverrideAction.modify,
+  status: status,
+  titleOverride: title,
 );
 
 void main() {
@@ -83,110 +117,193 @@ void main() {
     });
   });
 
-  group('重复的任务：窗口内每一次一行', () {
-    test('每天 → 窗口有多少天就有多少行', () {
-      final rows = _expand([
-        _task('晨会', date: _today, rrule: 'RRULE:FREQ=DAILY', isAllDay: true),
-      ]);
-      // 窗口是 [今天-14, 今天+60]，但规则从**今天**起算，
-      // 所以往前那 14 天没有发生。
-      expect(rows, hasLength(ListHorizon.futureDays + 1));
-      expect(rows.first.planDate, _today);
-      expect(rows.last.planDate, _today.addDays(ListHorizon.futureDays));
+  group('重复任务：未来只留「下一次」', () {
+    test('从今天开始的每日任务只有一行', () {
+      // 全展开的话这里是六十一行。
+      final rows = _expand([_daily()]);
+      expect(rows, hasLength(1));
+      expect(rows.single.planDate, _today);
     });
 
-    test('每行有自己的 id', () {
-      // 拿 taskId 当行标识的话，三十行共用一个 key ——
-      // Flutter 的列表复用会认错行，勾一行动的是另一行。
-      final rows = _expand([
-        _task('晨会', date: _today, rrule: 'RRULE:FREQ=WEEKLY', isAllDay: true),
-      ]);
-      expect(rows.map((r) => r.id).toSet(), hasLength(rows.length));
-      expect(rows.first.id, startsWith('晨会#'));
-    });
-
-    test('窗口之外的那些次不产出', () {
-      // 「每天」是无限的，没有窗口就展不完。
-      final rows = _expand([
-        _task('晨会', date: _today, rrule: 'RRULE:FREQ=DAILY', isAllDay: true),
-      ]);
-      expect(
-        rows.every(
-          (r) => !r.planDate!.isAfter(_today.addDays(ListHorizon.futureDays)),
-        ),
-        isTrue,
+    test('「下一次」是**最早的没做完的那一次**', () {
+      // 今天的做完了 → 明天那次当场出现（今天那条划掉的还留着，见下）。
+      final rows = _expand(
+        [_daily()],
+        overrides: [_override(_today, status: OccurrenceStatus.done)],
       );
+      expect(rows.map((r) => r.planDate), [_today, _today.addDays(1)]);
+      expect(rows.first.status, TaskStatus.done);
+      expect(rows.last.status, TaskStatus.pending);
     });
 
-    test('开始日期在过去时，往前也展开到窗口下界', () {
-      // 逾期组要看得见漏掉的那几次。
-      final start = _today.addDays(-30);
-      final rows = _expand([
-        _task('晨会', date: start, rrule: 'RRULE:FREQ=DAILY', isAllDay: true),
+    test('刚勾掉的那一次不立刻消失（§8.1：给撤销留时间）', () {
+      // 「完成即消失」在误触时最伤：那条任务去哪了、怎么找回来，
+      // 用户完全没有线索。
+      final rows = _expand(
+        [_daily()],
+        overrides: [_override(_today, status: OccurrenceStatus.done)],
+      );
+      expect(rows.any((r) => r.planDate == _today), isTrue);
+    });
+  });
+
+  group('重复任务：逾期的全留', () {
+    test('三天前开始、一次没做 → 逾期三条 + 下一次一条', () {
+      // 漏掉的不能无声消失：漏交一次房租得看得见。
+      final rows = _expand([_daily(startDaysAgo: 3)]);
+      expect(rows.map((r) => r.planDate), [
+        _today.addDays(-3),
+        _today.addDays(-2),
+        _today.addDays(-1),
+        _today,
       ]);
+    });
+
+    test('逾期那些里做完过的不留（否则天天堆划掉的行）', () {
+      final rows = _expand(
+        [_daily(startDaysAgo: 2)],
+        overrides: [
+          _override(_today.addDays(-2), status: OccurrenceStatus.done),
+        ],
+      );
+      expect(rows.map((r) => r.planDate), [_today.addDays(-1), _today]);
+    });
+
+    test('筛「已完成」时，过去做完的那些回来', () {
+      // **这是它们唯一的入口。** 没有的话，做完的那些次就再也找不回来 ——
+      // 与「到某天为止」那条死路是同一种毛病。
+      final rows = _expand(
+        [_daily(startDaysAgo: 2)],
+        overrides: [
+          _override(_today.addDays(-2), status: OccurrenceStatus.done),
+        ],
+        includeCompleted: true,
+      );
+      expect(rows.map((r) => r.planDate), [
+        _today.addDays(-2),
+        _today.addDays(-1),
+        _today,
+      ]);
+    });
+
+    test('逾期不会翻过窗口下界', () {
+      // 搁置三个月的每日任务若全留，逾期组会堆出九十行 ——
+      // 那不是提醒，是噪声。
+      final rows = _expand([_daily(startDaysAgo: 90)]);
       expect(
         rows.first.planDate,
         _today.addDays(-ListHorizon.pastDays),
-        reason: '窗口下界之前的不展开 —— 否则搁置三个月会堆出九十行逾期',
+        reason: '最早只回溯到 ListHorizon.pastDays',
       );
     });
   });
 
+  group('稀疏规则：「下一次」要能翻出常规窗口', () {
+    test('每年一次，下一次在八个月后 —— 不能整条消失', () {
+      // 只看 60 天窗口的话，这条任务一行都没有，用户会以为它丢了。
+      final rows = _expand([
+        _task(
+          '年检',
+          date: const PlanDate(2026, 5, 20),
+          rrule: 'RRULE:FREQ=YEARLY',
+          isAllDay: true,
+        ),
+      ]);
+      expect(rows, hasLength(1));
+      expect(rows.single.planDate, const PlanDate(2027, 5, 20));
+    });
+
+    test('对照组：常规窗口里有的话就不走兜底', () {
+      // 少了这条，一个「永远走兜底窗口」的实现也能让上面绿，
+      // 而那会把每条每日任务都展开两年。
+      final rows = _expand([_daily()]);
+      expect(rows, hasLength(1));
+      expect(rows.single.planDate, _today);
+    });
+
+    test('规则已经到期（UNTIL 在过去）→ 没有下一次，也不报错', () {
+      final rows = _expand([
+        _task(
+          '已结束',
+          date: _today.addDays(-30),
+          rrule: 'RRULE:FREQ=DAILY;UNTIL=20260901T235959Z',
+          isAllDay: true,
+        ),
+      ]);
+      // 只剩窗口内那几次逾期的，没有「下一次」。
+      expect(rows.every((r) => r.planDate!.isBefore(_today)), isTrue);
+    });
+  });
+
   group('例外作用在对应的那一次上（FR-TASK-05）', () {
-    Task daily() =>
-        _task('晨会', date: _today, rrule: 'RRULE:FREQ=DAILY', isAllDay: true);
-
-    OccurrenceKey keyOn(PlanDate d) => OccurrenceKey.allDay(d);
-
     test('标记完成只影响那一次', () {
       final rows = _expand(
-        [daily()],
-        overrides: [
-          OccurrenceOverride(
-            taskId: '晨会',
-            key: keyOn(_today),
-            action: OverrideAction.modify,
-            status: OccurrenceStatus.done,
-          ),
-        ],
+        [_daily()],
+        overrides: [_override(_today, status: OccurrenceStatus.done)],
       );
-
-      final todayRow = rows.firstWhere((r) => r.planDate == _today);
-      final tomorrowRow = rows.firstWhere(
-        (r) => r.planDate == _today.addDays(1),
-      );
-      expect(todayRow.status, TaskStatus.done);
       expect(
-        tomorrowRow.status,
+        rows.firstWhere((r) => r.planDate == _today).status,
+        TaskStatus.done,
+      );
+      expect(
+        rows.firstWhere((r) => r.planDate == _today.addDays(1)).status,
         TaskStatus.pending,
         reason: '只该影响被标记的那一次 —— 影响全部的话，勾一次等于把整条规则做完了',
       );
     });
 
-    test('跳过某一次 → 那一行不出现', () {
+    test('跳过某一次 → 那一行不出现，下一次顶上来', () {
       final rows = _expand(
-        [daily()],
-        overrides: [OccurrenceOverride.skip(taskId: '晨会', key: keyOn(_today))],
+        [_daily()],
+        overrides: [
+          OccurrenceOverride.skip(
+            taskId: '晨会',
+            key: OccurrenceKey.allDay(_today),
+          ),
+        ],
       );
-      expect(rows.any((r) => r.planDate == _today), isFalse);
-      expect(rows.any((r) => r.planDate == _today.addDays(1)), isTrue);
+      expect(rows, hasLength(1));
+      expect(rows.single.planDate, _today.addDays(1));
+    });
+
+    test('筛「已跳过」时那一次现身', () {
+      final rows = _expand(
+        [_daily()],
+        overrides: [
+          OccurrenceOverride.skip(
+            taskId: '晨会',
+            key: OccurrenceKey.allDay(_today),
+          ),
+        ],
+        includeSkipped: true,
+      );
+      expect(rows.any((r) => r.planDate == _today), isTrue);
+      expect(
+        rows.firstWhere((r) => r.planDate == _today).status,
+        TaskStatus.skipped,
+      );
     });
 
     test('改某一次的标题，只有那一行变', () {
       final rows = _expand(
-        [daily()],
+        [_daily()],
         overrides: [
-          OccurrenceOverride(
-            taskId: '晨会',
-            key: keyOn(_today),
-            action: OverrideAction.modify,
-            titleOverride: '今天改成站会',
-          ),
+          _override(_today, title: '今天改成站会'),
+          // 让明天那次也露出来，好做对照。
+          _override(_today, status: null, title: '今天改成站会'),
         ],
       );
-      expect(rows.firstWhere((r) => r.planDate == _today).title, '今天改成站会');
+      expect(rows.single.title, '今天改成站会');
+
+      // 做完今天的，明天那条应当还是原标题。
+      final more = _expand(
+        [_daily()],
+        overrides: [
+          _override(_today, status: OccurrenceStatus.done, title: '今天改成站会'),
+        ],
+      );
       expect(
-        rows.firstWhere((r) => r.planDate == _today.addDays(1)).title,
+        more.firstWhere((r) => r.planDate == _today.addDays(1)).title,
         '晨会',
       );
     });
@@ -195,18 +312,18 @@ void main() {
       // 例外是一次取全部再按 taskId 索引的（避免 N+1）——
       // 索引错了的话，一条任务的完成状态会显示到另一条上。
       final rows = _expand(
-        [daily(), _task('别的', date: _today)],
+        [_daily(), _task('别的', date: _today)],
         overrides: [
           OccurrenceOverride(
             taskId: '别的',
-            key: keyOn(_today),
+            key: OccurrenceKey.allDay(_today),
             action: OverrideAction.modify,
             status: OccurrenceStatus.done,
           ),
         ],
       );
       expect(
-        rows.firstWhere((r) => r.taskId == '晨会' && r.planDate == _today).status,
+        rows.firstWhere((r) => r.taskId == '晨会').status,
         TaskStatus.pending,
       );
     });
@@ -217,15 +334,12 @@ void main() {
       expect(_expand(const []), isEmpty);
     });
 
-    test('重复任务展开出的行数确实多于一行', () {
-      // 少了这条，一个「重复任务也只产一行」的实现能让上面
-      // 好几条（id 唯一、窗口内）都绿。
-      final one = _expand([_task('a', date: _today)]);
-      final many = _expand([
-        _task('b', date: _today, rrule: 'RRULE:FREQ=DAILY', isAllDay: true),
-      ]);
-      expect(one, hasLength(1));
-      expect(many.length, greaterThan(1));
+    test('每一行仍然有自己的 id', () {
+      // 拿 taskId 当行标识的话，逾期那几行会共用一个 key ——
+      // Flutter 的列表复用会认错行，勾一行动的是另一行。
+      final rows = _expand([_daily(startDaysAgo: 3)]);
+      expect(rows.map((r) => r.id).toSet(), hasLength(rows.length));
+      expect(rows.first.id, startsWith('晨会#'));
     });
   });
 }

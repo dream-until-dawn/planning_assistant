@@ -132,11 +132,16 @@ void main() {
     expect(_todayCount(tester), 1, reason: '恢复之后「今天」那一次该回来');
   });
 
-  testAppWidgets('跳过只影响那一次', (tester) async {
-    // 影响全部的话，「跳过今天」等于把整条规则停了。
+  testAppWidgets('跳过只影响那一次：那次没了，下一次顶上来', (tester) async {
+    // 影响全部的话，「跳过今天」等于把整条规则停了 ——
+    // 判据就是**明天那次顶上来了**（它从「下下次」变成了「下一次」）。
     await _pumpWithDaily(tester);
-    // 前提：这条规则本来就展开成很多行。
-    expect(find.byKey(TaskListPage.groupHeaderKey('tomorrow')), findsOneWidget);
+    expect(_todayCount(tester), 1, reason: '前提：现在显示的是今天那次');
+    expect(
+      find.byKey(TaskListPage.groupHeaderKey('tomorrow')),
+      findsNothing,
+      reason: '前提：未来只展开一条（§0.2.1），明天那次此刻还没露面',
+    );
 
     await _openSheet(tester);
     await tester.tap(find.byKey(OccurrenceSheetKeys.skip));
@@ -146,7 +151,7 @@ void main() {
     expect(
       find.byKey(TaskListPage.groupHeaderKey('tomorrow')),
       findsOneWidget,
-      reason: '只该少掉被跳过的那一次 —— 明天那次还得在',
+      reason: '跳过之后下一次要顶上来，而不是整条规则都不见了',
     );
   });
 

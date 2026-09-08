@@ -42,11 +42,19 @@ final visibleOccurrencesProvider = Provider<List<TaskOccurrence>>((ref) {
       // 被跳过的那一次默认不出现（FR-TASK-05 验收）。
       // **只有用户显式筛「已跳过」时才让它现身** —— 不留这条路的话，
       // 跳错了就再也找不回来，与「到某天为止」那条死路是同一种毛病。
+      // 被折叠掉的那些次（已跳过 / 已完成的历史）**只有显式筛选才现身**。
+      // 不留这条路的话，跳过或做完的那些就再也找不回来了 ——
+      // 与「到某天为止」那条死路是同一种毛病。
       includeSkipped: ref
           .watch(viewSharedStateProvider)
           .filter
           .statuses
           .contains(TaskStatus.skipped),
+      includeCompleted: ref
+          .watch(viewSharedStateProvider)
+          .filter
+          .statuses
+          .contains(TaskStatus.done),
     ),
     _ => const [],
   };

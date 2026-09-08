@@ -696,18 +696,20 @@ void main() {
       await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
       await tester.pumpAndSettle();
 
-      // 展开成多行（view-specs §0.2）。
-      final cards = find.byType(TaskCard);
-      expect(
-        cards.evaluate().length,
-        greaterThan(1),
-        reason: '每天重复的任务在列表里该是每天一行，不是一行',
-      );
+      // **未来方向只展开一条**（view-specs §0.2.1）：新建的每日任务
+      // 此刻只有「今天」这一次。
+      expect(find.byType(TaskCard), findsOneWidget);
 
-      // 勾第一行。
       await tester.tap(find.byKey(TaskCard.doneButtonKey).first);
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull, reason: '勾重复任务不该抛');
+
+      // 勾掉之后「下一次」当场顶上来，而刚勾的那条还在原位（§8.1）。
+      expect(
+        find.byType(TaskCard),
+        findsNWidgets(2),
+        reason: '完成一次之后应当出现下一次，同时保留刚勾掉的那条给撤销留时间',
+      );
 
       // 落的是**例外**，不是 tasks.status。
       final task = (await harness.db.select(harness.db.tasks).get()).single;

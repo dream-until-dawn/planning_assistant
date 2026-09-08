@@ -7,10 +7,13 @@
 @TestOn('vm')
 library;
 
+import 'package:drift/drift.dart' show Value, Variable;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
+import 'package:planning_assistant/core/time/plan_date.dart';
+import 'package:planning_assistant/data/database/app_database.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
@@ -19,7 +22,19 @@ import 'package:planning_assistant/features/views/task_list/presentation/task_li
 
 import '../support/app_harness.dart';
 
-Future<Harness> _pumpDaily(WidgetTester tester) async {
+/// 装的时钟是 2026-09-07 11:00（上海），所以「今天」是 9/7。
+const _todayDate = PlanDate(2026, 9, 7);
+const _start = PlanDate(2026, 8, 28);
+
+/// 建一条**从十天前开始**的每日任务。
+///
+/// 起点故意放在过去。放今天的话，列表里唯一那一行就是规则的
+/// **第一次** —— 而分割点是第一次时走的是「等同于改整条」那条特殊分支
+/// （见 dispatcher），根本验不到分裂。
+///
+/// 现实里也正是这样：会想「从现在起改成……」的，都是已经跑了一阵子的
+/// 任务；刚建好就要改的，直接改整条就是了。
+Future<Harness> _pumpEstablishedDaily(WidgetTester tester) async {
   await setScreenSize(tester, const Size(390, 844));
   final harness = appHarness();
   await tester.pumpWidget(
@@ -34,44 +49,57 @@ Future<Harness> _pumpDaily(WidgetTester tester) async {
   await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
   await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
   await tester.pumpAndSettle();
+
+  // 把起点挪到十天前，并把那十天都标成已完成 —— 否则它们会以逾期的
+  // 身份堆在列表最上面，遮住要点的那一行。
+  final id = (await harness.db.select(harness.db.tasks).get()).single.id;
+  await harness.db.customUpdate(
+    'UPDATE tasks SET plan_date = ? WHERE id = ?',
+    variables: [Variable<String>('$_start'), Variable<String>(id)],
+    updates: {harness.db.tasks},
+  );
+  for (var i = 1; i <= 10; i++) {
+    final day = _todayDate.addDays(-i);
+    await harness.db
+        .into(harness.db.occurrenceOverrides)
+        .insert(
+          OccurrenceOverridesCompanion.insert(
+            id: '$id#$day',
+            taskId: id,
+            occurrenceKey: '$day',
+            action: 'modify',
+            status: const Value('done'),
+            updatedAt: const Value(0),
+            lastWriterId: const Value('test'),
+          ),
+        );
+  }
+  await tester.pumpAndSettle();
   return harness;
 }
 
-/// 打开「明天」那一行的动作弹层 —— 分割点故意**不选第一次**，
-/// 否则走的是「等同于改整条」那条特殊分支，验不到分裂。
-Future<void> _openTomorrowSheet(WidgetTester tester) async {
-  final header = find.byKey(TaskListPage.groupHeaderKey('tomorrow'));
-  await tester.ensureVisible(header);
+/// 打开列表里那唯一一行（= 今天这一次）的动作弹层。
+Future<void> _openSheet(WidgetTester tester) async {
+  await tester.tap(find.byType(TaskCard).first);
   await tester.pumpAndSettle();
-  // 「明天」组里就一张卡片，取标题在 header 之下的第一张。
-  final headerY = tester.getCenter(header).dy;
-  final cards = find.byType(TaskCard);
-  for (var i = 0; i < cards.evaluate().length; i++) {
-    if (tester.getCenter(cards.at(i)).dy > headerY) {
-      await tester.tap(cards.at(i));
-      await tester.pumpAndSettle();
-      return;
-    }
-  }
-  fail('「明天」组下面没有卡片');
 }
 
 void main() {
   testAppWidgets('弹层里有「本次及以后」，且说明不改历史', (tester) async {
     // 不说的话，用户会担心之前做过的记录被一起改掉 ——
     // 而那正是这套做法要保住的东西。
-    await _pumpDaily(tester);
-    await _openTomorrowSheet(tester);
+    await _pumpEstablishedDaily(tester);
+    await _openSheet(tester);
 
     expect(find.byKey(OccurrenceSheetKeys.editFromHere), findsOneWidget);
     expect(find.textContaining('之前的不受影响'), findsOneWidget);
   });
 
   testAppWidgets('改标题 → 原任务截断，新任务从分割点起', (tester) async {
-    final harness = await _pumpDaily(tester);
+    final harness = await _pumpEstablishedDaily(tester);
     final original = (await harness.db.select(harness.db.tasks).get()).single;
 
-    await _openTomorrowSheet(tester);
+    await _openSheet(tester);
     await tester.tap(find.byKey(OccurrenceSheetKeys.editFromHere));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '站会');
@@ -98,17 +126,15 @@ void main() {
 
   testAppWidgets('**历史记录保持不变**：分割点之前勾过的那次还在', (tester) async {
     // 这是验收里的第三句，也是「分裂而不是就地改」的唯一理由。
-    final harness = await _pumpDaily(tester);
+    final harness = await _pumpEstablishedDaily(tester);
 
-    // 先把「今天」那一次勾完成 —— 它在分割点之前。
-    await tester.tap(find.byKey(TaskCard.doneButtonKey).first);
-    await tester.pumpAndSettle();
+    // 夹具里过去十天都已标记完成 —— 它们全在分割点之前。
     final before = await harness.db
         .select(harness.db.occurrenceOverrides)
         .get();
-    expect(before, hasLength(1), reason: '前提：今天那次已标记完成');
+    expect(before, hasLength(10), reason: '前提：分割点之前有十条完成记录');
 
-    await _openTomorrowSheet(tester);
+    await _openSheet(tester);
     await tester.tap(find.byKey(OccurrenceSheetKeys.editFromHere));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '站会');
@@ -127,9 +153,9 @@ void main() {
   testAppWidgets('分割点那一次归新任务，不会两边各出现一次', (tester) async {
     // 原规则若截到分割点当天，那一次会同时属于两条任务 ——
     // 列表里同一天出现两行一模一样的东西。
-    final harness = await _pumpDaily(tester);
+    final harness = await _pumpEstablishedDaily(tester);
 
-    await _openTomorrowSheet(tester);
+    await _openSheet(tester);
     await tester.tap(find.byKey(OccurrenceSheetKeys.editFromHere));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '站会');
@@ -137,8 +163,8 @@ void main() {
     await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
     await tester.pumpAndSettle();
 
-    // 「明天」组里应当只有一行，而且是新标题。
-    final header = find.byKey(TaskListPage.groupHeaderKey('tomorrow'));
+    // 分割点那一天（今天）只该有一行。
+    final header = find.byKey(TaskListPage.groupHeaderKey('today'));
     await tester.ensureVisible(header);
     await tester.pumpAndSettle();
     final count = int.parse(
@@ -153,9 +179,27 @@ void main() {
 
   testAppWidgets('分割点正好是第一次 → 不分裂，直接改整条', (tester) async {
     // 那样截断出来的原任务一次都不发生，会留下一条死任务。
-    final harness = await _pumpDaily(tester);
+    //
+    // **这条要用刚建好的任务**：起点就是今天，于是列表里唯一那一行
+    // 正是规则的第一次。上面几条用的是「已经跑了十天」的夹具，
+    // 那里今天不是第一次，走的是真分裂。
+    await setScreenSize(tester, const Size(390, 844));
+    final harness = appHarness();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: harness.overrides,
+        child: PlanningAssistantApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(AppShell.fabKey));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
+    await tester.pump();
+    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+    await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+    await tester.pumpAndSettle();
 
-    // 「今天」就是第一次。
     await tester.tap(find.byType(TaskCard).first);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(OccurrenceSheetKeys.editFromHere));
