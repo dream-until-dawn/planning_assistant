@@ -27,6 +27,7 @@ import 'package:go_router/go_router.dart';
 
 import 'design/theme/app_theme.dart';
 import 'domain/value_objects/occurrence_key.dart';
+import 'features/archive/presentation/archive_page.dart';
 import 'features/settings/application/registry.dart';
 import 'features/settings/application/settings_providers.dart';
 import 'features/settings/presentation/category_manager_page.dart';
@@ -102,6 +103,9 @@ abstract final class AppRoutes {
   /// 回收站（FR-TASK-08）。同样是设置页的二级页。
   static const String trash = '/settings/trash';
 
+  /// 归档列表。
+  static const String archive = '/settings/archive';
+
   /// 编辑一条已有任务。
   ///
   /// [from] 非空时是「本次及以后」的分割点（FR-TASK-06）——
@@ -122,6 +126,7 @@ GoRouter buildAppRouter() => GoRouter(
           builder: (context, state) => SettingsPage(
             onOpenCategories: () => context.go(AppRoutes.categories),
             onOpenTrash: () => context.go(AppRoutes.trash),
+            onOpenArchive: () => context.go(AppRoutes.archive),
           ),
           routes: [
             GoRoute(
@@ -131,6 +136,10 @@ GoRouter buildAppRouter() => GoRouter(
             GoRoute(
               path: 'trash',
               builder: (context, state) => const TrashPage(),
+            ),
+            GoRoute(
+              path: 'archive',
+              builder: (context, state) => const ArchivePage(),
             ),
           ],
         ),
@@ -160,6 +169,7 @@ GoRouter buildAppRouter() => GoRouter(
                 // 删完也回上一页。撤销的 Snackbar 由编辑页自己弹 ——
                 // 它拿的是 pop 之前的 messenger，所以弹得出来。
                 onDeleted: context.pop,
+                onArchived: context.pop,
               ),
             );
           },

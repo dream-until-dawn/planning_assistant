@@ -26,6 +26,7 @@ import '../../../design/components/app_chip.dart';
 import '../../../design/theme/app_theme.dart';
 import '../../../design/tokens/dimensions.dart';
 import '../../../domain/entities/task.dart';
+import '../../archive/application/archive_providers.dart';
 import '../../trash/application/trash_providers.dart';
 import '../../views/shared/application/category_providers.dart';
 import '../application/recurrence_draft.dart';
@@ -33,7 +34,12 @@ import '../application/stage_time.dart';
 import '../application/task_editor_controller.dart';
 
 class TaskEditorPage extends ConsumerStatefulWidget {
-  const TaskEditorPage({this.onSaved, this.onDeleted, super.key});
+  const TaskEditorPage({
+    this.onSaved,
+    this.onDeleted,
+    this.onArchived,
+    super.key,
+  });
 
   /// 保存成功后调用，参数是新任务的 ID。由组合根接上返回上一页。
   final void Function(String taskId)? onSaved;
@@ -41,6 +47,9 @@ class TaskEditorPage extends ConsumerStatefulWidget {
   /// 删除之后调用。为 null 时不显示删除入口 ——
   /// 一个点了没反应的删除按钮比没有更糟。
   final VoidCallback? onDeleted;
+
+  /// 归档之后调用。同上，为 null 时那个入口不出现。
+  final VoidCallback? onArchived;
 
   static const Key titleFieldKey = ValueKey('editor-title');
   static const Key noteFieldKey = ValueKey('editor-note');
@@ -52,6 +61,12 @@ class TaskEditorPage extends ConsumerStatefulWidget {
   /// 这个入口是补出来的：`DeleteTaskCommand` 在领域层一直都在、也测过，
   /// 而界面上**没有任何地方能删一条任务**。
   static const Key deleteButtonKey = ValueKey('editor-delete');
+
+  /// 归档（FR-TASK-08 的另一半）。同样只在编辑已有任务时出现。
+  ///
+  /// 与删除并排放：两者都是「从列表里拿走」，用户在做决定时
+  /// 正需要看见另一个选项 —— 只给删除的话，想留着的人只能删。
+  static const Key archiveButtonKey = ValueKey('editor-archive');
   static const Key allDaySwitchKey = ValueKey('editor-all-day');
   static const Key dateFieldKey = ValueKey('editor-date');
   static const Key timeFieldKey = ValueKey('editor-time');
@@ -213,6 +228,26 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
       );
   }
 
+  /// 归档这条任务（FR-TASK-08）。
+  ///
+  /// 与删除同一个做法：动作给撤销闭包，界面不自己算怎么还原 ——
+  /// 取消归档要把归档前的 `status` 还原回来，而那个快照只有领域层知道。
+  Future<void> _archive(TaskDraft draft) async {
+    final id = draft.editingTaskId;
+    if (id == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final undo = await ref.read(archiveActionsProvider).archive(id);
+    widget.onArchived?.call();
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: const Text('已归档'),
+          action: SnackBarAction(label: '撤销', onPressed: undo),
+        ),
+      );
+  }
+
   /// 「今天」经时钟 + 时区换算器拿，**不用 `DateTime.now()`**。
   ///
   /// 分层守卫只扫 domain 与 feature application，presentation 不在射程内，
@@ -241,6 +276,13 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
         elevation: 0,
         title: Text(draft.isEditing ? '编辑任务' : '新建任务'),
         actions: [
+          if (draft.isEditing && widget.onArchived != null)
+            IconButton(
+              key: TaskEditorPage.archiveButtonKey,
+              icon: const Icon(Icons.inventory_2_outlined),
+              tooltip: '归档',
+              onPressed: () => _archive(draft),
+            ),
           if (draft.isEditing && widget.onDeleted != null)
             IconButton(
               key: TaskEditorPage.deleteButtonKey,
