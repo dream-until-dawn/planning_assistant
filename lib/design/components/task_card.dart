@@ -83,75 +83,90 @@ class TaskCard extends StatelessWidget {
 
     return Semantics(
       container: true,
+      // **两层 DecoratedBox**：外层画描边，内层画填充与左侧分类色条。
+      //
+      // 不能合成一层：`borderRadius` 要求描边**颜色统一**，
+      // 而左色条与其余三边颜色不同，合在一起会在 paint 时断言失败
+      // （左色条之所以本来能用，是因为其余三边宽度为 0）。
+      //
+      // 为什么需要这圈描边：页面底改成纯白之后 canvas 与 card 同色，
+      // 卡片的**颜色差归零**（design-system §2.2 那条警告），
+      // 只剩一层很淡的阴影 —— 实测效果是卡片看不见了。
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: colors.card,
           borderRadius: BorderRadius.circular(radius),
-          boxShadow: colors.cardShadow,
-          // 左侧分类色条用**左边框**实现，不是一个撑满高度的子组件。
-          //
-          // 初版用 IntrinsicHeight + Row 拉伸一个 Container，
-          // 而 IntrinsicHeight 不支持内部有 LayoutBuilder
-          // （「LayoutBuilder does not support returning intrinsic dimensions」）——
-          // 而时间是否下沉需要量宽度。边框写法两个问题一起没了，
-          // 顺带色条会跟着圆角走，比直角贴边好看。
-          border: Border(
-            left: BorderSide(color: stripeColor, width: TaskCard.stripeWidth),
-          ),
+          border: Border.all(color: colors.borderSubtle),
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(Spacing.cardPadding),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final timeStyle = text.bodySmall?.copyWith(color: timeColor);
-              // 时间要不要另起一行，**用量的**，不拍阈值。
-              //
-              // 大字号 + 长时间标签（「昨天 18:00」）在 400dp 宽下会把标题
-              // 挤到溢出 —— 实测 2.8× 时 RenderFlex 溢出 3 像素。
-              // 时间是关键信息，不能用省略号截断；所以让它下沉到副信息下方，
-              // 而不是压缩标题。
-              final stacked =
-                  data.timeLabel != null &&
-                  _timeCrowdsTitle(
-                    context,
-                    label: data.timeLabel!,
-                    style: timeStyle,
-                    contentWidth: constraints.maxWidth,
-                  );
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: colors.card,
+            borderRadius: BorderRadius.circular(radius),
+            boxShadow: colors.cardShadow,
+            // 左侧分类色条用**左边框**实现，不是一个撑满高度的子组件。
+            //
+            // 初版用 IntrinsicHeight + Row 拉伸一个 Container，
+            // 而 IntrinsicHeight 不支持内部有 LayoutBuilder
+            // （「LayoutBuilder does not support returning intrinsic dimensions」）——
+            // 而时间是否下沉需要量宽度。边框写法两个问题一起没了，
+            // 顺带色条会跟着圆角走，比直角贴边好看。
+            border: Border(
+              left: BorderSide(color: stripeColor, width: TaskCard.stripeWidth),
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(Spacing.cardPadding),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final timeStyle = text.bodySmall?.copyWith(color: timeColor);
+                // 时间要不要另起一行，**用量的**，不拍阈值。
+                //
+                // 大字号 + 长时间标签（「昨天 18:00」）在 400dp 宽下会把标题
+                // 挤到溢出 —— 实测 2.8× 时 RenderFlex 溢出 3 像素。
+                // 时间是关键信息，不能用省略号截断；所以让它下沉到副信息下方，
+                // 而不是压缩标题。
+                final stacked =
+                    data.timeLabel != null &&
+                    _timeCrowdsTitle(
+                      context,
+                      label: data.timeLabel!,
+                      style: timeStyle,
+                      contentWidth: constraints.maxWidth,
+                    );
 
-              final time = data.timeLabel == null
-                  ? null
-                  : Text(data.timeLabel!, style: timeStyle);
+                final time = data.timeLabel == null
+                    ? null
+                    : Text(data.timeLabel!, style: timeStyle);
 
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _DoneButton(
-                    key: TaskCard.doneButtonKey,
-                    isDone: data.isDone,
-                    onPressed: onToggleDone,
-                  ),
-                  const SizedBox(width: Spacing.iconToText),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _Body(data: data),
-                        if (stacked) ...[
-                          const SizedBox(height: Spacing.xs),
-                          time!,
-                        ],
-                      ],
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _DoneButton(
+                      key: TaskCard.doneButtonKey,
+                      isDone: data.isDone,
+                      onPressed: onToggleDone,
                     ),
-                  ),
-                  if (time != null && !stacked) ...[
                     const SizedBox(width: Spacing.iconToText),
-                    time,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _Body(data: data),
+                          if (stacked) ...[
+                            const SizedBox(height: Spacing.xs),
+                            time!,
+                          ],
+                        ],
+                      ),
+                    ),
+                    if (time != null && !stacked) ...[
+                      const SizedBox(width: Spacing.iconToText),
+                      time,
+                    ],
                   ],
-                ],
-              );
-            },
+                );
+              },
+            ),
           ),
         ),
       ),

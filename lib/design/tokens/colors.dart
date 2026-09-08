@@ -77,10 +77,10 @@ abstract final class BrandColors {
 
 /// 表面（§2.2）。
 abstract final class SurfaceColors {
-  static const int canvas = 0xFDFBF7;
+  static const int canvas = 0xFFFFFF;
   static const int card = 0xFFFFFF;
-  static const int sunken = 0xF5F1EA;
-  static const int borderSubtle = 0xEDE7DD;
+  static const int sunken = 0xF2F2F5;
+  static const int borderSubtle = 0xE4E4EA;
 
   static const int canvasDark = 0x1B1A1F;
   static const int cardDark = 0x26242C;

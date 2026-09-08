@@ -52,7 +52,7 @@ void main() {
       // 这条注释与数值就是拒绝的依据。
       final r = contrastRatio(TextColors.disabled, SurfaceColors.canvas);
       expect(r, lessThan(kBodyText), reason: '若它已达标，说明色值变了，豁免该撤销');
-      expect(r, closeTo(2.34, 0.01));
+      expect(r, closeTo(2.41, 0.01));
     });
 
     test('text.onBrand 在三个品牌填充色上都 ≥ 4.5:1', () {

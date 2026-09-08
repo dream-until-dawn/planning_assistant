@@ -16,7 +16,7 @@
 低饱和配色最容易在这条上翻车，因此下表所有对比度**均为按 WCAG 2.1 公式实算所得**，不是估计。
 
 > 实算已经抓到一个真实缺陷：初版把 `semantic.overdue`（`#F5A38C`）直接用作逾期时间的**文字色**，
-> 实测对比度仅 **1.94:1**，严重不合格。因此 §2.4 拆成了「填充色」与「文字色」两列 —— 
+> 实测对比度仅 **2.00:1**，严重不合格。因此 §2.4 拆成了「填充色」与「文字色」两列 —— 
 > 这类错误如果留到实现阶段，只会以「看起来有点淡」的形式被忽略掉。
 
 ## 2. 色彩 Token
@@ -37,18 +37,42 @@
 
 | Token | 亮色 | 暗色 | 用途 |
 |---|---|---|---|
-| `surface.canvas` | `#FDFBF7` 奶油白 | `#1B1A1F` | 页面底 |
-| `surface.card` | `#FFFFFF` | `#26242C` | 卡片 |
-| `surface.sunken` | `#F5F1EA` | `#141317` | 凹陷区、输入框底 |
-| `border.subtle` | `#EDE7DD` | `#35323C` | 极淡分隔（优先用留白代替线） |
+| `surface.canvas` | `#FFFFFF` 纯白 | `#1B1A1F` | 页面底 |
+| `surface.card` | `#FFFFFF` 纯白 | `#26242C` | 卡片 |
+| `surface.sunken` | `#F2F2F5` | `#141317` | 凹陷区、输入框底 |
+| `border.subtle` | `#E4E4EA` | `#35323C` | 极淡分隔（优先用留白代替线） |
+
+> 亮色的两个中性色由暖转中（`#F5F1EA` → `#F2F2F5`、`#EDE7DD` → `#E4E4EA`）。
+> 它们原本是配奶油底调的；页面底改成纯白之后，暖米色在纯白上直接读成
+> 一块发黄的色块 —— Chip 尤其明显。**换底色不是换一个常量，
+> 是整套中性色要跟着重新平衡。**
+
+> ⚠️ **亮色主题里 canvas 与 card 是同一个值** —— 页面底改成纯白之后
+> （原为奶油白 `#FDFBF7`），这两个 token 重合了。
+>
+> 也就是说亮色下**实际只有两个表面**，不是三个。这不是笔误，
+> 但有两个后果必须写下来：
+>
+> 1. **卡片的边界只剩阴影 + 一圈发丝描边**。颜色差已经归零 ——
+>    实测过：只留阴影时卡片在图里基本看不见，所以补了 `border.subtle`
+>    的一圈描边（1.27:1）。即便如此仍远低于 1.4.11 的 3:1，
+>    NFR-A11Y-05 那条偏离在这里**更严重了一档**。
+>    实际承担「这是一张卡片」的是**左侧分类色条 + 卡片间距**。
+> 2. **凡是「对三个亮表面取最差值」的推导，现在只有两个不同的值。**
+>    最差值仍由 `sunken` 给出（它最暗），所以所有既有结论不变 ——
+>    但附录表里那几行 `vs card` 与 `vs canvas` 成了同一对颜色，
+>    已删去重复的一份。
+>
+> 保留 `card` 这个 token 而不是合并掉：暗色主题里两者仍然不同
+> （`#1B1A1F` vs `#26242C`），而且卡片与页面底本来就是两个语义。
 
 ### 2.3 文字
 
 | Token | 亮色 | 实测对比度（vs canvas） | 用途 |
 |---|---|---|---|
-| `text.primary` | `#3A3742` | **11.26:1** ✅ | 正文、标题 |
-| `text.secondary` | `#6E6A78` | **5.08:1** ✅ | 辅助说明 |
-| `text.disabled` | `#A9A5B0` | 2.34:1 | **仅用于禁用态**，不得承载信息 |
+| `text.primary` | `#3A3742` | **11.63:1** ✅ | 正文、标题 |
+| `text.secondary` | `#6E6A78` | **5.26:1** ✅ | 辅助说明 |
+| `text.disabled` | `#A9A5B0` | 2.41:1 | **仅用于禁用态**，不得承载信息 |
 | `text.onBrand` | `#1F3D37` | 6.62:1（vs primary）✅ | 品牌色填充上的文字 |
 
 暗色主题：`#FFFFFF` **对三个暗表面**实测 15.32 – 18.50:1，最差 **15.32:1**（vs `surface.cardDark`）✅。
@@ -60,10 +84,10 @@
 
 | 语义 | `.fill`（填充/色条） | `.text`（文字/图标） | **三表面最差** | 用途 |
 |---|---|---|---|---|
-| `semantic.done` | `#8FD9A8` | `#3F7A55` | 4.52:1 ✅ | 已完成 |
-| `semantic.soon` | `#FFC97A` | `#916629` | 4.51:1 ✅ | 即将到期 |
-| `semantic.overdue` | `#F5A38C` 珊瑚 | `#A35B43` 陶土 | 4.51:1 ✅ | **逾期** |
-| `semantic.info` | `#A8C8F0` | `#3F6FA8` | 4.60:1 ✅ | 信息 |
+| `semantic.done` | `#8FD9A8` | `#3F7A55` | 4.55:1 ✅ | 已完成 |
+| `semantic.soon` | `#FFC97A` | `#916629` | 4.54:1 ✅ | 即将到期 |
+| `semantic.overdue` | `#F5A38C` 珊瑚 | `#A35B43` 陶土 | 4.54:1 ✅ | **逾期** |
+| `semantic.info` | `#A8C8F0` | `#3F6FA8` | 4.64:1 ✅ | 信息 |
 | `semantic.danger` | `#E88B8B` | `#A85555` | 4.55:1 ✅ | 破坏性操作确认 |
 
 > 🔴 **本表初稿的三个值是错的，2026-09-07 修正。**
@@ -95,7 +119,7 @@
 #C3B5F0 薰衣草  #F5B7A3 蜜桃   #A8D8B9 嫩芽   #F0C8E0 藕粉
 ```
 
-⚠️ 这些颜色对**两种表面**（§2.2 的 `surface.canvas #FDFBF7` 与 `surface.card #FFFFFF`）的对比度实测为：
+⚠️ 这些颜色对**两种表面**（§2.2 的 `surface.canvas #FFFFFF` 与 `surface.card #FFFFFF`）的对比度实测为：
 
 | 表面 | 范围 | 最高者 |
 |---|---|---|
@@ -320,8 +344,8 @@ golden 测试覆盖开关两种状态（NFR-A11Y-03）。
 
 | 边界 | 对比 | 比值 |
 |---|---|---|
-| 未选中 Chip 的凹陷底 vs 页面底 | `#F5F1EA` vs `#FDFBF7` | **1.09:1** |
-| 极淡描边 vs 页面底 | `#EDE7DD` vs `#FDFBF7` | **1.19:1** |
+| 未选中 Chip 的凹陷底 vs 页面底 | `#F2F2F5` vs `#FFFFFF` | **1.12:1** |
+| 极淡描边 vs 页面底 | `#E4E4EA` vs `#FFFFFF` | **1.27:1** |
 | 暗色：凹陷底 vs 页面底 | `#141317` vs `#1B1A1F` | **1.07:1** |
 | 暗色：极淡描边 vs 页面底 | `#35323C` vs `#1B1A1F` | **1.38:1** |
 
@@ -332,7 +356,7 @@ golden 测试覆盖开关两种状态（NFR-A11Y-03）。
 正来自这个低反差。
 
 **这是取舍，不是 bug。** 备选是给「可交互控件的边界」单独一个 ≥3:1 的
-token（当前调色板里没有够用的：`text.disabled` 对 canvas 只有 2.34:1），
+token（当前调色板里没有够用的：`text.disabled` 对 canvas 只有 2.41:1），
 代价是描边明显变硬，整体观感偏「清晰」而非「清新」。
 
 **决定：维持现有中性色，把这一条记为已知偏离（NFR-A11Y-05），
@@ -406,9 +430,9 @@ token（当前调色板里没有够用的：`text.disabled` 对 canvas 只有 2.
 
 | 组合 | 实测 | 用 ≥4.5 判 |
 |---|---|---|
-| `brand.primary #7FD1C1` vs `surface.canvas` | **1.72:1** | ✗ 拒绝 |
+| `brand.primary #7FD1C1` vs `surface.canvas` | **1.78:1** | ✗ 拒绝 |
 | 同上 vs `surface.card` | **1.78:1** | ✗ 拒绝 |
-| 同上 vs `surface.sunken` | **1.58:1** | ✗ 拒绝 |
+| 同上 vs `surface.sunken` | **1.59:1** | ✗ 拒绝 |
 
 > **拒掉自家出厂默认值的判据，不可能是正确的验收规则。**
 > 这是最便宜的自检 —— 写完谓词先拿默认值跑一遍，一行的事。
@@ -426,7 +450,7 @@ token（当前调色板里没有够用的：`text.disabled` 对 canvas 只有 2.
 
 - §10 的门槛表写「图标 / 非文字关键图形 × 表面 ≥ 3.0:1」；
 - §2.1 说 `brand.primary` 用于「主行动、选中态、**进度条**」——进度条是非文字图形；
-- 而默认主色对表面只有 1.72:1，**够不到 3.0**；
+- 而默认主色对表面只有 1.78:1，**够不到 3.0**；
 - §2.5 给了一条豁免路径（「绝不能是唯一的信息载体」），但那段是写给**分类色条**的，
   并未声明适用于 `brand.primary`。
 
@@ -443,7 +467,7 @@ token（当前调色板里没有够用的：`text.disabled` 对 canvas 只有 2.
 
 **D 不是新发明，是 §2.4 对语义色做过的同一件事。** 那里的原话是「低饱和的
 语义色适合做填充，但作为文字几乎全部不达标，因此每个语义色有两个 token」——
-实测 `semantic.done.fill` 对 canvas 是 **1.61:1**，而 `.text` 是 **4.62:1**。
+实测 `semantic.done.fill` 对 canvas 是 **1.66:1**，而 `.text` 是 **4.77:1**。
 品牌色面对的是同一个形状：一个低饱和色要同时干「装饰性填充」和
 「承载信息的图形」，而这两件事的门槛不同。语义色拆了，品牌色没拆。
 
@@ -553,45 +577,41 @@ token（当前调色板里没有够用的：`text.disabled` 对 canvas 只有 2.
 <!-- CONTRAST-TABLE-BEGIN -->
 | 说明 | 前景 | 背景 | 比值 | 出现在 |
 |---|---|---|---|---|
-| 逾期填充色误作文字（初版缺陷） | `#F5A38C` | `#FDFBF7` | 1.94:1 | §2 引言 |
+| 逾期填充色误作文字（初版缺陷） | `#F5A38C` | `#FFFFFF` | 2.00:1 | §2 引言 |
 | 白字在品牌色上（禁止） | `#FFFFFF` | `#7FD1C1` | 1.78:1 | §2.1 |
 | onBrand 在 primary 上 | `#1F3D37` | `#7FD1C1` | 6.62:1 | §2.1 |
 | onBrand 在 secondary 上 | `#1F3D37` | `#FFB7C5` | 7.21:1 | §2.1 |
 | onBrand 在 tertiary 上 | `#1F3D37` | `#FFD79A` | 8.67:1 | §2.1 |
-| text.primary vs canvas | `#3A3742` | `#FDFBF7` | 11.26:1 | §2.3 |
-| text.secondary vs canvas | `#6E6A78` | `#FDFBF7` | 5.08:1 | §2.3 |
-| text.disabled vs canvas（豁免） | `#A9A5B0` | `#FDFBF7` | 2.34:1 | §2.3 |
+| text.primary vs canvas | `#3A3742` | `#FFFFFF` | 11.63:1 | §2.3 |
+| text.secondary vs canvas | `#6E6A78` | `#FFFFFF` | 5.26:1 | §2.3 |
+| text.disabled vs canvas（豁免） | `#A9A5B0` | `#FFFFFF` | 2.41:1 | §2.3 |
 | 白字 vs 暗 card（暗色最差） | `#FFFFFF` | `#26242C` | 15.32:1 | §2.3 |
 | 白字 vs 暗 sunken（暗色最好） | `#FFFFFF` | `#141317` | 18.50:1 | §2.3 |
-| done.text 三表面最差 | `#3F7A55` | `#F5F1EA` | 4.52:1 | §2.4 |
-| soon.text 三表面最差 | `#916629` | `#F5F1EA` | 4.51:1 | §2.4 |
-| overdue.text 三表面最差 | `#A35B43` | `#F5F1EA` | 4.51:1 | §2.4 |
-| info.text 三表面最差 | `#3F6FA8` | `#F5F1EA` | 4.60:1 | §2.4 |
-| danger.text 三表面最差 | `#A85555` | `#F5F1EA` | 4.55:1 | §2.4 |
-| done.text 初版值（已废弃） | `#417F58` | `#F5F1EA` | 4.24:1 | §2.4 修正说明 |
-| soon.text 初版值（已废弃） | `#94682A` | `#F5F1EA` | 4.37:1 | §2.4 修正说明 |
-| overdue.text 初版值（已废弃） | `#A85E45` | `#F5F1EA` | 4.29:1 | §2.4 修正说明 |
-| done.text 初版 vs canvas（当初只算了这个） | `#417F58` | `#FDFBF7` | 4.62:1 | §2.4 修正说明 |
+| done.text 三表面最差 | `#3F7A55` | `#F2F2F5` | 4.55:1 | §2.4 |
+| soon.text 三表面最差 | `#916629` | `#F2F2F5` | 4.54:1 | §2.4 |
+| overdue.text 三表面最差 | `#A35B43` | `#F2F2F5` | 4.55:1 | §2.4 |
+| info.text 三表面最差 | `#3F6FA8` | `#F2F2F5` | 4.64:1 | §2.4 |
+| danger.text 三表面最差 | `#A85555` | `#F2F2F5` | 4.59:1 | §2.4 |
+| done.text 初版值（已废弃） | `#417F58` | `#F2F2F5` | 4.27:1 | §2.4 修正说明 |
+| soon.text 初版值（已废弃） | `#94682A` | `#F2F2F5` | 4.40:1 | §2.4 修正说明 |
+| overdue.text 初版值（已废弃） | `#A85E45` | `#F2F2F5` | 4.32:1 | §2.4 修正说明 |
+| done.text 初版 vs canvas（当初只算了这个） | `#417F58` | `#FFFFFF` | 4.77:1 | §2.4 修正说明 |
 | danger.fill 暗色最差 | `#E88B8B` | `#26242C` | 6.20:1 | §2.4 |
 | soon.fill 暗色最好 | `#FFC97A` | `#141317` | 12.23:1 | §2.4 |
-| done.fill 作文字 vs canvas（不达标，拆分依据） | `#8FD9A8` | `#FDFBF7` | 1.61:1 | §10.2 |
-| primary vs canvas | `#7FD1C1` | `#FDFBF7` | 1.72:1 | §10.2 |
-| primary vs card | `#7FD1C1` | `#FFFFFF` | 1.78:1 | §10.2 |
-| primary vs sunken | `#7FD1C1` | `#F5F1EA` | 1.58:1 | §10.2 |
-| primaryGraphic vs canvas | `#379986` | `#FDFBF7` | 3.35:1 | §10.2 |
-| primaryGraphic vs card | `#379986` | `#FFFFFF` | 3.46:1 | §10.2 |
-| primaryGraphic vs sunken | `#379986` | `#F5F1EA` | 3.08:1 | §10.2 |
+| done.fill 作文字 vs canvas（不达标，拆分依据） | `#8FD9A8` | `#FFFFFF` | 1.66:1 | §10.2 |
+| primary vs canvas | `#7FD1C1` | `#FFFFFF` | 1.78:1 | §10.2 |
+| primary vs sunken | `#7FD1C1` | `#F2F2F5` | 1.59:1 | §10.2 |
+| primaryGraphic vs canvas | `#379986` | `#FFFFFF` | 3.46:1 | §10.2 |
+| primaryGraphic vs sunken | `#379986` | `#F2F2F5` | 3.10:1 | §10.2 |
 | primaryDark vs 暗 canvas | `#5FB3A3` | `#1B1A1F` | 6.97:1 | §10.2 |
 | primaryDark vs 暗 card | `#5FB3A3` | `#26242C` | 6.17:1 | §10.2 |
 | primaryDark vs 暗 sunken | `#5FB3A3` | `#141317` | 7.46:1 | §10.2 |
-| 暗色态 #5FB3A3 vs 亮 canvas（方式 B 不成立） | `#5FB3A3` | `#FDFBF7` | 2.40:1 | §10.2 |
-| 暗色态 vs 亮 card | `#5FB3A3` | `#FFFFFF` | 2.48:1 | §10.2 |
-| 暗色态 vs 亮 sunken | `#5FB3A3` | `#F5F1EA` | 2.20:1 | §10.2 |
-| brand.primary.text vs canvas | `#2C7A6B` | `#FDFBF7` | 4.95:1 | §10.2 |
-| brand.primary.text vs card | `#2C7A6B` | `#FFFFFF` | 5.12:1 | §10.2 |
-| brand.primary.text vs sunken（最差） | `#2C7A6B` | `#F5F1EA` | 4.55:1 | §10.2 |
-| 未选中 Chip 边界：sunken vs canvas | `#F5F1EA` | `#FDFBF7` | 1.09:1 | §8.5 待定 |
-| 极淡描边 vs canvas | `#EDE7DD` | `#FDFBF7` | 1.19:1 | §8.5 待定 |
+| 暗色态 #5FB3A3 vs 亮 canvas（方式 B 不成立） | `#5FB3A3` | `#FFFFFF` | 2.48:1 | §10.2 |
+| 暗色态 vs 亮 sunken | `#5FB3A3` | `#F2F2F5` | 2.22:1 | §10.2 |
+| brand.primary.text vs canvas | `#2C7A6B` | `#FFFFFF` | 5.12:1 | §10.2 |
+| brand.primary.text vs sunken（最差） | `#2C7A6B` | `#F2F2F5` | 4.58:1 | §10.2 |
+| 未选中 Chip 边界：sunken vs canvas | `#F2F2F5` | `#FFFFFF` | 1.12:1 | §8.5 待定 |
+| 极淡描边 vs canvas | `#E4E4EA` | `#FFFFFF` | 1.27:1 | §8.5 待定 |
 | 暗色 sunken vs canvas | `#141317` | `#1B1A1F` | 1.07:1 | §8.5 待定 |
 | 暗色极淡描边 vs canvas | `#35323C` | `#1B1A1F` | 1.38:1 | §8.5 待定 |
 <!-- CONTRAST-TABLE-END -->
