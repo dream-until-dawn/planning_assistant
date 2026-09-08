@@ -89,18 +89,38 @@ final class TaskEditorController extends Notifier<TaskDraft> {
   void setCategory(String? categoryId) =>
       state = state.copyWith(categoryId: categoryId);
 
+  /// 本地墙钟的今天。**不用 `DateTime.now()`**（cross-cutting §1）。
+  PlanDate _today() {
+    final resolver = ref.read(timeZoneResolverProvider);
+    return resolver
+        .toWallTime(ref.read(clockProvider).nowUtc(), resolver.currentZoneId())
+        .date;
+  }
+
   /// 切全天。
   ///
-  /// 关掉「全天」时**不自动塞一个时刻** —— 由 UI 让用户挑；
+  /// 关掉「全天」时**不自动塞一个时刻** —— 由 UI 让用户挑。
   /// 打开「全天」时必须**清掉**已选时刻，否则会存下一条
   /// 「全天但有 09:30」的任务，两个字段互相矛盾。
+  ///
+  /// 关掉「全天」时**必须有日期**：「12:32，但不知道哪天」不是一个有意义
+  /// 的状态。真机上就撞见过一条这样的数据 —— 卡片上挂着一个指向不了任何
+  /// 一天的时刻。没有日期时补上今天，而且**补得看得见**（日期栏会显示出来），
+  /// 用户不同意可以当场改。
+  ///
+  /// 为什么不是「不让存」：那会把一个能自动答对的问题推给用户，
+  /// 而 FR-TASK-01 的基调是「填得越少越好」。
   void setAllDay(bool value) => state = value
       ? state.copyWith(isAllDay: true, startMinute: null)
-      : state.copyWith(isAllDay: false);
+      : state.copyWith(isAllDay: false, planDate: state.planDate ?? _today());
 
   void setStartMinute(MinuteOfDay? minute) => state = minute == null
       ? state.copyWith(startMinute: null)
-      : state.copyWith(startMinute: minute, isAllDay: false);
+      : state.copyWith(
+          startMinute: minute,
+          isAllDay: false,
+          planDate: state.planDate ?? _today(),
+        );
 
   /// 保存。返回新任务的 ID。
   ///
@@ -114,6 +134,13 @@ final class TaskEditorController extends Notifier<TaskDraft> {
 
     final resolver = ref.read(timeZoneResolverProvider);
     final id = ref.read(idGeneratorProvider).newId();
+
+    // **不变量兜底**：非全天必须有日期。上面几个 setter 已经保证了，
+    // 但那是界面路径的保证 —— 将来多一个入口（语音、导入、Agent）
+    // 就多一条绕过去的路。这里是最后一道。
+    final planDate = draft.isAllDay
+        ? draft.planDate
+        : (draft.planDate ?? _today());
 
     await ref
         .read(taskCommandDispatcherProvider)
@@ -130,7 +157,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
             // 所以这里原样传，不做任何「空则填默认分类」的转换。
             categoryId: draft.categoryId,
             isAllDay: draft.isAllDay,
-            planDate: draft.planDate,
+            planDate: planDate,
             startMinute: draft.isAllDay ? null : draft.startMinute,
           ),
         );

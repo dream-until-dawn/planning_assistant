@@ -9,6 +9,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
@@ -163,6 +164,40 @@ void main() {
         _task('$_titlePrefix乙', date: const PlanDate(2026, 9, 9)),
       ]);
       expect(find.byType(TaskCard), findsNWidgets(2));
+    });
+  });
+
+  group('时间标签', () {
+    testWidgets('无日期的任务不显示时刻', (tester) async {
+      // 「12:32，但不知道哪天」指向不了任何东西。编辑器现在不会再产出
+      // 这种数据，但库里可能已经有（早期版本存的、或导入进来的），
+      // 渲染层照着不变量来。
+      await _pump(tester, [
+        Task(
+          id: 'legacy',
+          title: '$_titlePrefix旧数据',
+          kind: TaskKind.single,
+          timeZoneId: 'Asia/Shanghai',
+          startMinute: MinuteOfDay.of(12, 32),
+        ),
+      ]);
+      expect(find.text('12:32'), findsNothing);
+      expect(find.text('$_titlePrefix旧数据'), findsOneWidget, reason: '任务本身还得在');
+    });
+
+    testWidgets('对照组：有日期就显示时刻', (tester) async {
+      // 否则「一律不显示时刻」也能让上面那条绿。
+      await _pump(tester, [
+        Task(
+          id: 'ok',
+          title: '$_titlePrefix开会',
+          kind: TaskKind.single,
+          timeZoneId: 'Asia/Shanghai',
+          planDate: _today,
+          startMinute: MinuteOfDay.of(12, 32),
+        ),
+      ]);
+      expect(find.text('12:32'), findsOneWidget);
     });
   });
 }

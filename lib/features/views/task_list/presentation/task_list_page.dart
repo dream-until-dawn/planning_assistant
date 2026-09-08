@@ -186,8 +186,14 @@ TaskCardData _toCardData(Task task, Map<String, Category> categories) {
 /// 全天任务不显示时刻（design-system §8.1）—— `isAllDay` 与
 /// `startMinute` 是两个独立字段，全天时那个 00:00 只是占位，
 /// **不表示「零点」这个时刻**（见 `LocalWallTime.allDay` 的注释）。
+///
+/// **没有日期也不显示时刻。** 「12:32，但不知道哪天」指向不了任何东西，
+/// 摆在卡片上只会让人以为它有安排。编辑器现在不会再产出这种数据
+/// （关掉全天会自动补今天），但**库里可能已经有** —— 早期版本存下的、
+/// 或将来导入进来的。渲染层照着不变量来，比相信数据一定干净稳妥。
 String? _timeLabelOf(Task task) {
   if (task.isAllDay) return null;
+  if (task.planDate == null) return null;
   final m = task.startMinute;
   if (m == null) return null;
   return '${m.hour.toString().padLeft(2, '0')}:'

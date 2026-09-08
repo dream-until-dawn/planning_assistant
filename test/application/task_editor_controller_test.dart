@@ -141,4 +141,71 @@ void main() {
       expect(c.read(taskEditorProvider).planDate, isNull);
     });
   });
+
+  group('时刻不能脱离日期', () {
+    // 真机上撞见过一条「12:32，但不知道哪天」的数据 ——
+    // 卡片上挂着一个指向不了任何一天的时刻。
+    test('关掉全天时，没有日期就补上今天', () {
+      final c = _container();
+      c.read(taskEditorProvider.notifier).setAllDay(false);
+
+      final draft = c.read(taskEditorProvider);
+      expect(draft.isAllDay, isFalse);
+      // 夹具的时钟是 2026-09-07 03:00 UTC，东八区即 09-07 11:00。
+      expect(draft.planDate, const PlanDate(2026, 9, 7));
+    });
+
+    test('选时刻时，没有日期也补上今天', () {
+      final c = _container();
+      c
+          .read(taskEditorProvider.notifier)
+          .setStartMinute(MinuteOfDay.of(12, 32));
+      expect(c.read(taskEditorProvider).planDate, const PlanDate(2026, 9, 7));
+    });
+
+    test('对照组：已经选了日期就不覆盖', () {
+      // 「一律填今天」也能让上面两条绿，但那会把用户选的日期冲掉。
+      final c = _container();
+      final n = c.read(taskEditorProvider.notifier)
+        ..setPlanDate(const PlanDate(2026, 12, 25))
+        ..setAllDay(false);
+      expect(c.read(taskEditorProvider).planDate, const PlanDate(2026, 12, 25));
+      expect(n, isNotNull);
+    });
+
+    test('对照组：全天任务不会被塞一个日期', () {
+      // 全天 + 无日期是合法的（「哪天做都行」），不该被自动填。
+      final c = _container();
+      c.read(taskEditorProvider.notifier).setAllDay(true);
+      expect(c.read(taskEditorProvider).planDate, isNull);
+    });
+
+    test('补的日期是**本地墙钟**的今天，不是 UTC 的', () {
+      // 东八区 07:00，UTC 还在前一天 23:00。截 UTC 的话会补错一天。
+      final c = ProviderContainer(
+        overrides: appHarness(
+          now: DateTime.utc(2026, 9, 7, 23),
+          zone: 'Asia/Shanghai',
+        ).overrides,
+      );
+      addTearDown(c.dispose);
+      c.read(taskEditorProvider.notifier).setAllDay(false);
+      expect(c.read(taskEditorProvider).planDate, const PlanDate(2026, 9, 8));
+    });
+
+    test('落库的任务里，非全天必定有日期', () async {
+      // setter 的保证是界面路径的保证；save() 再兜一道，
+      // 因为将来多一个入口（语音、导入、Agent）就多一条绕过去的路。
+      final c = _container();
+      final n = c.read(taskEditorProvider.notifier)
+        ..setTitle('开会')
+        ..setStartMinute(MinuteOfDay.of(12, 32));
+      await n.save();
+
+      final task = (await c.read(taskRepositoryProvider).findTasks()).single;
+      expect(task.isAllDay, isFalse);
+      expect(task.startMinute, MinuteOfDay.of(12, 32));
+      expect(task.planDate, isNotNull, reason: '有时刻就必须有日期');
+    });
+  });
 }

@@ -21,6 +21,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:go_router/go_router.dart';
 
 import 'design/theme/app_theme.dart';
@@ -95,6 +96,21 @@ class PlanningAssistantApp extends StatelessWidget {
     return MaterialApp.router(
       title: '计划助手',
       debugShowCheckedModeBanner: false,
+      // **框架自带的界面也得说中文**（NFR-A11Y-04）。
+      //
+      // 不接这几行的话，日期选择器会弹出 `Select date` / `Cancel` / `OK`
+      // 与英文月份名 —— 真机上就是这样，一个满屏中文的应用里突然一个
+      // 英文对话框。`flutter_localizations` 早就在 pubspec 里，
+      // 只是没接上代理。
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
+      supportedLocales: const [Locale('zh'), Locale('en')],
+      // **暂时钉死中文。** V1 首发只有中文文案（NFR-A11Y-04：
+      // 文案全部走本地化资源是后话），此刻跟随系统语言的话，
+      // 英文系统上会得到「中文正文 + 英文控件」的夹生界面 ——
+      // 比全英文更难读。
+      //
+      // TODO(M4): 接上 l10n 资源后删掉这一行，改为跟随系统。
+      locale: const Locale('zh'),
       // 明暗双主题由 design/theme 装配。刻意不用 ColorScheme.fromSeed ——
       // 它会把低饱和色算成高饱和，破坏「可爱清新」基调（design-system §9）。
       theme: AppTheme.light(),

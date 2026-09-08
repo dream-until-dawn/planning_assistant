@@ -269,4 +269,29 @@ void main() {
       await disposeTree(tester);
     });
   });
+
+  group('框架自带的界面也说中文（NFR-A11Y-04）', () {
+    testWidgets('日期选择器是中文的，不是 Select date / OK', (tester) async {
+      // 真机上撞见过：满屏中文的应用里弹出一个英文对话框。
+      // `flutter_localizations` 早就在 pubspec 里，只是没接上代理。
+      //
+      // **断言的是渲染出来的字，不是「有没有配 delegates」** ——
+      // 后者配了但 supportedLocales 或 locale 不对，照样是英文。
+      await _pumpApp(tester);
+
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TaskEditorPage.dateFieldKey));
+      await tester.pumpAndSettle();
+
+      expect(find.text('确定'), findsOneWidget);
+      expect(find.text('取消'), findsOneWidget);
+      expect(find.text('OK'), findsNothing, reason: '出现英文按钮说明本地化没接上');
+
+      // 关掉对话框，免得后面的 disposeTree 在弹层上拆树。
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      await disposeTree(tester);
+    });
+  });
 }
