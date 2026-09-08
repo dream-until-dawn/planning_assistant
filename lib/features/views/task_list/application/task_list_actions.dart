@@ -92,6 +92,26 @@ final class OccurrenceActions {
 
   final Ref _ref;
 
+  /// 勾/取消某一次里的某个阶段（FR-TASK-07）。
+  ///
+  /// **不重复的任务不走这里**：它没有「某一次」，阶段状态就存在
+  /// `Stage.status` 上（判据见 `stageStatusFor`）。硬造一条指向
+  /// 空 key 的状态行，读的时候两边会打架。
+  Future<void> setStageDone(TaskOccurrence row, String stageId, bool done) {
+    final key = row.key;
+    if (key == null) return Future<void>.value();
+    return _ref
+        .read(taskCommandDispatcherProvider)
+        .dispatch(
+          SetStageOccurrenceStatusCommand(
+            taskId: row.taskId,
+            stageId: stageId,
+            occurrenceKey: key,
+            status: done ? TaskStatus.done : TaskStatus.pending,
+          ),
+        );
+  }
+
   /// 跳过这一次。**只对某一次有意义** —— 不重复的任务没有「某一次」，
   /// 调它是调用方的错，所以直接返回而不是造一条指向空 key 的例外。
   Future<void> skip(TaskOccurrence row) {

@@ -398,8 +398,6 @@ class _AnytimeSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
-    final categories = ref.watch(categoryByIdProvider);
-    final stages = ref.watch(stagesByTaskProvider);
 
     return Container(
       constraints: const BoxConstraints(maxHeight: 220),
@@ -427,7 +425,7 @@ class _AnytimeSection extends ConsumerWidget {
                 final row = rows[i];
                 return TaskCard(
                   key: ValueKey(row.id),
-                  data: occurrenceCardData(row, categories, stages[row.taskId]),
+                  data: cardDataOf(ref, row),
                   onToggleDone: () => ref.read(toggleTaskDoneProvider)(row),
                   onTap: () => _openRow(context, row, onEditTask),
                 );

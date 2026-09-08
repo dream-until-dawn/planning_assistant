@@ -171,6 +171,23 @@
 
 > 只有被交互过的 (阶段, 发生) 才落行 —— 未触碰的阶段视为 `pending`，不占存储。
 
+#### 实现（M3）
+
+这张表和它的 DAO 从 M1 就在，**领域层以上直到 M3 末尾才接上**：
+没有实体、没有仓库方法、没有命令、没有界面。空着的那段时间里，
+阶段状态只有 `Stage.status` 一份 —— 一条「每周三·健身」拆成三个阶段，
+这周勾掉热身，每一周的热身都成了已完成。
+
+- 判据只有一处：`domain/services/stage_occurrence_status.dart` 的
+  `stageStatusFor` —— 不重复的任务看 `Stage.status`，重复的看这张表。
+  上面那句「未触碰视为 `pending`」就是它的回落，
+  **回落到 `Stage.status` 会让旧毛病原地复发**。
+- 行 `id` 由 `(stageId, occurrenceKey)` 派生（`StageOccurrenceState.idFor`），
+  与唯一索引同一个键，所以写入天然是覆盖写。
+  随机 id 的话，连点两下会攒出两行互相矛盾的状态。
+- 写入走 `SetStageOccurrenceStatusCommand`，与
+  `ReplaceStagesCommand`（改整条任务的阶段）分工明确。
+
 ### 3.6 `categories`
 
 | 列 | 类型 | 说明 |

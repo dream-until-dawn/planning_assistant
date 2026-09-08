@@ -11,7 +11,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../design/components/empty_state.dart';
 import '../../../../design/components/task_card.dart';
 import '../../../../design/tokens/dimensions.dart';
-import '../../shared/application/category_providers.dart';
 import '../../shared/application/create_task_at.dart';
 import '../../shared/application/task_providers.dart';
 import '../../shared/application/view_shared_state.dart';
@@ -67,9 +66,7 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
   @override
   Widget build(BuildContext context) {
     final tasks = ref.watch(visibleTasksProvider);
-    final categories = ref.watch(categoryByIdProvider);
     final groups = ref.watch(groupedTasksProvider);
-    final stages = ref.watch(stagesByTaskProvider);
 
     return tasks.when(
       // 加载中**不画转圈**：本地 SQLite 的首帧通常在一帧内就来了，
@@ -123,11 +120,7 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
                         // 列表复用时会认错行：勾一行动的是另一行。
                         key: ValueKey(task.id),
                         child: TaskCard(
-                          data: occurrenceCardData(
-                            task,
-                            categories,
-                            stages[task.taskId],
-                          ),
+                          data: cardDataOf(ref, task),
                           // 就地完成（view-specs §0.3）。
                           //
                           // 完成后**不立即消失**（design-system §8.1）——

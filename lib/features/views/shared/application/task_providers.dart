@@ -11,7 +11,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app_providers.dart';
 import '../../../../domain/entities/occurrence_override.dart';
 import '../../../../domain/entities/stage.dart';
+import '../../../../domain/entities/stage_occurrence_state.dart';
 import '../../../../domain/entities/task.dart';
+import '../../../../domain/services/stage_occurrence_status.dart';
+import '../../../../domain/value_objects/occurrence_key.dart';
 
 /// 库里的活动任务，**未经筛选**。
 ///
@@ -85,3 +88,37 @@ final taskByIdProvider = Provider.family<Task?, String>((ref, id) {
   }
   return null;
 });
+
+/// 全部的阶段-发生状态（FR-TASK-07）。
+///
+/// 与 [allStagesProvider] 同一个形状，**同一条注意事项**：
+/// 必须是顶层 provider，不能在别的 provider 体内内联构造。
+final allStageStatesProvider = StreamProvider<List<StageOccurrenceState>>(
+  (ref) => ref.watch(taskRepositoryProvider).watchAllStageStates(),
+);
+
+/// `taskId → (occurrenceKey → (stageId → 状态))`。
+///
+/// 三层索引是因为读的那一侧问的就是三层：
+/// 「**这条任务**的**这一次**的**这一步**做完没有」。
+final stageStatesByTaskProvider =
+    Provider<Map<String, Map<OccurrenceKey, StageStatesOfOccurrence>>>((ref) {
+      final states = ref.watch(allStageStatesProvider);
+      return switch (states) {
+        AsyncData(:final value) => _indexStates(value),
+        _ => const {},
+      };
+    });
+
+Map<String, Map<OccurrenceKey, StageStatesOfOccurrence>> _indexStates(
+  List<StageOccurrenceState> states,
+) {
+  final byTask = <String, List<StageOccurrenceState>>{};
+  for (final s in states) {
+    (byTask[s.taskId] ??= []).add(s);
+  }
+  return {
+    for (final entry in byTask.entries)
+      entry.key: groupByOccurrence(entry.value),
+  };
+}

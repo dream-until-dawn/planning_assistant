@@ -412,6 +412,19 @@ NFR-PERF-04 要求「展开 1 年实例 ≤ 50ms」。措施：
 | R-51 | 同上，下周同一阶段 | 仍为 pending |
 | R-52 | 任务开始时间整体后移 2 小时 | 所有阶段跟随后移（相对偏移语义） |
 
+> **R-50 / R-51 的落点不在引擎里。** 它们问的不是「这一次在哪天」，
+> 而是「这一次的第 N 步做完没有」—— 判据是 `stageStatusFor`
+> （`domain/services/stage_occurrence_status.dart`），
+> 测试在 `test/domain/stage_occurrence_state_test.dart`，
+> 端到端在 `test/presentation/stage_occurrence_test.dart`。
+>
+> 这条链路此前**断在数据层**：表 `stage_occurrence_states` 与 DAO 从 M1
+> 就在、导出也带着它，而领域层以上一片空白。于是一条「每周三·健身」
+> 拆成三个阶段，这周勾掉热身，**每一周的热身都成了已完成**。
+>
+> R-52 仍然欠着：它问的是阶段的**相对偏移**语义（改任务开始时间，
+> 阶段跟不跟着走），与这一批无关。
+
 ## 7. 实现前必须做的探针（M1 第一件事）
 
 **探针的定位（重要）**：期望值来自**规范**，探针只是**验证库是否符合规范**。

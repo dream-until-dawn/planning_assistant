@@ -89,6 +89,12 @@ final _samples = <TaskCommand>[
     status: OccurrenceStatus.done,
   ),
   SkipOccurrenceCommand(taskId: 'task-1', occurrenceKey: _key),
+  SetStageOccurrenceStatusCommand(
+    taskId: 'task-1',
+    stageId: 'stage-1',
+    occurrenceKey: _key,
+    status: TaskStatus.done,
+  ),
   MoveOccurrenceCommand(
     taskId: 'task-1',
     occurrenceKey: _key,
