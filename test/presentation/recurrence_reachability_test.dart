@@ -1,0 +1,208 @@
+/// **重复规则的每个旋钮，用户都得够得着**（FR-TASK-03/04）。
+///
+/// ## 这条测试是为了什么写的
+///
+/// 第一版的重复区漏了三个控件：间隔、次数、结束日期。
+/// `interval` 恒为 1、`count` 恒为默认的 10、`until` 永远是 null ——
+/// 而 `RecurrenceDraft` 的单元测试把这三个都测透了，856 条全绿。
+/// 测的是**模型**：给定一个 draft，编出来的串对不对、展开的日子对不对。
+/// 没有一条问过：**用户能不能造出那个 draft**。
+///
+/// 最难看的是「到某天为止」：选中它 → 规则必然非法 → 保存永久灰着，
+/// 而页面上没有任何地方能选那个日期。一条走进去出不来的路。
+/// 当时确实有一条测试盯着它，断言「拦住了、没落库」，然后就停在那儿 ——
+/// **验证了「拦住」，没验证「拦住之后有路走」**。
+///
+/// ## 所以这里怎么验
+///
+/// 每个旋钮一条：走真界面把它拨到**非默认值**，保存，然后看**落库的
+/// RRULE 串**变成了该变的样子。不看 draft、不看界面文案 —— 那两者
+/// 都可能在链路断掉时依然好看（M2 里已经栽过一次：draft 和界面都对，
+/// `categoryId` 却没进命令）。
+///
+/// 外加一条**完备性守卫**：探针表必须覆盖 `RecurrenceDraft` 的每个字段。
+/// 以后加一个字段却忘了配控件，这条会红 —— 这正是当初漏掉的那件事。
+@TestOn('vm')
+library;
+
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:planning_assistant/app.dart';
+import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/task/application/recurrence_draft.dart';
+import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
+
+import '../support/app_harness.dart';
+
+/// 装的时钟是 2026-09-07 11:00（上海），也就是**周一**。
+/// 于是「今天」= 2026-09-07，结束日期选择器的默认（+30 天）= 2026-10-07。
+const _plusThirty = '20261007';
+
+Future<Harness> _pumpEditor(WidgetTester tester) async {
+  await tester.binding.setSurfaceSize(const Size(390, 844));
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+
+  final harness = appHarness();
+  await tester.pumpWidget(
+    ProviderScope(overrides: harness.overrides, child: PlanningAssistantApp()),
+  );
+  await tester.pumpAndSettle();
+
+  await tester.tap(find.byKey(AppShell.fabKey));
+  await tester.pumpAndSettle();
+  await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
+  await tester.pump();
+  return harness;
+}
+
+/// 点一个控件，**先把它滚进可视区**。
+///
+/// 不滚的话 `ListView` 的 cacheExtent 会在视口外先把控件建出来，
+/// `tap` 于是算出一个落在视口外的坐标 —— 那一下点在了底部的保存按钮上，
+/// 任务直接存了、页面弹回列表，随后的断言报的却是「找不到 editor-save」。
+/// 一次误点导致的连环失败，看起来完全不像「控件在屏幕外」。
+Future<void> _tap(WidgetTester tester, Key key) async {
+  final finder = find.byKey(key);
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
+/// 保存并取回落库的规则串。
+Future<String?> _saveAndReadRule(WidgetTester tester, Harness harness) async {
+  await _tap(tester, TaskEditorPage.saveButtonKey);
+  final rows = await harness.db.select(harness.db.tasks).get();
+  return rows.single.recurrenceRule;
+}
+
+/// 一个旋钮的探针。
+typedef _Probe = ({
+  /// [RecurrenceDraft] 里的字段名。完备性守卫按它对表。
+  String field,
+
+  /// 拨这个旋钮的界面操作。进来时重复已经打开。
+  Future<void> Function(WidgetTester) drive,
+
+  /// 落库的规则串该长成什么样。
+  Matcher rule,
+});
+
+final List<_Probe> _probes = [
+  (
+    field: 'enabled',
+    // 开关本身：不碰它就没有规则，碰了才有。下面的对照组管另一半。
+    drive: (t) async {},
+    rule: startsWith('RRULE:'),
+  ),
+  (
+    field: 'frequency',
+    drive: (t) =>
+        _tap(t, TaskEditorPage.frequencyKey(RecurrenceFrequency.monthly)),
+    rule: contains('FREQ=MONTHLY'),
+  ),
+  (
+    field: 'interval',
+    // 加两下：1 → 3。加一下也行，但 2 比 3 更容易与别的默认值撞上。
+    drive: (t) async {
+      final inc = TaskEditorPage.stepperIncKey(TaskEditorPage.intervalStepper);
+      await _tap(t, inc);
+      await _tap(t, inc);
+    },
+    rule: contains('INTERVAL=3'),
+  ),
+  (
+    field: 'weekdays',
+    drive: (t) async {
+      await _tap(t, TaskEditorPage.frequencyKey(RecurrenceFrequency.weekly));
+      await _tap(t, TaskEditorPage.weekdayKey(Weekday.tuesday));
+    },
+    rule: contains('BYDAY=TU'),
+  ),
+  (
+    field: 'endMode',
+    drive: (t) => _tap(t, TaskEditorPage.endModeKey(RecurrenceEndMode.count)),
+    rule: contains('COUNT='),
+  ),
+  (
+    field: 'count',
+    // 减一下：10 → 9。减而不是加，是为了让期望值与默认值差一位数字，
+    // 「加减器根本没接上」时 COUNT=10 会立刻露馅。
+    drive: (t) async {
+      await _tap(t, TaskEditorPage.endModeKey(RecurrenceEndMode.count));
+      await _tap(t, TaskEditorPage.stepperDecKey(TaskEditorPage.countStepper));
+    },
+    rule: contains('COUNT=9'),
+  ),
+  (
+    field: 'until',
+    // 选择器默认停在「开始日期 + 30 天」，直接确定就是那天。
+    drive: (t) async {
+      await _tap(t, TaskEditorPage.endModeKey(RecurrenceEndMode.until));
+      await _tap(t, TaskEditorPage.untilFieldKey);
+      await t.tap(find.text('确定'));
+      await t.pumpAndSettle();
+    },
+    rule: contains('UNTIL=${_plusThirty}T235959Z'),
+  ),
+];
+
+void main() {
+  group('每个旋钮都够得着，而且拨了真的进库', () {
+    for (final probe in _probes) {
+      testAppWidgets(probe.field, (tester) async {
+        final harness = await _pumpEditor(tester);
+        await _tap(tester, TaskEditorPage.recurrenceSwitchKey);
+        await probe.drive(tester);
+
+        // 界面上没被挡住 —— 挡住的话下面读到的会是 null，
+        // 而 null 与「规则里没这一段」在报错信息里长得不一样。
+        expect(
+          find.byKey(TaskEditorPage.blockedReasonKey),
+          findsNothing,
+          reason: '拨完 ${probe.field} 之后不该还存不下去',
+        );
+
+        expect(await _saveAndReadRule(tester, harness), probe.rule);
+      });
+    }
+
+    testAppWidgets('对照组：开关不打开就没有规则', (tester) async {
+      // 少了这条，一个「永远写死一条 RRULE」的实现能让上面七条全绿。
+      final harness = await _pumpEditor(tester);
+      expect(await _saveAndReadRule(tester, harness), isNull);
+    });
+  });
+
+  group('完备性', () {
+    test('探针表覆盖 RecurrenceDraft 的每一个字段', () {
+      // 扫构造器的 `this.x` —— 那串参数就是字段全集。
+      // 用源码而不是手写一份清单：手写的那份会与代码分叉，
+      // 而分叉的方向恰好是「新加的字段没人管」。
+      final source = File('lib/features/task/application/recurrence_draft.dart')
+          .readAsStringSync();
+      final start = source.indexOf('const RecurrenceDraft({');
+      expect(start, isNonNegative, reason: '构造器长得不一样了，这条守卫得跟着改');
+      final block = source.substring(start, source.indexOf('});', start));
+      final fields = RegExp(r'this\.(\w+)')
+          .allMatches(block)
+          .map((m) => m.group(1)!)
+          .toSet();
+
+      // 自检：扫出来的东西得像回事，不能因为正则失配变成空集合而「通过」。
+      expect(fields, contains('enabled'));
+      expect(fields.length, greaterThan(3));
+
+      expect(
+        _probes.map((p) => p.field).toSet(),
+        fields,
+        reason:
+            '每个字段都要有一条走界面的探针 —— 没有探针的字段，'
+            '很可能界面上根本没有对应的控件（interval/count/until 就是这么漏的）',
+      );
+    });
+  });
+}

@@ -12,6 +12,7 @@ import 'package:drift/native.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/misc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:meta/meta.dart';
 import 'package:planning_assistant/app_providers.dart';
 import 'package:planning_assistant/core/id/id_generator.dart';
 import 'package:planning_assistant/core/time/clock.dart';
@@ -101,6 +102,44 @@ Future<void> disposeTree(WidgetTester tester) async {
   // **下一次**微任务清空之后 —— 所以一次 pump 够不着，要再走两帧。
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 1));
+}
+
+/// 跑一条用真库的 widget 用例，**无论成败都拆树**。
+///
+/// ## 为什么不是在用例末尾手写 [disposeTree]
+///
+/// 手写的那一句**失败时不会执行** —— 断言一抛，后面的代码就不跑了。
+/// 树留在那儿带着 drift 的订阅和一个待触发的 timer，于是下一条用例
+/// 撞上 `!inTest` 断言，再下一条「did not complete」，整个文件
+/// 卡到十分钟超时才收场。后果不是慢，是**报错指错了地方**：
+/// 一次真实的回归表现成「后面五条莫名其妙全红」，真正坏的是第一条。
+/// 变异演练里撞见过一次，六分半。
+///
+/// ## 为什么不是 `addTearDown`
+///
+/// 试过，不行。`AutomatedTestWidgetsFlutterBinding` 的 `!timersPending`
+/// 断言在**用例体一结束**就跑，排在 tearDown **前面** ——
+/// 登记成 tearDown 等于永远迟一步，每条用例都会报
+/// 「A Timer is still pending even after the widget tree was disposed」。
+/// 所以收尾必须发生在用例体**之内**，也就是这里的 `finally`。
+@isTest
+void testAppWidgets(
+  String description,
+  Future<void> Function(WidgetTester) body,
+) {
+  testWidgets(description, (tester) async {
+    try {
+      await body(tester);
+    } finally {
+      try {
+        await disposeTree(tester);
+      } catch (_) {
+        // 收尾自己炸了不该盖掉用例真正的失败原因（`finally` 里抛出的异常
+        // 会顶替掉原来那个）。真漏了 timer 的话，binding 自己那条
+        // `!timersPending` 断言照样会报，这里吞掉不会少报什么。
+      }
+    }
+  });
 }
 
 /// 写入默认分类。

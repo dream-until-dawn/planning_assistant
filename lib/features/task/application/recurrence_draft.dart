@@ -12,19 +12,27 @@ library;
 
 import 'package:meta/meta.dart';
 
+import '../../../core/patch/unset.dart';
 import '../../../core/time/plan_date.dart';
 
 /// 重复频率。**只有 FR-TASK-03 点名的四种。**
 enum RecurrenceFrequency {
-  daily('DAILY', '每天'),
-  weekly('WEEKLY', '每周'),
-  monthly('MONTHLY', '每月'),
-  yearly('YEARLY', '每年');
+  daily('DAILY', '每天', '天'),
+  weekly('WEEKLY', '每周', '周'),
+  monthly('MONTHLY', '每月', '月'),
+  yearly('YEARLY', '每年', '年');
 
-  const RecurrenceFrequency(this.rruleName, this.label);
+  const RecurrenceFrequency(this.rruleName, this.label, this.unitLabel);
 
   final String rruleName;
+
+  /// 选项上的名字，如「每周」。
   final String label;
+
+  /// 光是单位，如「周」。给「每 2 周」这种带间隔的说法用。
+  /// 放枚举上而不是在 [RecurrenceDraft.describe] 里再 switch 一遍 ——
+  /// 界面上的间隔控件也要说同一句话。
+  final String unitLabel;
 }
 
 /// 结束条件（FR-TASK-04）。
@@ -94,6 +102,10 @@ final class RecurrenceDraft {
   /// 到这一天为止（含当天）。
   final PlanDate? until;
 
+  /// [until] 走 [unset] 哨兵，其余字段非空所以用 `??` 就够。
+  ///
+  /// 一度写成 `until: until ?? this.until` —— 那样**清不掉结束日期**：
+  /// 传 `null` 的意思变成了「别动」。见 `core/patch/unset.dart` 开头那段。
   RecurrenceDraft copyWith({
     bool? enabled,
     RecurrenceFrequency? frequency,
@@ -101,7 +113,7 @@ final class RecurrenceDraft {
     Set<Weekday>? weekdays,
     RecurrenceEndMode? endMode,
     int? count,
-    PlanDate? until,
+    Object? until = unset,
   }) => RecurrenceDraft(
     enabled: enabled ?? this.enabled,
     frequency: frequency ?? this.frequency,
@@ -109,7 +121,7 @@ final class RecurrenceDraft {
     weekdays: weekdays ?? this.weekdays,
     endMode: endMode ?? this.endMode,
     count: count ?? this.count,
-    until: until ?? this.until,
+    until: patch(until, this.until),
   );
 
   RecurrenceDraft toggleWeekday(Weekday day) => copyWith(
@@ -182,14 +194,7 @@ final class RecurrenceDraft {
   String describe() {
     if (!enabled) return '不重复';
     final every = interval == 1 ? '每' : '每 $interval ';
-    final unit = switch (frequency) {
-      RecurrenceFrequency.daily => '天',
-      RecurrenceFrequency.weekly => '周',
-      RecurrenceFrequency.monthly => '月',
-      RecurrenceFrequency.yearly => '年',
-    };
-
-    final buffer = StringBuffer('$every$unit');
+    final buffer = StringBuffer('$every${frequency.unitLabel}');
     if (frequency == RecurrenceFrequency.weekly && weekdays.isNotEmpty) {
       final sorted = weekdays.toList()
         ..sort((a, b) => a.isoNumber.compareTo(b.isoNumber));

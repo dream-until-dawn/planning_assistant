@@ -61,6 +61,20 @@ class TaskEditorPage extends ConsumerStatefulWidget {
   static Key endModeKey(RecurrenceEndMode m) =>
       ValueKey('editor-repeat-end-${m.name}');
 
+  /// 间隔（每 N 天/周/…）与次数的加减器，以及「到某天为止」的日期。
+  ///
+  /// 这三个一度**只存在于模型里，界面上够不着** —— `interval` 恒为 1、
+  /// `count` 恒为默认值 10，而 `until` 永远是 null，
+  /// 于是选了「到某天为止」就再也存不下去。见 §重复区的注释。
+  static const String intervalStepper = 'editor-repeat-interval';
+  static const String countStepper = 'editor-repeat-count';
+  static const Key untilFieldKey = ValueKey('editor-repeat-until');
+
+  /// 加减器上的三个部件。[name] 取 [intervalStepper] / [countStepper]。
+  static Key stepperValueKey(String name) => ValueKey(name);
+  static Key stepperDecKey(String name) => ValueKey('$name-dec');
+  static Key stepperIncKey(String name) => ValueKey('$name-inc');
+
   static Key stageFieldKey(String stageId) => ValueKey('editor-stage-$stageId');
   static Key stageRemoveKey(String stageId) =>
       ValueKey('editor-stage-remove-$stageId');
@@ -169,7 +183,13 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
                 onPick: controller.setStartMinute,
               ),
             const SizedBox(height: Spacing.xl),
-            _RecurrenceSection(draft: draft.recurrence, controller: controller),
+            _RecurrenceSection(
+              draft: draft.recurrence,
+              // 打开重复时控制器会补上日期，所以这里几乎总是非空；
+              // 兜底用今天，与 `setRecurrence` 补的是同一天。
+              anchor: draft.planDate ?? _today(),
+              controller: controller,
+            ),
             const SizedBox(height: Spacing.xl),
             _StageSection(draft: draft, controller: controller),
             const SizedBox(height: Spacing.xxxl),
@@ -419,10 +439,28 @@ class _StageSection extends StatelessWidget {
 ///
 /// 关着的时候只有一个开关 —— 大多数任务不重复，一进来摊开一屏选项
 /// 是把少数情形的成本摊给所有人。
+/// 重复区（FR-TASK-03/04）。
+///
+/// **每个能改 RRULE 的字段都要在这里有一个控件。** 第一版漏了三个 ——
+/// 间隔、次数、结束日期 —— 而单元测试把这三个都测透了：
+/// 测的是 `RecurrenceDraft`，不是「用户能不能造出那个 draft」。
+/// 最难看的是「到某天为止」：选了它就必然非法，页面上却没有任何地方
+/// 能选那个日期，保存按钮永久灰着 —— **一条走进去出不来的路**。
+/// 而当时那条测试恰好断言了「拦住了」，就停在那儿，没有往下问
+/// 「拦住之后有没有路走」。守卫见 `recurrence_reachability_test.dart`。
 class _RecurrenceSection extends StatelessWidget {
-  const _RecurrenceSection({required this.draft, required this.controller});
+  const _RecurrenceSection({
+    required this.draft,
+    required this.anchor,
+    required this.controller,
+  });
 
   final RecurrenceDraft draft;
+
+  /// 这条规则从哪天开始算 —— 任务的计划日期，没有就用今天。
+  /// 「到某天为止」的可选范围以它为下界：结束早于开始的规则一次都展不出来。
+  final PlanDate anchor;
+
   final TaskEditorController controller;
 
   @override
@@ -460,6 +498,17 @@ class _RecurrenceSection extends StatelessWidget {
                 ),
             ],
           ),
+          const SizedBox(height: Spacing.sm),
+          _Stepper(
+            name: TaskEditorPage.intervalStepper,
+            label: '间隔',
+            // 「每 2 周」而不是干巴巴一个 2 —— 单位跟着频率变，
+            // 否则用户得自己把上面那排 Chip 和这个数字对起来读。
+            display: '每 ${draft.interval} ${draft.frequency.unitLabel}',
+            value: draft.interval,
+            onChanged: (v) =>
+                controller.setRecurrence(draft.copyWith(interval: v)),
+          ),
           if (draft.frequency == RecurrenceFrequency.weekly) ...[
             const SizedBox(height: Spacing.sm),
             Text('周几（不选＝跟开始日期同一天）', style: text.bodySmall),
@@ -490,8 +539,151 @@ class _RecurrenceSection extends StatelessWidget {
                 ),
             ],
           ),
+          // 选中哪种结束条件，就只给哪种的输入 ——
+          // 三个都摆出来的话，用户改的那个未必是生效的那个。
+          if (draft.endMode == RecurrenceEndMode.count)
+            _Stepper(
+              name: TaskEditorPage.countStepper,
+              label: '次数（含第一次）',
+              display: '${draft.count} 次',
+              value: draft.count,
+              onChanged: (v) =>
+                  controller.setRecurrence(draft.copyWith(count: v)),
+            ),
+          if (draft.endMode == RecurrenceEndMode.until)
+            _UntilRow(
+              until: draft.until,
+              anchor: anchor,
+              onPick: (d) => controller.setRecurrence(draft.copyWith(until: d)),
+            ),
         ],
       ],
+    );
+  }
+}
+
+/// 「到某天为止」的日期（FR-TASK-04）。
+///
+/// **不给清空。** 清了就回到那条走不出去的路上：结束条件还是「到某天为止」，
+/// 却没有那一天，保存永久灰着。要取消就去上面改结束条件。
+class _UntilRow extends StatelessWidget {
+  const _UntilRow({
+    required this.until,
+    required this.anchor,
+    required this.onPick,
+  });
+
+  final PlanDate? until;
+  final PlanDate anchor;
+  final ValueChanged<PlanDate> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      key: TaskEditorPage.untilFieldKey,
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.event_available_outlined),
+      title: Text(until == null ? '选一个结束日期' : '到 $until 为止'),
+      onTap: () async {
+        final current = until;
+        // 没选过时默认一个月后 —— 拿开始那天当默认值的话，
+        // 用户一路点「确定」会得到一条只发生一次的重复规则。
+        //
+        // **已选的日期还得夹一道**：选完之后把任务日期往后改，
+        // 已选的结束日期就跑到下界前面去了，那时 `showDatePicker`
+        // 会直接断言失败崩掉 —— 一条改日期顺序不同就触发的路。
+        final initial = (current == null || current.isBefore(anchor))
+            ? anchor.addDays(30)
+            : current;
+        final picked = await showDatePicker(
+          context: context,
+          initialDate: DateTime(initial.year, initial.month, initial.day),
+          // **下界是开始日期**：结束早于开始的规则一次都展不出来，
+          // 而它长得和一条正常规则一模一样。
+          firstDate: DateTime(anchor.year, anchor.month, anchor.day),
+          lastDate: DateTime(anchor.year + 10),
+        );
+        if (picked != null) {
+          onPick(PlanDate(picked.year, picked.month, picked.day));
+        }
+      },
+    );
+  }
+}
+
+/// 一个数字加减器。
+///
+/// 用加减而不是输入框：这两个数几乎总是个位数，而输入框要处理空串、
+/// 非数字、粘进来的负号 —— 那些 [RecurrenceDraft.blockedReason] 里都有兜底，
+/// 但让用户先打错再看红字，不如根本打不错。
+///
+/// 上界 [_max] 是**控件的**限制，不是模型的：RRULE 的 COUNT 可以很大，
+/// 同步下来一条 `COUNT=500` 照样正常展开。真要重复很多次的场景
+/// （「今年每天」），「到某天为止」才是顺手的控件。
+class _Stepper extends StatelessWidget {
+  const _Stepper({
+    required this.name,
+    required this.label,
+    required this.display,
+    required this.value,
+    required this.onChanged,
+  });
+
+  static const int _min = 1;
+  static const int _max = 99;
+
+  /// Key 前缀，见 [TaskEditorPage.stepperValueKey]。
+  final String name;
+
+  final String label;
+
+  /// 数字旁边那句话，如「每 2 周」。
+  final String display;
+
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    // 到头了就禁用按钮，而不是点了没反应 —— 后者与「界面卡住了」
+    // 在用户看来一模一样。
+    final canDec = value > _min;
+    final canInc = value < _max;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: Spacing.sm),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: text.bodySmall),
+          Row(
+            children: [
+              IconButton(
+                key: TaskEditorPage.stepperDecKey(name),
+                onPressed: canDec ? () => onChanged(value - 1) : null,
+                icon: const Icon(Icons.remove),
+                tooltip: '减少',
+              ),
+              // 固定宽度，免得数字从个位变两位时两个按钮跟着抖。
+              SizedBox(
+                width: 96,
+                child: Text(
+                  display,
+                  key: TaskEditorPage.stepperValueKey(name),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              IconButton(
+                key: TaskEditorPage.stepperIncKey(name),
+                onPressed: canInc ? () => onChanged(value + 1) : null,
+                icon: const Icon(Icons.add),
+                tooltip: '增加',
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

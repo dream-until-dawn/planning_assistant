@@ -41,7 +41,7 @@ Future<void> _openSettings(WidgetTester tester) async {
 
 void main() {
   group('页面由注册表渲染（FR-CFG-07）', () {
-    testWidgets('每个暴露项都出现，隐藏项不出现', (tester) async {
+    testAppWidgets('每个暴露项都出现，隐藏项不出现', (tester) async {
       await _pumpApp(tester);
       await _openSettings(tester);
 
@@ -53,11 +53,9 @@ void main() {
           expect(finder, findsNothing, reason: '${spec.key} 是隐藏项，不该出现');
         }
       }
-
-      await disposeTree(tester);
     });
 
-    testWidgets('每个 select 项的每个选项都画出来了', (tester) async {
+    testAppWidgets('每个 select 项的每个选项都画出来了', (tester) async {
       // 少画一个选项 = 那个值用户永远选不到，而它在注册表里看着是支持的。
       await _pumpApp(tester);
       await _openSettings(tester);
@@ -75,11 +73,9 @@ void main() {
           );
         }
       }
-
-      await disposeTree(tester);
     });
 
-    testWidgets('分组标题按 SettingGroup 的顺序出现', (tester) async {
+    testAppWidgets('分组标题按 SettingGroup 的顺序出现', (tester) async {
       await _pumpApp(tester);
       await _openSettings(tester);
 
@@ -90,11 +86,9 @@ void main() {
       for (final group in used) {
         expect(find.text(group!.title), findsOneWidget);
       }
-
-      await disposeTree(tester);
     });
 
-    testWidgets('没有暴露项的分组不画空标题', (tester) async {
+    testAppWidgets('没有暴露项的分组不画空标题', (tester) async {
       await _pumpApp(tester);
       await _openSettings(tester);
 
@@ -109,13 +103,11 @@ void main() {
           reason: '「${group.title}」这一组一个暴露项都没有，不该出现标题',
         );
       }
-
-      await disposeTree(tester);
     });
   });
 
   group('改了真的生效', () {
-    testWidgets('改「列表分组」，列表的分组标题跟着变', (tester) async {
+    testAppWidgets('改「列表分组」，列表的分组标题跟着变', (tester) async {
       // 这条是整个设置页的意义所在。只验「页面画出来了」的话，
       // 一个写不进库的实现也能全绿。
       final harness = await _pumpApp(tester);
@@ -161,11 +153,9 @@ void main() {
       // 而且真的落库了 —— 不只是内存里的一个变量。
       final rows = await harness.db.select(harness.db.settings).get();
       expect(rows.map((r) => r.key), contains('view.listGroupBy'));
-
-      await disposeTree(tester);
     });
 
-    testWidgets('选中态跟着当前值走', (tester) async {
+    testAppWidgets('选中态跟着当前值走', (tester) async {
       await _pumpApp(tester);
       await _openSettings(tester);
 
@@ -189,11 +179,9 @@ void main() {
         findsNothing,
         reason: '换了之后旧的那个不该还带勾',
       );
-
-      await disposeTree(tester);
     });
 
-    testWidgets('圆角档位改完，卡片画出来的圆角跟着变', (tester) async {
+    testAppWidgets('圆角档位改完，卡片画出来的圆角跟着变', (tester) async {
       // 这条配置一路要穿过主题装配才到得了组件 ——
       // 中间断一节，设置页照样「看起来生效了」。
       await _pumpApp(tester);
@@ -221,8 +209,6 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(currentCorners(), CornerStyle.sharp, reason: '配置没走到主题里');
-
-      await disposeTree(tester);
     });
   });
 }

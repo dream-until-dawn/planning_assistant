@@ -38,7 +38,7 @@ Future<Harness> _pumpApp(WidgetTester tester, {bool seed = false}) async {
 }
 
 void main() {
-  testWidgets('J-01：新建一条任务，回到列表就能看见', (tester) async {
+  testAppWidgets('J-01：新建一条任务，回到列表就能看见', (tester) async {
     final harness = await _pumpApp(tester);
 
     // ── 冷启动落在空态上 ──────────────────────────────────────
@@ -70,11 +70,9 @@ void main() {
     final stored = await harness.db.select(harness.db.tasks).get();
     expect(stored, hasLength(1));
     expect(stored.single.title, '买菜');
-
-    await disposeTree(tester);
   });
 
-  testWidgets('标题为空时保存按钮点不动', (tester) async {
+  testAppWidgets('标题为空时保存按钮点不动', (tester) async {
     final harness = await _pumpApp(tester);
 
     await tester.tap(find.byKey(AppShell.fabKey));
@@ -86,11 +84,9 @@ void main() {
 
     expect(find.byType(TaskEditorPage), findsOneWidget, reason: '不该保存成功并返回');
     expect(await harness.db.select(harness.db.tasks).get(), isEmpty);
-
-    await disposeTree(tester);
   });
 
-  testWidgets('只有空格的标题也不算填了', (tester) async {
+  testAppWidgets('只有空格的标题也不算填了', (tester) async {
     // 不 trim 的话能存出一条看着空白、却怎么也搜不到的任务。
     final harness = await _pumpApp(tester);
 
@@ -103,11 +99,9 @@ void main() {
 
     expect(find.byType(TaskEditorPage), findsOneWidget);
     expect(await harness.db.select(harness.db.tasks).get(), isEmpty);
-
-    await disposeTree(tester);
   });
 
-  testWidgets('存完再开一次，表单是空的', (tester) async {
+  testAppWidgets('存完再开一次，表单是空的', (tester) async {
     // taskEditorProvider 是 autoDispose 的。不是的话，第二次进来
     // 标题框里还留着上一条的内容，用户会不小心建出重复任务。
     await _pumpApp(tester);
@@ -133,11 +127,9 @@ void main() {
       ),
     );
     expect(save.onTap, isNull, reason: '草稿没清干净，上一条的标题还在');
-
-    await disposeTree(tester);
   });
 
-  testWidgets('勾完成：就地划掉，不立即消失（§8.1）', (tester) async {
+  testAppWidgets('勾完成：就地划掉，不立即消失（§8.1）', (tester) async {
     final harness = await _pumpApp(tester);
 
     await tester.tap(find.byKey(AppShell.fabKey));
@@ -167,12 +159,10 @@ void main() {
 
     final undone = await harness.db.select(harness.db.tasks).get();
     expect(undone.single.status, 'pending', reason: '取消完成应当回到 pending');
-
-    await disposeTree(tester);
   });
 
   group('分类（FR-CFG-03、settings-spec §3.0）', () {
-    testWidgets('选一个分类，落库的是它的 id，列表上显示它的名字', (tester) async {
+    testAppWidgets('选一个分类，落库的是它的 id，列表上显示它的名字', (tester) async {
       final harness = await _pumpApp(tester, seed: true);
 
       await tester.tap(find.byKey(AppShell.fabKey));
@@ -198,11 +188,9 @@ void main() {
         find.descendant(of: find.byType(TaskCard), matching: find.text('工作')),
         findsOneWidget,
       );
-
-      await disposeTree(tester);
     });
 
-    testWidgets('选「未分类」写的是 NULL，不是某一行的 id（§3.0）', (tester) async {
+    testAppWidgets('选「未分类」写的是 NULL，不是某一行的 id（§3.0）', (tester) async {
       // 这是那条决定的落地检验：库里没有「未分类」那一行，
       // 选中它必须产出 NULL。若哪天有人给它建了一行，这条会红。
       final harness = await _pumpApp(tester, seed: true);
@@ -252,19 +240,16 @@ void main() {
         find.descendant(of: find.byType(TaskCard), matching: find.text('未分类')),
         findsOneWidget,
       );
-
-      await disposeTree(tester);
     });
 
-    testWidgets('「未分类」不是库里的一行', (tester) async {
+    testAppWidgets('「未分类」不是库里的一行', (tester) async {
       final harness = await _pumpApp(tester, seed: true);
       final rows = await harness.db.select(harness.db.categories).get();
       expect(rows.map((r) => r.name), isNot(contains('未分类')));
       expect(rows, hasLength(4));
-      await disposeTree(tester);
     });
 
-    testWidgets('不选分类时默认就是未分类', (tester) async {
+    testAppWidgets('不选分类时默认就是未分类', (tester) async {
       final harness = await _pumpApp(tester, seed: true);
 
       await tester.tap(find.byKey(AppShell.fabKey));
@@ -276,13 +261,11 @@ void main() {
 
       final stored = await harness.db.select(harness.db.tasks).get();
       expect(stored.single.categoryId, isNull);
-
-      await disposeTree(tester);
     });
   });
 
   group('框架自带的界面也说中文（NFR-A11Y-04）', () {
-    testWidgets('日期选择器是中文的，不是 Select date / OK', (tester) async {
+    testAppWidgets('日期选择器是中文的，不是 Select date / OK', (tester) async {
       // 真机上撞见过：满屏中文的应用里弹出一个英文对话框。
       // `flutter_localizations` 早就在 pubspec 里，只是没接上代理。
       //
@@ -302,12 +285,11 @@ void main() {
       // 关掉对话框，免得后面的 disposeTree 在弹层上拆树。
       await tester.tap(find.text('取消'));
       await tester.pumpAndSettle();
-      await disposeTree(tester);
     });
   });
 
   group('日期栏', () {
-    testWidgets('非全天时不给清空日期', (tester) async {
+    testAppWidgets('非全天时不给清空日期', (tester) async {
       // 清了就又回到「有时刻没哪天」。save() 那道兜底会补回来，
       // 但表单上不该出现那个瞬间 —— 用户看到的是「空着也能存」，
       // 存下去却有日期，两件事对不上。
@@ -327,11 +309,9 @@ void main() {
         findsNothing,
         reason: '非全天时不该有清除按钮',
       );
-
-      await disposeTree(tester);
     });
 
-    testWidgets('对照组：全天时可以清空日期', (tester) async {
+    testAppWidgets('对照组：全天时可以清空日期', (tester) async {
       // 否则「一律不给清」也能让上面那条绿，而那样日期就永远去不掉了。
       await _pumpApp(tester);
       await tester.tap(find.byKey(AppShell.fabKey));
@@ -351,13 +331,11 @@ void main() {
         findsOneWidget,
         reason: '全天 + 有日期时应当能清掉',
       );
-
-      await disposeTree(tester);
     });
   });
 
   group('阶段事项（FR-TASK-02）', () {
-    testWidgets('建一条两阶段的任务，卡片上显示进度', (tester) async {
+    testAppWidgets('建一条两阶段的任务，卡片上显示进度', (tester) async {
       final harness = await _pumpApp(tester);
 
       await tester.tap(find.byKey(AppShell.fabKey));
@@ -390,11 +368,9 @@ void main() {
       final stages = await harness.db.select(harness.db.stages).get();
       expect(stages.map((s) => s.title), containsAll(['打草稿', '定稿']));
       expect(stages.map((s) => s.orderIndex), containsAll([0, 1]));
-
-      await disposeTree(tester);
     });
 
-    testWidgets('只填一个阶段时保存按钮点不动，并说明原因', (tester) async {
+    testAppWidgets('只填一个阶段时保存按钮点不动，并说明原因', (tester) async {
       // 存下去会得到一个领域层直接拒绝的命令 —— 与其让它在保存时炸，
       // 不如当场挡住并告诉用户为什么。
       final harness = await _pumpApp(tester);
@@ -418,11 +394,9 @@ void main() {
 
       expect(find.byType(TaskEditorPage), findsOneWidget, reason: '不该保存成功');
       expect(await harness.db.select(harness.db.tasks).get(), isEmpty);
-
-      await disposeTree(tester);
     });
 
-    testWidgets('对照组：不加阶段时不出现那句提示', (tester) async {
+    testAppWidgets('对照组：不加阶段时不出现那句提示', (tester) async {
       // 否则「一直显示」也能让上面那条绿。
       await _pumpApp(tester);
       await tester.tap(find.byKey(AppShell.fabKey));
@@ -431,13 +405,11 @@ void main() {
       await tester.pump();
 
       expect(find.byKey(TaskEditorPage.blockedReasonKey), findsNothing);
-
-      await disposeTree(tester);
     });
   });
 
   group('重复任务（FR-TASK-03/04）', () {
-    testWidgets('建一条每周一三五的任务，规则以规范形落库', (tester) async {
+    testAppWidgets('建一条每周一三五的任务，规则以规范形落库', (tester) async {
       final harness = await _pumpApp(tester);
 
       await tester.tap(find.byKey(AppShell.fabKey));
@@ -463,11 +435,9 @@ void main() {
       expect(task.recurrenceRule, 'RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR');
       // 打开重复必须补上日期 —— RRULE 的展开以 DTSTART 为锚点。
       expect(task.planDate, isNotNull);
-
-      await disposeTree(tester);
     });
 
-    testWidgets('卡片上看得出这条会重复', (tester) async {
+    testAppWidgets('卡片上看得出这条会重复', (tester) async {
       // 重复任务与单次任务在卡片上本来一模一样，而它们的完成、删除、
       // 修改语义完全不同 —— 分不出来的话，用户会以为删的是一次。
       await _pumpApp(tester);
@@ -484,11 +454,9 @@ void main() {
       // 图标 + 文字都有（§8.1：不靠图标单独承载）。
       expect(find.byIcon(TaskCard.recurringIcon), findsOneWidget);
       expect(find.textContaining('每天'), findsOneWidget);
-
-      await disposeTree(tester);
     });
 
-    testWidgets('对照组：不重复的任务没有那个标记', (tester) async {
+    testAppWidgets('对照组：不重复的任务没有那个标记', (tester) async {
       await _pumpApp(tester);
       await tester.tap(find.byKey(AppShell.fabKey));
       await tester.pumpAndSettle();
@@ -498,11 +466,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byIcon(TaskCard.recurringIcon), findsNothing);
-
-      await disposeTree(tester);
     });
 
-    testWidgets('「到某天为止」没选日期时不给存', (tester) async {
+    testAppWidgets('「到某天为止」没选日期时不给存', (tester) async {
       // 存下去会得到一条永不结束的规则，而用户以为它会停。
       final harness = await _pumpApp(tester);
 
@@ -523,8 +489,6 @@ void main() {
 
       expect(find.byType(TaskEditorPage), findsOneWidget);
       expect(await harness.db.select(harness.db.tasks).get(), isEmpty);
-
-      await disposeTree(tester);
     });
   });
 }

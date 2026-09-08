@@ -105,10 +105,29 @@ final class TaskDraft {
     if (title.trim().isEmpty) return false;
     // 一个阶段都没添 = 单项任务，随便存。
     if (!recurrence.isValid) return false;
+    if (_endsBeforeItStarts) return false;
     if (stages.isEmpty) return true;
     // 添了就得够两个（0 也行，那是把加出来的空行全删了）。
     final filled = filledStages.length;
     return filled == 0 || filled >= 2;
+  }
+
+  /// 重复的结束日期早于开始日期。
+  ///
+  /// **这条只有在这里判得了** —— [RecurrenceDraft] 不知道任务是哪天开始的。
+  /// 日期选择器已经把下界卡在开始日期上了，但那只挡住「先定开始、再选结束」；
+  /// 反过来先选结束再把开始日期往后挪，就绕过去了。
+  /// 绕过去的结果是一条**一次都展不出来的规则**，而它长得完全正常。
+  bool get _endsBeforeItStarts {
+    final until = recurrence.until;
+    final start = planDate;
+    if (!recurrence.enabled ||
+        recurrence.endMode != RecurrenceEndMode.until ||
+        until == null ||
+        start == null) {
+      return false;
+    }
+    return until.isBefore(start);
   }
 
   /// 为什么不能存 —— 给界面显示用。null 表示能存。
@@ -117,6 +136,7 @@ final class TaskDraft {
     if (stages.isNotEmpty && filledStages.length == 1) {
       return '阶段事项至少要两个阶段';
     }
+    if (_endsBeforeItStarts) return '结束日期早于开始日期';
     return recurrence.blockedReason;
   }
 
