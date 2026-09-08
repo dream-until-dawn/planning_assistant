@@ -18,6 +18,7 @@ import '../../../../domain/entities/task.dart';
 import '../../../../domain/value_objects/task_status.dart';
 import '../../../task/application/recurrence_draft.dart';
 import '../../shared/application/category_providers.dart';
+import '../../shared/application/task_occurrence.dart';
 import '../../shared/application/view_shared_state.dart';
 import '../application/task_grouping.dart';
 import '../application/task_list_actions.dart';
@@ -112,19 +113,23 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
                   if (!_isCollapsed(group))
                     for (final task in group.tasks) ...[
                       TaskCard(
-                        data: _toCardData(task, categories, stages[task.id]),
+                        // **key 用行的 id，不是 taskId** —— 同一条规则
+                        // 展开出的几十行会共用一个 taskId，
+                        // 列表复用时会认错行：勾一行动的是另一行。
+                        key: ValueKey(task.id),
+                        data: _toCardData(
+                          task,
+                          categories,
+                          stages[task.taskId],
+                        ),
                         // 就地完成（view-specs §0.3）。
                         //
                         // 完成后**不立即消失**（design-system §8.1）——
                         // 卡片留在原位只是划掉，给撤销留时间。
                         // 「完成即消失」在误触时最伤：那条任务去哪了、
                         // 怎么找回来，用户完全没有线索。
-                        onToggleDone: () => ref
-                            .read(toggleTaskDoneProvider)
-                            .call(
-                              taskId: task.id,
-                              isDone: task.status == TaskStatus.done,
-                            ),
+                        onToggleDone: () =>
+                            ref.read(toggleTaskDoneProvider).call(task),
                       ),
                       const SizedBox(height: Spacing.cardGap),
                     ],
@@ -192,16 +197,18 @@ class _GroupHeader extends StatelessWidget {
 /// 卡片是纯展示的，不认识 [Task]（design-system §8.1 的分工），
 /// 所以整形放在这里。
 TaskCardData _toCardData(
-  Task task,
+  TaskOccurrence row,
   Map<String, Category> categories,
   List<Stage>? stages,
 ) {
+  final task = row.task;
   // `categoryId == null` 就是未分类（settings-spec §3.0）——
   // 查不到也当未分类：那说明分类被删了，而删分类不该让任务消失。
   final category = task.categoryId == null ? null : categories[task.categoryId];
 
   return TaskCardData(
-    title: task.title,
+    // 标题走**行**的：例外可以只改某一次的标题（FR-TASK-05）。
+    title: row.title,
     // 重复任务的副信息里带上规则本身 —— 图标是辅助，
     // 文字才是「颜色/图标不单独承载信息」那条要求的落点（§8.1）。
     categoryName: task.isRecurring
@@ -210,10 +217,12 @@ TaskCardData _toCardData(
     categoryColor: category == null
         ? Uncategorized.color
         : Color(category.colorArgb),
-    timeLabel: _timeLabelOf(task),
+    timeLabel: _timeLabelOf(row),
     stageProgress: _progressOf(stages),
     isRecurring: task.isRecurring,
-    isDone: task.status == TaskStatus.done,
+    // 状态也走**行**的 —— 重复任务的 tasks.status 恒为 pending，
+    // 看它的话每一次都显示成未完成（data-model §4.3）。
+    isDone: row.status == TaskStatus.done,
   );
 }
 
@@ -257,10 +266,11 @@ String _describeRule(Task task) {
 /// 摆在卡片上只会让人以为它有安排。编辑器现在不会再产出这种数据
 /// （关掉全天会自动补今天），但**库里可能已经有** —— 早期版本存下的、
 /// 或将来导入进来的。渲染层照着不变量来，比相信数据一定干净稳妥。
-String? _timeLabelOf(Task task) {
-  if (task.isAllDay) return null;
-  if (task.planDate == null) return null;
-  final m = task.startMinute;
+String? _timeLabelOf(TaskOccurrence row) {
+  // 走**行**的字段：被例外挪到别的时刻的那一次，卡片上要显示挪之后的。
+  if (row.isAllDay) return null;
+  if (row.planDate == null) return null;
+  final m = row.startMinute;
   if (m == null) return null;
   return '${m.hour.toString().padLeft(2, '0')}:'
       '${m.minute.toString().padLeft(2, '0')}';

@@ -11,6 +11,7 @@ import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/domain/entities/category.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/domain/value_objects/task_status.dart';
+import 'package:planning_assistant/features/views/shared/application/task_occurrence.dart';
 import 'package:planning_assistant/features/views/task_list/application/task_grouping.dart';
 
 /// 2026-09-08 是**周二** —— 挑它是为了让「本周」有前有后：
@@ -18,7 +19,7 @@ import 'package:planning_assistant/features/views/task_list/application/task_gro
 /// 挑周日的话「本周」是空的，那条规则等于没验。
 const _today = PlanDate(2026, 9, 8);
 
-Task _task(
+TaskOccurrence _task(
   String id, {
   PlanDate? date,
   MinuteOfDay? minute,
@@ -27,18 +28,20 @@ Task _task(
   String? categoryId,
   double sortOrder = 0,
   bool isAllDay = false,
-}) => Task(
-  id: id,
-  title: id,
-  kind: TaskKind.single,
-  timeZoneId: 'Asia/Shanghai',
-  planDate: date,
-  startMinute: minute,
-  status: status,
-  priority: priority,
-  categoryId: categoryId,
-  sortOrder: sortOrder,
-  isAllDay: isAllDay,
+}) => TaskOccurrence(
+  task: Task(
+    id: id,
+    title: id,
+    kind: TaskKind.single,
+    timeZoneId: 'Asia/Shanghai',
+    planDate: date,
+    startMinute: minute,
+    status: status,
+    priority: priority,
+    categoryId: categoryId,
+    sortOrder: sortOrder,
+    isAllDay: isAllDay,
+  ),
 );
 
 List<String> _keys(List<TaskGroup> groups) => groups.map((g) => g.key).toList();
@@ -47,7 +50,7 @@ List<String> _idsIn(List<TaskGroup> groups, String key) =>
     groups.firstWhere((g) => g.key == key).tasks.map((t) => t.id).toList();
 
 List<TaskGroup> _group(
-  List<Task> tasks, {
+  List<TaskOccurrence> tasks, {
   ListGroupBy groupBy = ListGroupBy.date,
   ListSortBy sortBy = ListSortBy.time,
   List<Category> categories = const [],

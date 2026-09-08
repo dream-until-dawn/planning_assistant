@@ -11,6 +11,7 @@ import '../../../../core/time/plan_date.dart';
 import '../../../../domain/entities/category.dart';
 import '../../../../domain/entities/task.dart';
 import '../../../../domain/value_objects/task_status.dart';
+import '../../shared/application/task_occurrence.dart';
 
 /// 分组维度（配置项 `view.listGroupBy`）。
 enum ListGroupBy {
@@ -72,7 +73,7 @@ final class TaskGroup {
   final String key;
 
   final String title;
-  final List<Task> tasks;
+  final List<TaskOccurrence> tasks;
 
   /// 默认折叠。目前只有「逾期」是（§2.4）——
   /// 展开是用户的主动选择，避免一打开就被一堆红字压住。
@@ -106,7 +107,7 @@ enum DateBucket {
 /// **已完成的逾期任务不算逾期**：它做完了，只是做晚了。
 /// 把它塞进逾期组会让那个计数一直下不去，而计数正是用户判断
 /// 「还欠多少」的依据。
-DateBucket bucketOf(Task task, PlanDate today) {
+DateBucket bucketOf(TaskOccurrence task, PlanDate today) {
   final date = task.planDate;
   if (date == null) return DateBucket.noDate;
 
@@ -130,7 +131,7 @@ DateBucket bucketOf(Task task, PlanDate today) {
 ///
 /// [categories] 用于「按分类」分组时取名字与顺序；其余维度用不到。
 List<TaskGroup> groupTasks(
-  List<Task> tasks, {
+  List<TaskOccurrence> tasks, {
   required ListGroupBy groupBy,
   required ListSortBy sortBy,
   required PlanDate today,
@@ -156,9 +157,9 @@ List<TaskGroup> groupTasks(
   ];
 }
 
-List<TaskGroup> _byDate(List<Task> tasks, PlanDate today) {
-  final buckets = <DateBucket, List<Task>>{
-    for (final b in DateBucket.values) b: <Task>[],
+List<TaskGroup> _byDate(List<TaskOccurrence> tasks, PlanDate today) {
+  final buckets = <DateBucket, List<TaskOccurrence>>{
+    for (final b in DateBucket.values) b: <TaskOccurrence>[],
   };
   for (final task in tasks) {
     buckets[bucketOf(task, today)]!.add(task);
@@ -175,12 +176,14 @@ List<TaskGroup> _byDate(List<Task> tasks, PlanDate today) {
 }
 
 List<TaskGroup> _byCategory(
-  List<Task> tasks,
+  List<TaskOccurrence> tasks,
   List<Category> categories,
   String uncategorizedTitle,
 ) {
-  final byId = <String, List<Task>>{for (final c in categories) c.id: <Task>[]};
-  final uncategorized = <Task>[];
+  final byId = <String, List<TaskOccurrence>>{
+    for (final c in categories) c.id: <TaskOccurrence>[],
+  };
+  final uncategorized = <TaskOccurrence>[];
 
   for (final task in tasks) {
     final id = task.categoryId;
@@ -207,7 +210,7 @@ List<TaskGroup> _byCategory(
   ];
 }
 
-List<TaskGroup> _byPriority(List<Task> tasks) {
+List<TaskGroup> _byPriority(List<TaskOccurrence> tasks) {
   // 紧急 → 高 → 普通 → 低 → 无（§2.1），即 value 降序。
   const order = [
     TaskPriority.urgent,
@@ -233,7 +236,7 @@ List<TaskGroup> _byPriority(List<Task> tasks) {
   ];
 }
 
-List<TaskGroup> _byStatus(List<Task> tasks) {
+List<TaskGroup> _byStatus(List<TaskOccurrence> tasks) {
   // 进行中 → 待办 → 已完成（§2.1）。
   const order = [
     (TaskStatus.inProgress, '进行中'),
@@ -262,9 +265,13 @@ List<TaskGroup> _byStatus(List<Task> tasks) {
 ///
 /// **每种排序都以 `id` 收尾**，让顺序完全确定：主键相等时不兜底的话，
 /// 同一份数据两次渲染可能不同序 —— 列表跳动，golden 随机变红。
-List<Task> _sorted(List<Task> tasks, ListSortBy sortBy, PlanDate today) {
+List<TaskOccurrence> _sorted(
+  List<TaskOccurrence> tasks,
+  ListSortBy sortBy,
+  PlanDate today,
+) {
   final list = [...tasks];
-  int byId(Task a, Task b) => a.id.compareTo(b.id);
+  int byId(TaskOccurrence a, TaskOccurrence b) => a.id.compareTo(b.id);
 
   switch (sortBy) {
     case ListSortBy.time:

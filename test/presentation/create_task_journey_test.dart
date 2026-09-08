@@ -640,8 +640,11 @@ void main() {
       await tester.pumpAndSettle();
 
       // 图标 + 文字都有（§8.1：不靠图标单独承载）。
-      expect(find.byIcon(TaskCard.recurringIcon), findsOneWidget);
-      expect(find.textContaining('每天'), findsOneWidget);
+      //
+      // **不止一张**：「每天」在列表里展开成窗口内的每一天
+      // （view-specs §0.2、`ListHorizon`），每一次都是一张卡片。
+      expect(find.byIcon(TaskCard.recurringIcon), findsWidgets);
+      expect(find.textContaining('每天'), findsWidgets);
     });
 
     testAppWidgets('卡片上的规则说明要准，不能只说对一半', (tester) async {
@@ -670,10 +673,105 @@ void main() {
       await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('每 3 周'), findsOneWidget);
+      // **不止一张卡片**：重复任务现在在列表里展开成多次发生
+      // （view-specs §0.2），每一次都带着同一句规则说明。
+      expect(find.textContaining('每 3 周'), findsWidgets);
       // 「每周」曾经是这里显示的内容 —— 它是错的，必须不在。
       // （「每 3 周」里不含「每周」这两个连续的字，所以这条不会自相矛盾。）
       expect(find.textContaining('未分类 · 每周'), findsNothing);
+    });
+
+    testAppWidgets('勾其中一次：不再抛异常，而且只影响那一次', (tester) async {
+      // **这条以前是崩的。** 重复任务的 tasks.status 恒为 pending
+      // （data-model §4.3，领域不变量强制），而完成钮走的是
+      // ChangeTaskStatusCommand —— 落库前被不变量直接拒掉，
+      // 用户点一下那个圈就抛 DomainInvariantViolation。
+      final harness = await _pumpApp(tester);
+
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
+      await tester.pump();
+      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      // 展开成多行（view-specs §0.2）。
+      final cards = find.byType(TaskCard);
+      expect(
+        cards.evaluate().length,
+        greaterThan(1),
+        reason: '每天重复的任务在列表里该是每天一行，不是一行',
+      );
+
+      // 勾第一行。
+      await tester.tap(find.byKey(TaskCard.doneButtonKey).first);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: '勾重复任务不该抛');
+
+      // 落的是**例外**，不是 tasks.status。
+      final task = (await harness.db.select(harness.db.tasks).get()).single;
+      expect(
+        task.status,
+        'pending',
+        reason: '重复任务的 tasks.status 恒为 pending —— 真实状态在例外里',
+      );
+      final overrides = await harness.db
+          .select(harness.db.occurrenceOverrides)
+          .get();
+      expect(overrides, hasLength(1), reason: '只该给被勾的那一次落一条例外');
+      expect(overrides.single.status, 'done');
+      expect(overrides.single.completedAt, isNotNull);
+    });
+
+    testAppWidgets('再勾一次 = 取消，例外被删掉', (tester) async {
+      // 不是写一条 pending 的例外 —— 那会让「从没动过」与
+      // 「动过又撤回」在库里长得不一样，而它们对用户是同一件事。
+      final harness = await _pumpApp(tester);
+
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
+      await tester.pump();
+      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      final done = find.byKey(TaskCard.doneButtonKey).first;
+      await tester.tap(done);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TaskCard.doneButtonKey).first);
+      await tester.pumpAndSettle();
+
+      final live =
+          (await harness.db.select(harness.db.occurrenceOverrides).get()).where(
+            (o) => o.deletedAt == null,
+          );
+      expect(live, isEmpty, reason: '取消完成应当回到「跟随规则」，而不是留一条例外');
+    });
+
+    testAppWidgets('对照组：不重复的任务仍然走 tasks.status', (tester) async {
+      // 两条路走错任何一条都会出问题：普通任务若走例外那条，
+      // 完成状态会落在一张与它无关的表上，列表看起来毫无反应。
+      final harness = await _pumpApp(tester);
+
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '买菜');
+      await tester.pump();
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(TaskCard.doneButtonKey).first);
+      await tester.pumpAndSettle();
+
+      final task = (await harness.db.select(harness.db.tasks).get()).single;
+      expect(task.status, 'done');
+      expect(
+        await harness.db.select(harness.db.occurrenceOverrides).get(),
+        isEmpty,
+        reason: '不重复的任务不该产生例外行',
+      );
     });
 
     testAppWidgets('对照组：不重复的任务没有那个标记', (tester) async {

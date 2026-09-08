@@ -7,9 +7,10 @@ import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/domain/value_objects/task_status.dart';
 import 'package:planning_assistant/features/views/shared/application/task_filter.dart';
+import 'package:planning_assistant/features/views/shared/application/task_occurrence.dart';
 import 'package:planning_assistant/features/views/shared/application/view_shared_state.dart';
 
-Task _task(
+TaskOccurrence _task(
   String id, {
   String? title,
   String? note,
@@ -17,19 +18,22 @@ Task _task(
   TaskStatus status = TaskStatus.pending,
   TaskPriority priority = TaskPriority.normal,
   PlanDate? date,
-}) => Task(
-  id: id,
-  title: title ?? id,
-  note: note,
-  kind: TaskKind.single,
-  timeZoneId: 'Asia/Shanghai',
-  categoryId: categoryId,
-  status: status,
-  priority: priority,
-  planDate: date,
+}) => TaskOccurrence(
+  task: Task(
+    id: id,
+    title: title ?? id,
+    note: note,
+    kind: TaskKind.single,
+    timeZoneId: 'Asia/Shanghai',
+    categoryId: categoryId,
+    status: status,
+    priority: priority,
+    planDate: date,
+  ),
 );
 
-List<String> _ids(List<Task> tasks) => tasks.map((t) => t.id).toList();
+List<String> _ids(List<TaskOccurrence> tasks) =>
+    tasks.map((t) => t.id).toList();
 
 void main() {
   group('空筛选不筛', () {

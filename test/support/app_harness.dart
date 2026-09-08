@@ -16,6 +16,7 @@ import 'package:meta/meta.dart';
 import 'package:planning_assistant/app_providers.dart';
 import 'package:planning_assistant/core/id/id_generator.dart';
 import 'package:planning_assistant/core/time/clock.dart';
+import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/core/time/time_zone_resolver.dart';
 import 'package:planning_assistant/data/database/app_database.dart';
 import 'package:planning_assistant/data/database/dao/synced_dao.dart';
@@ -23,6 +24,10 @@ import 'package:planning_assistant/data/repositories/category_repository_impl.da
 import 'package:planning_assistant/data/repositories/settings_repository_impl.dart';
 import 'package:planning_assistant/data/repositories/task_repository_impl.dart';
 import 'package:planning_assistant/domain/commands/command_dispatcher.dart';
+import 'package:planning_assistant/domain/entities/category.dart';
+import 'package:planning_assistant/domain/entities/task.dart';
+import 'package:planning_assistant/features/views/shared/application/category_providers.dart';
+import 'package:planning_assistant/features/views/task_list/application/task_list_providers.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 
 /// 一套装好的依赖，供 `ProviderScope(overrides: ...)` 使用。
@@ -141,6 +146,32 @@ void testAppWidgets(
     }
   });
 }
+
+/// 列表流水线要的一整套 override，**喂固定数据、不开库**。
+///
+/// 三处测试原本各自手写一份（外壳、列表页、外壳 golden）。
+/// 展开重复任务那次给流水线加了两个新依赖（时区换算器、例外流），
+/// **三处一起红**，而报错是「provider 处于错误状态」——
+/// 离「少了个 override」隔着两层。
+///
+/// 集中在这里：以后流水线再多一个依赖，只改这一处。
+List<Override> listPipelineOverrides({
+  List<Task> tasks = const [],
+  List<Category> categories = const [],
+  required PlanDate today,
+}) => [
+  visibleTasksProvider.overrideWith((ref) => Stream.value(tasks)),
+  categoriesProvider.overrideWith((ref) => Stream.value(categories)),
+  allOverridesProvider.overrideWith((ref) => Stream.value(const [])),
+  // 展开按墙钟进行，要时区换算器。夹具里的任务多数不重复，
+  // 但展开那一步照样会读它。
+  timeZoneResolverProvider.overrideWithValue(
+    const TzTimeZoneResolver(fixedCurrentZoneId: 'Asia/Shanghai'),
+  ),
+  // **「今天」必须钉死**，否则日期分组会随跑测试的日子变 ——
+  // 今天绿明天红，而那种红看不出是代码变了还是日历翻页了。
+  todayProvider.overrideWithValue(today),
+];
 
 /// 设定测试里的「屏幕」。**两处都要设。**
 ///

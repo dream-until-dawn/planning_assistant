@@ -12,6 +12,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app_providers.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
+import 'package:planning_assistant/core/time/time_zone_resolver.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
@@ -54,6 +55,12 @@ Future<void> _pump(
       overrides: [
         visibleTasksProvider.overrideWith((ref) => Stream.value(tasks)),
         categoriesProvider.overrideWith((ref) => Stream.value(const [])),
+        // 展开需要时区换算器（重复任务要按墙钟展开）。
+        // 这些用例里的任务都不重复，但展开那一步照样会读它。
+        timeZoneResolverProvider.overrideWithValue(
+          const TzTimeZoneResolver(fixedCurrentZoneId: 'Asia/Shanghai'),
+        ),
+        allOverridesProvider.overrideWith((ref) => Stream.value(const [])),
         // 钉死「今天」，否则这些断言会随跑测试的日子变。
         todayProvider.overrideWithValue(_today),
       ],

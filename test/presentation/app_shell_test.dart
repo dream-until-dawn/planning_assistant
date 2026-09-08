@@ -15,14 +15,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
-import 'package:planning_assistant/app_providers.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/design/components/empty_state.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
-import 'package:planning_assistant/features/views/shared/application/category_providers.dart';
 import 'package:planning_assistant/features/views/shared/application/view_kind.dart';
-import 'package:planning_assistant/features/views/task_list/application/task_list_providers.dart';
+
+import '../support/app_harness.dart';
 
 /// **不接真库**：这些断言要的只是「外壳画对了没有」，
 /// 仓库怎么过滤墓碑、怎么排序与它无关。接真库还会带来 drift
@@ -31,11 +30,8 @@ import 'package:planning_assistant/features/views/task_list/application/task_lis
 /// 但也不能一个覆盖都不给 —— 外壳上的筛选条会读分类，
 /// 裸 ProviderScope 下它直接抛，整个应用起不来，
 /// 那时测的就不是「外壳对不对」了。
-List<Override> _overrides() => [
-  visibleTasksProvider.overrideWith((ref) => Stream.value(const [])),
-  categoriesProvider.overrideWith((ref) => Stream.value(const [])),
-  todayProvider.overrideWithValue(const PlanDate(2026, 9, 8)),
-];
+List<Override> _overrides() =>
+    listPipelineOverrides(today: const PlanDate(2026, 9, 8));
 
 Future<void> _pumpApp(WidgetTester tester) async {
   await tester.pumpWidget(

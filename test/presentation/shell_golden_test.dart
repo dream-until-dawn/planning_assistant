@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app_providers.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
+import 'package:planning_assistant/core/time/time_zone_resolver.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
 import 'package:planning_assistant/design/tokens/dimensions.dart';
 import 'package:planning_assistant/domain/entities/category.dart';
@@ -185,6 +186,11 @@ Widget _wrap(
     // 分类同样直接覆盖 —— 理由同上：这张图要的是一份确定的数据，
     // 仓库怎么排序、怎么过滤墓碑与它无关。
     categoriesProvider.overrideWith((ref) => Stream.value(_categories)),
+    // 展开重复任务要用到时区换算器；这些夹具都不重复，但那一步照读。
+    timeZoneResolverProvider.overrideWithValue(
+      const TzTimeZoneResolver(fixedCurrentZoneId: 'Asia/Shanghai'),
+    ),
+    allOverridesProvider.overrideWith((ref) => Stream.value(const [])),
     // **「今天」必须钉死。** 不钉的话日期分组的标题会随着跑测试的日子变，
     // 今天拍的图明天就红 —— 而那种红看不出是代码变了还是日历翻页了。
     todayProvider.overrideWithValue(_today),

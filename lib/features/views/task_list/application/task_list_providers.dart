@@ -9,12 +9,16 @@ library;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../app_providers.dart';
+import '../../../../domain/entities/occurrence_override.dart';
 import '../../../../domain/entities/stage.dart';
 import '../../../../domain/entities/task.dart';
+import '../../../../domain/recurrence/recurrence_engine.dart';
 import '../../../settings/application/registry.dart';
 import '../../../settings/application/settings_providers.dart';
 import '../../shared/application/category_providers.dart';
+import '../../shared/application/occurrence_expansion.dart';
 import '../../shared/application/task_filter.dart';
+import '../../shared/application/task_occurrence.dart';
 import '../../shared/application/view_shared_state.dart';
 import 'task_grouping.dart';
 
@@ -28,17 +32,46 @@ final visibleTasksProvider = StreamProvider<List<Task>>(
   (ref) => ref.watch(taskRepositoryProvider).watchTasks(),
 );
 
-/// 筛选后的任务（view-specs §2.3）。
+/// 全部单次例外的流（FR-TASK-05）。
+///
+/// **必须是顶层 provider**，与 [allStagesProvider] 同一条理由：
+/// 在别的 provider 体内内联构造 `StreamProvider` 会每次重建出一个新对象，
+/// `watch` 于是不停重新订阅 —— 测试表现为「did not complete」，
+/// 看不出是死循环。
+final allOverridesProvider = StreamProvider<List<OccurrenceOverride>>(
+  (ref) => ref.watch(taskRepositoryProvider).watchAllOverrides(),
+);
+
+/// 展开成「一行一次发生」（view-specs §0.2）。
+///
+/// 重复任务在这里变成多行；不重复与无日期的仍是一行。
+/// 展开窗口见 [ListHorizon]。
+final visibleOccurrencesProvider = Provider<List<TaskOccurrence>>((ref) {
+  final tasks = ref.watch(visibleTasksProvider);
+  final overrides = ref.watch(allOverridesProvider);
+  return switch (tasks) {
+    AsyncData(:final value) => expandForList(
+      tasks: value,
+      // 例外还没读出来时先按「没有例外」展开 —— 下一帧到了自动重算。
+      // 抛或者卡住的话，首帧会是一屏错误，而它其实只是还没读完。
+      overrides: switch (overrides) {
+        AsyncData(:final value) => value,
+        _ => const [],
+      },
+      today: ref.watch(todayProvider),
+      engine: RecurrenceEngine(ref.watch(timeZoneResolverProvider)),
+    ),
+    _ => const [],
+  };
+});
+
+/// 筛选后的行（view-specs §2.3）。
 ///
 /// 筛选状态来自 `viewSharedStateProvider` —— 四个视图共用同一份
 /// （FR-VIEW-05），所以它不属于列表这个 feature。
-final filteredTasksProvider = Provider<List<Task>>((ref) {
-  final tasks = ref.watch(visibleTasksProvider);
+final filteredTasksProvider = Provider<List<TaskOccurrence>>((ref) {
   final filter = ref.watch(viewSharedStateProvider).filter;
-  return switch (tasks) {
-    AsyncData(:final value) => applyFilter(value, filter),
-    _ => const [],
-  };
+  return applyFilter(ref.watch(visibleOccurrencesProvider), filter);
 });
 
 /// 分好组、排好序的列表。

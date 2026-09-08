@@ -6,19 +6,22 @@
 /// 「两处碰巧实现得一样」。
 library;
 
-import '../../../../domain/entities/task.dart';
+import 'task_occurrence.dart';
 import 'view_shared_state.dart';
 
 /// 按 [filter] 筛出任务。
 ///
 /// 维度之间取交集，维度之内取并集；**空集合表示不筛这个维度**
 /// （理由见 [FilterSpec] 的注释）。
-List<Task> applyFilter(List<Task> tasks, FilterSpec filter) {
+List<TaskOccurrence> applyFilter(
+  List<TaskOccurrence> tasks,
+  FilterSpec filter,
+) {
   if (filter.isEmpty) return tasks;
   return tasks.where((t) => _matches(t, filter)).toList();
 }
 
-bool _matches(Task task, FilterSpec filter) {
+bool _matches(TaskOccurrence task, FilterSpec filter) {
   if (filter.categoryIds.isNotEmpty &&
       !filter.categoryIds.contains(task.categoryId)) {
     return false;
@@ -42,7 +45,7 @@ bool _matches(Task task, FilterSpec filter) {
 ///
 /// 两端 `trim`：用户从别处粘贴常带空格，而带空格的关键词一条都匹配不上，
 /// 表现是「搜什么都没有」。
-bool _matchesKeyword(Task task, String? keyword) {
+bool _matchesKeyword(TaskOccurrence task, String? keyword) {
   final needle = keyword?.trim().toLowerCase();
   if (needle == null || needle.isEmpty) return true;
 
@@ -56,7 +59,7 @@ bool _matchesKeyword(Task task, String? keyword) {
 /// **没有日期的任务在有日期范围时被排除。** 它不落在任何区间里 ——
 /// 「9 月的事」不该包含一件没定哪天的事。
 /// 反过来（无日期永远保留）会让日期范围形同虚设。
-bool _matchesDateRange(Task task, FilterSpec filter) {
+bool _matchesDateRange(TaskOccurrence task, FilterSpec filter) {
   final from = filter.dateFrom;
   final to = filter.dateTo;
   if (from == null && to == null) return true;
