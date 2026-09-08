@@ -630,9 +630,6 @@ class _SelectedDayList extends ConsumerWidget {
       );
     }
 
-    final categories = ref.watch(categoryByIdProvider);
-    final stages = ref.watch(stagesByTaskProvider);
-
     return ListView.separated(
       key: CalendarPage.selectedListKey,
       padding: const EdgeInsets.all(Spacing.pageHorizontal),
@@ -642,7 +639,7 @@ class _SelectedDayList extends ConsumerWidget {
         final row = rows[i];
         return TaskCard(
           key: ValueKey(row.id),
-          data: occurrenceCardData(row, categories, stages[row.taskId]),
+          data: cardDataOf(ref, row),
           onToggleDone: () => ref.read(toggleTaskDoneProvider)(row),
           onTap: () => _openRow(context, row, onEditTask),
         );

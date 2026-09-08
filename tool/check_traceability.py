@@ -60,9 +60,8 @@ EXEMPT = {
     # 这两条不是「排在后面」，是**排在这儿而漏了**。
     # 放进豁免表只是为了让门禁能跑，不是免了它们的账 ——
     # roadmap 里各有一条记着。
-    'FR-TASK-07': '**欠账**：每个发生实例独立的阶段完成状态。'
-    '表 stage_occurrence_states 和 DAO 都在，领域层以上一片空白；'
-    '对应 recurrence-engine 的 R-50/R-51/R-52，roadmap 记的到期是「M3 阶段编辑」',
+    # FR-TASK-07 当晚就补完了，所以不在这张表里 —— 它现在由
+    # stage_occurrence_state_test.dart 与 stage_occurrence_test.dart 点名。
     'FR-TASK-09': '**欠账**：子任务清单（checklist）。'
     '表和导出都有了，界面上一个入口都没有',
 }

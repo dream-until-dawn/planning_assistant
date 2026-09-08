@@ -11,6 +11,7 @@ import '../../core/time/time_zone_resolver.dart';
 import '../entities/occurrence.dart';
 import '../entities/occurrence_override.dart';
 import '../entities/stage.dart';
+import '../entities/stage_occurrence_state.dart';
 import '../entities/task.dart';
 import '../policies/task_lifecycle.dart';
 import '../recurrence/recurrence_engine.dart';
@@ -94,6 +95,8 @@ final class CommandDispatcher {
         );
       case CompleteTaskWithStagesCommand():
         await _completeWithStages(command);
+      case SetStageOccurrenceStatusCommand():
+        await _setStageOccurrenceStatus(command);
     }
   }
 
@@ -172,6 +175,28 @@ final class CommandDispatcher {
   /// `completedAt` 与任务侧同一套语义：转 done 时记下**实际点完成的
   /// 那一刻**（不是计划时间，data-model §5），转别的状态时清掉。
   /// 少了这一步，「今天完成的」这类查询会把历史上完成过的也算进来。
+  /// 某一次里某个阶段的状态（FR-TASK-07）。
+  ///
+  /// 行 id 由 (stageId, occurrenceKey) 派生，所以这是一次**覆盖写** ——
+  /// 连点两下不会攒出两行互相矛盾的状态。
+  Future<void> _setStageOccurrenceStatus(
+    SetStageOccurrenceStatusCommand c,
+  ) async {
+    await _repo.saveStageState(
+      StageOccurrenceState(
+        id: StageOccurrenceState.idFor(c.stageId, c.occurrenceKey),
+        taskId: c.taskId,
+        stageId: c.stageId,
+        occurrenceKey: c.occurrenceKey,
+        status: c.status,
+        // 与 `applyStatusChange` 同一条不变量：completedAt 与 status
+        // 同进同退。取消完成时必须清掉，否则下次它会显示成
+        // 「未完成，但完成于上周三」。
+        completedAt: c.status == TaskStatus.done ? _clock.nowUtc() : null,
+      ),
+    );
+  }
+
   Future<void> _setOccurrenceStatus(SetOccurrenceStatusCommand c) async {
     final status = c.status;
     if (status == null) {
