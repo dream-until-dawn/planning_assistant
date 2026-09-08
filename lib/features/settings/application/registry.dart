@@ -20,6 +20,7 @@ library;
 import '../../../core/time/weekday.dart';
 import '../../../design/tokens/dimensions.dart';
 import '../../views/calendar/application/calendar_split.dart';
+import '../../views/gantt/application/gantt_layout.dart';
 import '../../views/shared/application/view_kind.dart';
 import '../../views/task_list/application/task_grouping.dart';
 import '../domain/setting_spec.dart';
@@ -82,6 +83,7 @@ final List<SettingSpecBase> settingsRegistry = [
   timelineTickMinutes,
   firstDayOfWeek,
   calendarSplitRatio,
+  ganttLaneBy,
   defaultCategoryId,
   swipeRight,
   swipeLeft,
@@ -265,6 +267,22 @@ final SettingSpec<Weekday> firstDayOfWeek = _enumSpec(
   group: SettingGroup.view,
   label: '一周从哪天开始',
   description: '影响日历的排列',
+);
+
+/// 甘特的泳道按什么分（view-specs §4.3）。
+///
+/// 规格里还列了 `tag`，**没做** —— 模型里没有标签这个东西
+/// （`domain/entities/` 下没有 tag）。列上去的话用户能选一个
+/// 选了没反应的维度，比没有这个选项更糟（同「默认视图」那条）。
+final SettingSpec<GanttLaneBy> ganttLaneBy = _enumSpec(
+  key: 'view.ganttLaneBy',
+  defaultValue: GanttLaneBy.category,
+  options: const [(GanttLaneBy.category, '按分类'), (GanttLaneBy.task, '按任务')],
+  storageKeyOf: (v) => v.storageKey,
+  fromStorageKey: GanttLaneBy.fromStorageKey,
+  group: SettingGroup.view,
+  label: '甘特泳道',
+  description: '甘特图按什么分列',
 );
 
 /// 日历上下两半的比例（view-specs §3.1「比例可拖拽，记住用户选择」）。

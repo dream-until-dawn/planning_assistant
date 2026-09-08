@@ -35,6 +35,7 @@ import 'features/shell/presentation/app_shell.dart';
 import 'features/task/application/task_editor_controller.dart';
 import 'features/task/presentation/task_editor_page.dart';
 import 'features/views/calendar/presentation/calendar_page.dart';
+import 'features/views/gantt/presentation/gantt_view.dart';
 import 'features/views/shared/application/view_kind.dart';
 import 'features/views/shared/presentation/filter_bar.dart';
 import 'features/views/task_list/presentation/task_list_page.dart';
@@ -62,6 +63,11 @@ final Map<ViewKind, Widget Function(BuildContext, VoidCallback?)> viewRegistry =
             context.go(AppRoutes.editTask(id, from: from)),
       ),
       ViewKind.calendar: (context, onCreateTask) => CalendarPage(
+        onCreateTask: onCreateTask,
+        onEditTask: (id, {from}) =>
+            context.go(AppRoutes.editTask(id, from: from)),
+      ),
+      ViewKind.gantt: (context, onCreateTask) => GanttView(
         onCreateTask: onCreateTask,
         onEditTask: (id, {from}) =>
             context.go(AppRoutes.editTask(id, from: from)),

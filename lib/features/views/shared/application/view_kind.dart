@@ -41,10 +41,14 @@ enum ViewKind {
   ///
   /// 放在枚举上而不是组合根：设置页属于 settings feature，
   /// 够不到组合根（module-map §3），而它确实需要知道这件事。
+  /// M3 做完之后是全部四个。**仍然保留这个集合**，不改成
+  /// 「等于 values」的写法：它的用处是「已实装」与「已声明」之间
+  /// 可以不一致，而 M4 加新视图时那个差又会回来。
   static const Set<ViewKind> implemented = {
     ViewKind.list,
     ViewKind.timeline,
     ViewKind.calendar,
+    ViewKind.gantt,
   };
 
   /// 从配置里存的字符串还原。
