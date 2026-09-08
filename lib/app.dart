@@ -51,13 +51,13 @@ final Map<ViewKind, Widget Function(BuildContext, VoidCallback?)> viewRegistry =
 
 /// 尚未实装的视图，M3 逐个搬进 [viewRegistry]。
 ///
-/// 显式列出来，而不是让守卫去猜 —— 「没实现」和「忘了注册」
-/// 在代码里长得一模一样，只有写下来才分得开。
-const Set<ViewKind> unimplementedViews = {
-  ViewKind.timeline,
-  ViewKind.calendar,
-  ViewKind.gantt,
-};
+/// **由 `ViewKind.implemented` 推导，不再手写一份。** 手写两份的话，
+/// 「哪些视图能用」就有了两个事实来源：注册表、这张名单、
+/// 以及设置页的选项 —— 三处迟早分叉，而分叉的表现是
+/// 「设置页能选，切过去白屏」。
+final Set<ViewKind> unimplementedViews = ViewKind.values.toSet().difference(
+  ViewKind.implemented,
+);
 
 /// 路由表（view-specs §7.2）。
 ///

@@ -31,6 +31,18 @@ enum ViewKind {
   /// 默认视图（view-specs §6）。
   static const ViewKind fallback = ViewKind.list;
 
+  /// **当前版本实装了的视图。** M3 把另外三个逐个加进来。
+  ///
+  /// 这是「哪些视图能用」的**唯一声明**。两处需要它：
+  ///
+  /// - 组合根的视图注册表必须与它一致（架构守卫盯着）；
+  /// - 设置页「默认视图」只列这里面的 —— 否则用户能选一个
+  ///   选了没反应的视图，而那比没有这个选项更糟。
+  ///
+  /// 放在枚举上而不是组合根：设置页属于 settings feature，
+  /// 够不到组合根（module-map §3），而它确实需要知道这件事。
+  static const Set<ViewKind> implemented = {ViewKind.list};
+
   /// 从配置里存的字符串还原。
   ///
   /// **认不出来就回落到 [fallback]，不抛异常**（view-specs §7.4）。

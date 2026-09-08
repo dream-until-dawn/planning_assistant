@@ -12,6 +12,7 @@ library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
+import 'package:planning_assistant/features/settings/application/registry.dart';
 import 'package:planning_assistant/features/views/shared/application/view_kind.dart';
 
 void main() {
@@ -52,6 +53,20 @@ void main() {
         contains(ViewKind.fallback),
         reason: '默认视图 ${ViewKind.fallback.label} 没有注册，冷启动会白屏',
       );
+    });
+  });
+
+  group('「哪些视图能用」只有一个事实来源', () {
+    test('注册表的键 = ViewKind.implemented', () {
+      // 两处各写一份的话，「设置页能选，切过去白屏」就会出现 ——
+      // 而那种不一致在两边各自看都是对的。
+      expect(viewRegistry.keys.toSet(), ViewKind.implemented);
+    });
+
+    test('设置页「默认视图」只列实装了的', () {
+      // 列上没做的那三个，用户选了会静默无效。
+      final options = defaultView.optionsDynamic.map((o) => o.$1).toSet();
+      expect(options, ViewKind.implemented);
     });
   });
 }

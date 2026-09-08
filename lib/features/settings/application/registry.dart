@@ -115,7 +115,12 @@ final SettingSpec<CornerStyle> cornerStyle = _enumSpec(
 final SettingSpec<ViewKind> defaultView = _enumSpec(
   key: 'view.defaultView',
   defaultValue: ViewKind.fallback,
-  options: [for (final v in ViewKind.values) (v, v.label)],
+  // **只列实装了的**（`ViewKind.implemented`）。列上没做的那三个，
+  // 用户选了会静默无效 —— 一个改了没反应的选项比没有这个选项更糟。
+  options: [
+    for (final v in ViewKind.values)
+      if (ViewKind.implemented.contains(v)) (v, v.label),
+  ],
   storageKeyOf: (v) => v.storageKey,
   fromStorageKey: ViewKind.fromStorageKey,
   group: SettingGroup.view,
