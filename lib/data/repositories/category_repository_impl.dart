@@ -1,6 +1,8 @@
 /// 分类仓储的 Drift 实现。
 library;
 
+import 'package:drift/drift.dart';
+
 import '../../core/time/clock.dart';
 import '../../domain/entities/category.dart';
 import '../../domain/repositories/category_repository.dart';
@@ -22,11 +24,20 @@ const List<({String name, int colorArgb, String icon})> kDefaultCategories = [
   (name: '健康', colorArgb: 0xFFA8D8B9, icon: 'heart'),
 ];
 
+// 这四个颜色必须来自 §2.5 的调色板 —— 由 category_palette_test 对表，
+// 不在这里 import design/：data 层不依赖 design 层（分层守卫盯着）。
+
 final class DriftCategoryRepository implements CategoryRepository {
   DriftCategoryRepository(AppDatabase db, WriterIdentity writer, Clock clock)
-    : _dao = CategoryDao(db, writer, clock);
+    : _db = db,
+      _dao = CategoryDao(db, writer, clock),
+      _tasks = TaskDao(db, writer, clock);
 
+  final AppDatabase _db;
   final CategoryDao _dao;
+
+  /// 删分类要把它下面的任务摘成未分类，见 [deleteCategory]。
+  final TaskDao _tasks;
 
   /// 排序只按 `orderIndex`，**并以 `id` 兜底**。
   ///
@@ -62,7 +73,44 @@ final class DriftCategoryRepository implements CategoryRepository {
       _dao.upsert(categoryToCompanion(category));
 
   @override
-  Future<void> deleteCategory(String id) => _dao.softDelete(id);
+  Future<void> deleteCategory(String id) async {
+    // **先把任务摘出来，再打墓碑，一个事务。**
+    //
+    // 表上确实写着 `ON DELETE SET NULL`，接口注释一度也这么说 ——
+    // 但删分类走的是**软删**（留墓碑，V3 同步要靠它），行还在，
+    // 于是那条外键**永远不会触发**。实测：任务的 categoryId 仍是被删的
+    // 那个 id，而分类行只是多了个 deletedAt。
+    //
+    // 后果不是显示错。卡片查不到分类会回落成「未分类」，看着正常；
+    // 而筛选按的是 `categoryId == null`，那些任务一条都筛不出来 ——
+    // **卡片上写着「未分类」，按「未分类」筛却找不到它**。
+    // 这正是 settings-spec §3.0 要避免的「同一个可见状态两种编码」，
+    // 只是这次是从墓碑那一侧绕进来的。
+    //
+    // 半截状态会留下一批指向死分类的任务，所以必须同一个事务。
+    await _db.transaction(() async {
+      await _detachTasksOf(id);
+      await _dao.softDelete(id);
+    });
+  }
+
+  /// 把指向 [categoryId] 的任务改成未分类。
+  ///
+  /// **逐条走 `TaskDao.upsert`，不用一条 UPDATE 扫全表。**
+  /// 一条 SQL 快得多，但它不写 change_log —— 而「清库后按 seq 回放
+  /// 应还原等价状态」是发现「写操作绕过管道」的主要手段
+  /// （data-model §3 那张表）。少了这些行，回放出来的库里那些任务
+  /// 还挂在死分类上，两边分叉。
+  Future<void> _detachTasksOf(String categoryId) async {
+    final rows = await (_db.select(
+      _db.tasks,
+    )..where((t) => t.categoryId.equals(categoryId))).get();
+    for (final row in rows) {
+      await _tasks.upsert(
+        row.toCompanion(true).copyWith(categoryId: const Value(null)),
+      );
+    }
+  }
 
   @override
   Future<void> seedDefaultsIfEmpty() async {

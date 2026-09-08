@@ -17,7 +17,18 @@ import '../application/settings_providers.dart';
 import '../domain/setting_spec.dart';
 
 class SettingsPage extends ConsumerWidget {
-  const SettingsPage({super.key});
+  const SettingsPage({this.onOpenCategories, super.key});
+
+  /// 打开分类管理。**由组合根接上路由**，页面本身不认识路由表 ——
+  /// 与外壳的 `onOpenSettings` 同一个做法（module-map §1.1）。
+  ///
+  /// 一度在这里直接 `context.go(AppRoutes.categories)`，那要 import
+  /// `app.dart`，而 `app.dart` 正 import 着这个文件：presentation 反过来
+  /// 依赖组合根，方向倒了。分层守卫没拦（`app.dart` 在不分层白名单里），
+  /// 拦得住的只有这条约定。
+  ///
+  /// 为 null 时那一行不出现 —— 一个点不动的入口比没有更糟。
+  final VoidCallback? onOpenCategories;
 
   static const Key pageKey = ValueKey('settings-page');
 
@@ -27,6 +38,9 @@ class SettingsPage extends ConsumerWidget {
   /// 某一项的某个选项的 Key。
   static Key optionKey(String settingKey, String storageValue) =>
       ValueKey('setting-$settingKey-$storageValue');
+
+  /// 通往二级页的入口行（分类管理等）。
+  static const Key categoriesEntryKey = ValueKey('setting-entry-categories');
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -49,13 +63,29 @@ class SettingsPage extends ConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.all(Spacing.pageHorizontal),
           children: [
-            for (final group in SettingGroup.values)
+            for (final group in SettingGroup.values) ...[
               ..._groupSection(context, ref, group, exposed),
+              // 分类**不是配置项**（它是 `categories` 表里的实体），
+              // 所以不进注册表；但管理入口在设置里（settings-spec §3）。
+              // 挂在「行为」组之后 —— 那一组管的就是「默认怎么做」。
+              if (group == SettingGroup.behavior && onOpenCategories != null)
+                _categoriesEntry(),
+            ],
           ],
         ),
       ),
     );
   }
+
+  Widget _categoriesEntry() => ListTile(
+    key: categoriesEntryKey,
+    contentPadding: EdgeInsets.zero,
+    leading: const Icon(Icons.label_outline),
+    title: const Text('分类管理'),
+    subtitle: const Text('新建、改名、改色、排序、删除'),
+    trailing: const Icon(Icons.chevron_right),
+    onTap: onOpenCategories,
+  );
 
   List<Widget> _groupSection(
     BuildContext context,

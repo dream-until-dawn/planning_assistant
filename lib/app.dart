@@ -28,6 +28,7 @@ import 'package:go_router/go_router.dart';
 import 'design/theme/app_theme.dart';
 import 'features/settings/application/registry.dart';
 import 'features/settings/application/settings_providers.dart';
+import 'features/settings/presentation/category_manager_page.dart';
 import 'features/settings/presentation/settings_page.dart';
 import 'features/shell/presentation/app_shell.dart';
 import 'features/task/presentation/task_editor_page.dart';
@@ -68,6 +69,10 @@ abstract final class AppRoutes {
   static const String shell = '/';
   static const String newTask = '/task/new';
   static const String settings = '/settings';
+
+  /// 分类管理（FR-CFG-03）。设置页的**二级页**，所以挂在它下面 ——
+  /// 返回手势该回到设置，不是回到列表。
+  static const String categories = '/settings/categories';
 }
 
 GoRouter buildAppRouter() => GoRouter(
@@ -78,7 +83,15 @@ GoRouter buildAppRouter() => GoRouter(
       routes: [
         GoRoute(
           path: 'settings',
-          builder: (context, state) => const SettingsPage(),
+          builder: (context, state) => SettingsPage(
+            onOpenCategories: () => context.go(AppRoutes.categories),
+          ),
+          routes: [
+            GoRoute(
+              path: 'categories',
+              builder: (context, state) => const CategoryManagerPage(),
+            ),
+          ],
         ),
         GoRoute(
           path: 'task/new',

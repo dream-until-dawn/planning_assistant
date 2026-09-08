@@ -141,3 +141,38 @@ abstract final class SemanticColors {
     dangerFill,
   ];
 }
+
+/// 分类的默认调色板（design-system §2.5）。
+///
+/// 新建分类时**按顺序取用**，同屏多分类需可辨。
+///
+/// ## 它们不是 UI token
+///
+/// 别的色值常量决定界面长什么样；这八个只是**用户数据的初值** ——
+/// 分类的颜色一旦建出来就存进 `categories.colorArgb`，之后改主题、
+/// 改设计系统都不会动它。所以文档 §2.5 记的是一个**区间**
+/// （对两种表面 1.32–1.88），不是逐色一行。
+///
+/// ## 它们绝不能承载文字
+///
+/// 全部远低于图形元素所需的 3:1。只能做 3px 色条与小色点，
+/// 而且**绝不能是唯一的信息载体** —— 分类名必须同时以文字出现（§8.1）。
+/// 区间由 `category_palette_test.dart` 实测锁住。
+abstract final class CategoryPalette {
+  /// 顺序即取用顺序，**别随手调** —— 用户建的第 N 个分类是什么颜色，
+  /// 换个版本就变了的话，导出再导入会得到一套不同的颜色。
+  static const List<int> values = [
+    0xFF7FD1C1, // 薄荷
+    0xFFFFB7C5, // 樱花
+    0xFFFFD79A, // 奶油
+    0xFFA8C8F0, // 天空
+    0xFFC3B5F0, // 薰衣草
+    0xFFF5B7A3, // 蜜桃
+    0xFFA8D8B9, // 嫩芽
+    0xFFF0C8E0, // 藕粉
+  ];
+
+  /// 建第 [index] 个分类时用哪个颜色。**取模而不是越界**：
+  /// 用户建到第九个分类是完全正常的事，那时从头再来一轮。
+  static int forIndex(int index) => values[index % values.length];
+}

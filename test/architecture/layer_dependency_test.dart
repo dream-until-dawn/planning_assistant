@@ -188,6 +188,14 @@ const Map<String, List<(String, String)>> _forbiddenRaw = {
       '/domain/repositories/',
       'presentation 不得持有 Repository（写路径必须经 TaskCommand，FR-AI-01）',
     ),
+    // 组合根装配页面并**注入**路由跳转（外壳的 onOpenSettings、
+    // 设置页的 onOpenCategories 都是这么接的）。页面反过来 import 它
+    // 就成了环：app.dart → settings_page.dart → app.dart。
+    //
+    // 补这条是因为真写出来过一次：设置页里直接
+    // `context.go(AppRoutes.categories)` —— 编译过、分析过、当时全部守卫
+    // 也绿，因为 `app.dart` 在不分层白名单里，没有任何一条规则管得到它。
+    ('/app.dart', 'presentation 不得依赖组合根 app.dart；路由跳转由组合根注入回调'),
   ],
 };
 
@@ -417,6 +425,17 @@ const _illegalCases = <(String file, String import, String expectContains)>[
     'features/task/presentation/x.dart',
     'package:planning_assistant/domain/repositories.dart',
     '不得持有 Repository',
+  ),
+  (
+    'features/settings/presentation/x.dart',
+    'package:planning_assistant/app.dart',
+    '不得依赖组合根',
+  ),
+  (
+    // 相对路径写法也要判红，否则换个写法就绕过去了。
+    'features/settings/presentation/x.dart',
+    '../../../app.dart',
+    '不得依赖组合根',
   ),
   (
     'features/views/gantt/presentation/x.dart',

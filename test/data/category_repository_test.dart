@@ -9,19 +9,20 @@ import 'package:planning_assistant/data/database/app_database.dart';
 import 'package:planning_assistant/data/database/dao/synced_dao.dart';
 import 'package:planning_assistant/data/mappers/category_mapper.dart';
 import 'package:planning_assistant/data/repositories/category_repository_impl.dart';
+import 'package:planning_assistant/data/repositories/task_repository_impl.dart';
 import 'package:planning_assistant/domain/entities/category.dart';
+import 'package:planning_assistant/domain/entities/task.dart';
 
 void main() {
   late AppDatabase db;
   late DriftCategoryRepository repo;
 
+  const writer = FixedWriterIdentity('test');
+  final clock = FixedClock(DateTime.utc(2026, 9, 8));
+
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
-    repo = DriftCategoryRepository(
-      db,
-      const FixedWriterIdentity('test'),
-      FixedClock(DateTime.utc(2026, 9, 8)),
-    );
+    repo = DriftCategoryRepository(db, writer, clock);
   });
   tearDown(() => db.close());
 
@@ -189,6 +190,97 @@ void main() {
       await repo.deleteCategory('c1');
       expect(await repo.findCategories(), isEmpty);
       expect(await repo.findCategoryById('c1'), isNull);
+    });
+  });
+
+  group('删分类：任务变成未分类，不跟着删（FR-CFG-03）', () {
+    // 这一段是**从未被走过的路**。此前只有「删了之后 findCategories 空了」，
+    // 没有一条问过它下面的任务怎么样了 —— 而那正是 FR-CFG-03 的正文。
+    //
+    // 实测过的错法：软删只给分类打墓碑，行还在，于是表上那条
+    // `ON DELETE SET NULL` 永远不触发，任务的 categoryId 仍指着死分类。
+    // 卡片会回落显示成「未分类」（看着正常），而筛选按
+    // `categoryId == null` 判 —— 卡片写着「未分类」，按「未分类」筛
+    // 却一条都找不到。settings-spec §3.0 要防的就是这种「一个可见状态
+    // 两种编码」，只是这次从墓碑那一侧绕了进来。
+
+    late DriftTaskRepository taskRepo;
+
+    setUp(() {
+      taskRepo = DriftTaskRepository(db, writer, clock);
+    });
+
+    Future<void> seedTask(String id, String? categoryId) => taskRepo.saveTask(
+      Task(
+        id: id,
+        title: id,
+        kind: TaskKind.single,
+        timeZoneId: 'Asia/Shanghai',
+        categoryId: categoryId,
+      ),
+    );
+
+    Future<void> seedCategory(String id) => repo.saveCategory(
+      Category(id: id, name: id, colorArgb: 1, icon: 'x', orderIndex: 0),
+    );
+
+    test('它下面的任务 categoryId 置空', () async {
+      await seedCategory('c1');
+      await seedTask('t1', 'c1');
+
+      await repo.deleteCategory('c1');
+
+      final task = (await taskRepo.findTasks()).single;
+      expect(task.categoryId, isNull, reason: '删分类后任务应当变成未分类');
+    });
+
+    test('任务本身还在，没被级联删掉', () async {
+      // FR-CFG-03 的字面要求。级联删的话用户删一个分类会丢一批任务。
+      await seedCategory('c1');
+      await seedTask('t1', 'c1');
+
+      await repo.deleteCategory('c1');
+
+      expect(await taskRepo.findTasks(), hasLength(1));
+    });
+
+    test('别的分类下的任务不受影响', () async {
+      // 「把所有任务都置空」也能让上面两条绿。
+      await seedCategory('c1');
+      await seedCategory('c2');
+      await seedTask('t1', 'c1');
+      await seedTask('t2', 'c2');
+
+      await repo.deleteCategory('c1');
+
+      final byId = {for (final t in await taskRepo.findTasks()) t.id: t};
+      expect(byId['t1']!.categoryId, isNull);
+      expect(byId['t2']!.categoryId, 'c2', reason: '只该动被删那个分类下的');
+    });
+
+    test('置空这一步也写 change_log —— 否则回放出来的库会分叉', () async {
+      // 用一条 UPDATE 扫全表快得多，但它不留 change_log 行。
+      // 「清库后按 seq 回放应还原等价状态」是发现「写绕过管道」的主要手段
+      // （data-model §3）；少了这些行，回放出来的任务还挂在死分类上。
+      await seedCategory('c1');
+      await seedTask('t1', 'c1');
+      final before = (await db.select(db.changeLog).get()).length;
+
+      await repo.deleteCategory('c1');
+
+      final entries = await db.select(db.changeLog).get();
+      expect(
+        entries.where((e) => e.entityId == 't1'),
+        isNotEmpty,
+        reason: '任务被改了，就该有它的变更记录',
+      );
+      expect(entries.length, greaterThan(before + 1), reason: '分类一条 + 任务一条');
+    });
+
+    test('没有任务时照样删得掉', () async {
+      await seedCategory('c1');
+      await repo.deleteCategory('c1');
+      expect(await repo.findCategories(), isEmpty);
     });
   });
 
