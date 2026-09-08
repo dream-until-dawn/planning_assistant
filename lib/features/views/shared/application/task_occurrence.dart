@@ -64,6 +64,23 @@ final class TaskOccurrence {
     return task.startMinute;
   }
 
+  /// 生效的结束日期 / 时刻。没有明确结束时都是 null。
+  ///
+  /// 时间轴要靠它算块高（§1.2「高度∝时长」），甘特要靠它算条长。
+  /// 与开始侧一样，被例外挪过的那一次用挪之后的。
+  PlanDate? get endDate {
+    final o = occurrence;
+    if (o == null) return task.endDate;
+    return o.end?.date;
+  }
+
+  MinuteOfDay? get endMinute {
+    final o = occurrence;
+    if (o == null) return task.isAllDay ? null : task.endMinute;
+    if (o.isAllDay) return null;
+    return o.end?.minuteOfDay;
+  }
+
   /// 生效的标题。例外可以只改某一次的标题（FR-TASK-05）。
   String get title => occurrence?.titleOverride ?? task.title;
 
