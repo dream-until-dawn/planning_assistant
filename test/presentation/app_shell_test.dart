@@ -19,6 +19,7 @@ import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/design/components/empty_state.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/views/calendar/presentation/calendar_page.dart';
 import 'package:planning_assistant/features/views/shared/application/view_kind.dart';
 
 import '../support/app_harness.dart';
@@ -33,9 +34,18 @@ import '../support/app_harness.dart';
 List<Override> _overrides() =>
     viewPipelineOverrides(today: const PlanDate(2026, 9, 8));
 
-Future<void> _pumpApp(WidgetTester tester) async {
+Future<void> _pumpApp(
+  WidgetTester tester, {
+  Map<String, Object?> settings = const {},
+}) async {
   await tester.pumpWidget(
-    ProviderScope(overrides: _overrides(), child: PlanningAssistantApp()),
+    ProviderScope(
+      overrides: viewPipelineOverrides(
+        today: const PlanDate(2026, 9, 8),
+        settings: settings,
+      ),
+      child: PlanningAssistantApp(),
+    ),
   );
   await tester.pumpAndSettle();
 }
@@ -77,6 +87,26 @@ void main() {
       expect(find.byType(AppShell), findsOneWidget);
       // 空态是规格要求的一屏（§8.2），不是加载中占位。
       expect(find.byType(EmptyState), findsOneWidget);
+    });
+
+    testAppWidgets('**冷启动进入用户设定的默认视图**（FR-CFG-04）', (tester) async {
+      // 这条验收标准此前一条测试都没有 —— 组合根确实读了
+      // `view.defaultView`，但没有任何东西盯着它读了以后用不用。
+      // 需求编号的可追溯性守卫（`tool/check_traceability.py`）翻出来的。
+      await _pumpApp(tester, settings: {'view.defaultView': 'calendar'});
+
+      expect(
+        find.byKey(CalendarPage.gridKey),
+        findsOneWidget,
+        reason: '设了默认视图是日历，冷启动却没进日历',
+      );
+    });
+
+    testAppWidgets('配置里是个不认识的视图名时，回落而不是白屏', (tester) async {
+      // 降级安装、或配置被别的版本写过 —— 那时正确的行为是
+      // 给他一个能用的界面（view-specs §7.4）。
+      await _pumpApp(tester, settings: {'view.defaultView': '还没做的视图'});
+      expect(find.byType(AppShell), findsOneWidget);
     });
 
     testWidgets('未开启 debug 横幅（发版观感）', (tester) async {

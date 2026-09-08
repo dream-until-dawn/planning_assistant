@@ -1,4 +1,4 @@
-/// 分层依赖守卫。
+/// 分层依赖守卫（NFR-MAINT-01：「分层依赖方向由自动化检查强制」）。
 ///
 /// 强制 docs/01-architecture/module-map.md §3 的依赖规则，以及
 /// docs/05-engineering/testing-strategy.md §6 的额外守卫。
