@@ -63,6 +63,7 @@ sealed class TaskCommand {
         json,
       ),
       SkipOccurrenceCommand.kType => SkipOccurrenceCommand.fromJson(json),
+      MoveOccurrenceCommand.kType => MoveOccurrenceCommand.fromJson(json),
       SplitRecurringTaskCommand.kType => SplitRecurringTaskCommand.fromJson(
         json,
       ),
@@ -422,6 +423,57 @@ final class SkipOccurrenceCommand extends TaskCommand {
       SkipOccurrenceCommand(
         taskId: json['taskId']! as String,
         occurrenceKey: OccurrenceKey.parse(json['occurrenceKey']! as String),
+      );
+}
+
+/// 把**某一次**挪到别的日期（FR-TASK-05「只改某一次的时间」）。
+///
+/// 列表左滑「推迟」走的就是它。
+///
+/// ## key 不跟着动
+///
+/// [occurrenceKey] 始终是**原始**发生时刻（data-model §4.2）。
+/// 挪到别处之后它仍然是同一次 —— 否则规则再次展开时会在原位置
+/// 又生成一个未被覆盖的实例，那一天出现重影。
+///
+/// 与 iCalendar 的 `RECURRENCE-ID` 同一套语义，将来导出 `.ics` 不失真。
+final class MoveOccurrenceCommand extends TaskCommand {
+  const MoveOccurrenceCommand({
+    required this.taskId,
+    required this.occurrenceKey,
+    required this.planDate,
+    this.startMinute,
+  });
+
+  static const kType = 'moveOccurrence';
+
+  final String taskId;
+  final OccurrenceKey occurrenceKey;
+
+  /// 挪到哪一天。
+  final PlanDate planDate;
+
+  /// 挪到几点；null = 保持原来的时刻。
+  final MinuteOfDay? startMinute;
+
+  @override
+  String get type => kType;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'type': kType,
+    'taskId': taskId,
+    'occurrenceKey': occurrenceKey.value,
+    'planDate': planDate.toString(),
+    'startMinute': startMinute?.value,
+  };
+
+  static MoveOccurrenceCommand fromJson(Map<String, Object?> json) =>
+      MoveOccurrenceCommand(
+        taskId: json['taskId']! as String,
+        occurrenceKey: OccurrenceKey.parse(json['occurrenceKey']! as String),
+        planDate: PlanDate.parse(json['planDate']! as String),
+        startMinute: _parseMinute(json['startMinute']),
       );
 }
 

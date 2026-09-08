@@ -77,6 +77,8 @@ final List<SettingSpecBase> settingsRegistry = [
   listGroupBy,
   listSortBy,
   defaultCategoryId,
+  swipeRight,
+  swipeLeft,
 ];
 
 // ── 外观 ────────────────────────────────────────────────────────
@@ -112,6 +114,53 @@ final SettingSpec<CornerStyle> cornerStyle = _enumSpec(
 );
 
 // ── 行为 ────────────────────────────────────────────────────────
+
+/// 滑动手势的动作（view-specs §2.4、settings-spec §2.4）。
+enum SwipeAction {
+  complete('complete', '完成'),
+  postpone('postpone', '推迟一天'),
+  none('none', '不做事');
+
+  const SwipeAction(this.storageKey, this.label);
+
+  final String storageKey;
+  final String label;
+
+  /// **只列做得出来的那几个。**
+  ///
+  /// settings-spec 里还写了 `delete`。没放进来是因为「滑一下就把整条
+  /// 重复任务删了」在误触时代价太大，而撤销目前只是一条 Snackbar ——
+  /// 等回收站的入口做出来（M3）再加。摆一个删不掉的「删除」选项，
+  /// 比没有这个选项更糟。
+  static SwipeAction fromStorageKey(String? key) {
+    for (final v in values) {
+      if (v.storageKey == key) return v;
+    }
+    return SwipeAction.none;
+  }
+}
+
+final SettingSpec<SwipeAction> swipeRight = _enumSpec(
+  key: 'behavior.swipeRight',
+  defaultValue: SwipeAction.complete,
+  options: [for (final v in SwipeAction.values) (v, v.label)],
+  storageKeyOf: (v) => v.storageKey,
+  fromStorageKey: SwipeAction.fromStorageKey,
+  group: SettingGroup.behavior,
+  label: '右滑',
+  description: '在列表里向右滑一张卡片',
+);
+
+final SettingSpec<SwipeAction> swipeLeft = _enumSpec(
+  key: 'behavior.swipeLeft',
+  defaultValue: SwipeAction.postpone,
+  options: [for (final v in SwipeAction.values) (v, v.label)],
+  storageKeyOf: (v) => v.storageKey,
+  fromStorageKey: SwipeAction.fromStorageKey,
+  group: SettingGroup.behavior,
+  label: '左滑',
+  description: '在列表里向左滑一张卡片',
+);
 
 /// 「未分类」在这项配置里的存储值（settings-spec §2.4 的默认值）。
 ///

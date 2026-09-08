@@ -83,6 +83,8 @@ final class CommandDispatcher {
         await _setOccurrenceStatus(command);
       case SplitRecurringTaskCommand():
         await _split(command);
+      case MoveOccurrenceCommand():
+        await _moveOccurrence(command);
       case SkipOccurrenceCommand():
         await _repo.saveOverride(
           OccurrenceOverride.skip(
@@ -136,6 +138,31 @@ final class CommandDispatcher {
   /// 整表写回阶段。空表也要写 —— 那表示「这条任务没有阶段」。
   Future<void> _writeStages(String taskId, List<StageSpec> specs) =>
       _replaceStages(ReplaceStagesCommand(taskId: taskId, stages: specs));
+
+  /// 把某一次挪到别的日期（FR-TASK-05）。
+  ///
+  /// **在已有例外之上叠加**，不是覆盖：那一次可能已经被改过标题、
+  /// 或者标成了进行中。整条替换掉的话，左滑推迟一下就把用户之前
+  /// 改的东西抹了。
+  Future<void> _moveOccurrence(MoveOccurrenceCommand c) async {
+    final existing = await _repo.findOverridesOfTask(c.taskId);
+    final prior = existing.where((o) => o.key == c.occurrenceKey).firstOrNull;
+
+    await _repo.saveOverride(
+      OccurrenceOverride(
+        taskId: c.taskId,
+        key: c.occurrenceKey,
+        action: OverrideAction.modify,
+        status: prior?.status,
+        titleOverride: prior?.titleOverride,
+        noteOverride: prior?.noteOverride,
+        planDateOverride: c.planDate,
+        startMinuteOverride: c.startMinute ?? prior?.startMinuteOverride,
+        endDateOverride: prior?.endDateOverride,
+        endMinuteOverride: prior?.endMinuteOverride,
+      ),
+    );
+  }
 
   /// 改某一次发生的状态（FR-TASK-05）。
   ///

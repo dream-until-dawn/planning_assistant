@@ -47,6 +47,11 @@ void main() {
       for (final spec in settingsRegistry) {
         final finder = find.byKey(SettingsPage.itemKey(spec.key));
         if (spec.isExposed) {
+          // **要先滚过去**：`ListView` 只建看得见的那几项，
+          // 页面一长，靠后的项压根没进树 —— 断言会报「找不到」，
+          // 而它其实只是还没建。加两项配置就让这条红过一次。
+          await tester.scrollUntilVisible(finder, 200);
+          await tester.pumpAndSettle();
           expect(finder, findsOneWidget, reason: '${spec.key} 该出现却没有');
         } else {
           expect(finder, findsNothing, reason: '${spec.key} 是隐藏项，不该出现');
@@ -63,13 +68,13 @@ void main() {
         (s) => s.isExposed && s.editor == SettingEditor.select,
       )) {
         for (final (value, _) in spec.optionsDynamic) {
-          expect(
-            find.byKey(
-              SettingsPage.optionKey(spec.key, '${spec.encodeDynamic(value)}'),
-            ),
-            findsOneWidget,
-            reason: '${spec.key} 少了一个选项',
+          final finder = find.byKey(
+            SettingsPage.optionKey(spec.key, '${spec.encodeDynamic(value)}'),
           );
+          // 同上：靠后的项要先滚出来才建得出来。
+          await tester.scrollUntilVisible(finder, 200);
+          await tester.pumpAndSettle();
+          expect(finder, findsOneWidget, reason: '${spec.key} 少了一个选项');
         }
       }
     });

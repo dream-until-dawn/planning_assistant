@@ -213,6 +213,16 @@ Future<void> setScreenSize(WidgetTester tester, Size size) async {
 /// 所以放进 support，别再各文件自己写一遍。
 Future<void> tapVisible(WidgetTester tester, Key key) async {
   final finder = find.byKey(key);
+  if (finder.evaluate().isEmpty) {
+    // **还没被建出来**，`ensureVisible` 救不了 —— 它要先拿到 element，
+    // 而离屏太远的项在 `ListView` 里压根没建，报的是「Bad state: No
+    // element」。这时得先滚过去把它建出来。
+    //
+    // 撞见过一次：设置页加了两个配置项之后，「分类管理」那一行被挤出
+    // cacheExtent，**七条与设置毫无关系的用例一起红**。
+    await tester.scrollUntilVisible(finder, 200);
+    await tester.pumpAndSettle();
+  }
   await tester.ensureVisible(finder);
   await tester.pumpAndSettle();
   await tester.tap(finder);

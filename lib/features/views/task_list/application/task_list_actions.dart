@@ -4,6 +4,7 @@
 /// 写路径一律经命令（FR-AI-01），这里拿不到仓库。
 library;
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../app_providers.dart';
@@ -38,26 +39,46 @@ final class ToggleTaskDone {
 
   final Ref _ref;
 
-  Future<void> call(TaskOccurrence row) {
+  /// 切换，并返回一个能**原样撤回**它的闭包。
+  ///
+  /// 撤销**不能是「再调一次 call」**：闭包捕获的 `row` 是滑动那一刻的
+  /// 快照，它的状态还是切换**之前**的值 —— 再切一次等于又切回去，
+  /// 于是「撤销」把刚完成的又标成完成。滑动那条用例第一次就是这么红的。
+  ///
+  /// 所以这里把「切换到哪个状态」和「撤回到哪个状态」两条都算清楚，
+  /// 各自发一条命令。
+  Future<VoidCallback> call(TaskOccurrence row) async {
     final dispatcher = _ref.read(taskCommandDispatcherProvider);
     final isDone = row.status == TaskStatus.done;
     final key = row.key;
 
     if (key == null) {
-      return dispatcher.dispatch(
-        ChangeTaskStatusCommand(
-          taskId: row.taskId,
-          status: isDone ? TaskStatus.pending : TaskStatus.done,
-        ),
+      final to = isDone ? TaskStatus.pending : TaskStatus.done;
+      final back = isDone ? TaskStatus.done : TaskStatus.pending;
+      await dispatcher.dispatch(
+        ChangeTaskStatusCommand(taskId: row.taskId, status: to),
+      );
+      return () => dispatcher.dispatch(
+        ChangeTaskStatusCommand(taskId: row.taskId, status: back),
       );
     }
-    return dispatcher.dispatch(
+
+    // 取消完成时传 null = 删掉那条例外，回到跟随规则 ——
+    // 而不是写一条 pending 的例外，理由见命令本身的注释。
+    final to = isDone ? null : OccurrenceStatus.done;
+    final back = isDone ? OccurrenceStatus.done : null;
+    await dispatcher.dispatch(
       SetOccurrenceStatusCommand(
         taskId: row.taskId,
         occurrenceKey: key,
-        // 取消完成时传 null = 删掉那条例外，回到跟随规则 ——
-        // 而不是写一条 pending 的例外，理由见命令本身的注释。
-        status: isDone ? null : OccurrenceStatus.done,
+        status: to,
+      ),
+    );
+    return () => dispatcher.dispatch(
+      SetOccurrenceStatusCommand(
+        taskId: row.taskId,
+        occurrenceKey: key,
+        status: back,
       ),
     );
   }
@@ -105,3 +126,60 @@ final class OccurrenceActions {
 final occurrenceActionsProvider = Provider<OccurrenceActions>(
   OccurrenceActions.new,
 );
+
+/// 推迟一行（view-specs §2.4：左滑默认「推迟到明天」）。
+///
+/// ## 两条路，与完成钮同一个分岔
+///
+///  · 普通任务 → 改它自己的 `planDate`；
+///  · 某一次发生 → 写一条把这次挪走的例外，**其余次不动**。
+///
+/// 走错的后果不是「没反应」：拿前者去改重复任务，改的是整条规则的
+/// DTSTART —— 推迟一次等于把往后每一次都挪了。
+final class PostponeRow {
+  const PostponeRow(this._ref);
+
+  final Ref _ref;
+
+  /// 推迟到 [days] 天后（默认明天）。返回一个能撤回它的闭包，
+  /// 给撤销 Snackbar 用。
+  ///
+  /// **返回撤销闭包而不是让调用方自己记**：撤销要还原到「原来那天」，
+  /// 而那个值只有这里知道 —— 让界面层再算一遍，迟早算成
+  /// 「今天减一天」而不是「原来那天」。
+  Future<VoidCallback?> call(TaskOccurrence row, {int days = 1}) async {
+    final from = row.planDate;
+    if (from == null) return null; // 没日期就谈不上推迟
+    final to = from.addDays(days);
+    final dispatcher = _ref.read(taskCommandDispatcherProvider);
+    final key = row.key;
+
+    if (key == null) {
+      await dispatcher.dispatch(
+        UpdateTaskFieldsCommand(taskId: row.taskId, planDate: to),
+      );
+      return () => dispatcher.dispatch(
+        UpdateTaskFieldsCommand(taskId: row.taskId, planDate: from),
+      );
+    }
+
+    await dispatcher.dispatch(
+      MoveOccurrenceCommand(
+        taskId: row.taskId,
+        occurrenceKey: key,
+        planDate: to,
+      ),
+    );
+    // 撤销 = 挪回原处。**不是删掉整条例外** —— 那一次可能本来就
+    // 改过标题或状态，删掉会把那些一起抹了。
+    return () => dispatcher.dispatch(
+      MoveOccurrenceCommand(
+        taskId: row.taskId,
+        occurrenceKey: key,
+        planDate: from,
+      ),
+    );
+  }
+}
+
+final postponeRowProvider = Provider<PostponeRow>(PostponeRow.new);
