@@ -156,7 +156,7 @@ void main() {
       expect(b.durationMinutes, 0);
     });
 
-    test('有结束日期、没有结束时刻 → 到那一天结束', () {
+    test('有结束日期、没有结束时刻 → 到那一天的 23:59', () {
       // 编辑器允许只选结束日不选结束时刻。按零长画的话，
       // 「从今天 14:00 忙到明天」在时间轴上会缩成今天下午的一个点，
       // 明天什么都没有。
@@ -166,7 +166,7 @@ void main() {
       expect(first.continuesAfter, isTrue);
 
       final last = timelineDayFor(rows, _tomorrow).blocks.single;
-      expect((last.startMinute, last.endMinute), (0, minutesPerDay));
+      expect((last.startMinute, last.endMinute), (0, minutesPerDay - 1));
       expect(last.continuesBefore, isTrue);
       expect(last.continuesAfter, isFalse, reason: '结束日之后没有了');
     });

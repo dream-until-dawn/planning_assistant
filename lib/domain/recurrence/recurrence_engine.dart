@@ -19,6 +19,9 @@ import '../entities/occurrence_override.dart';
 import '../value_objects/occurrence_key.dart';
 import '../value_objects/recurrence.dart';
 
+/// 一天有多少分钟。全天任务的时长必须是它的整数倍才算数（见 `_materialize`）。
+const int _minutesPerDay = 1440;
+
 /// 可见时间窗，按**墙钟日期**闭区间。
 @immutable
 final class DateRange {
@@ -233,7 +236,19 @@ final class RecurrenceEngine {
         minuteOfDay: o.endMinuteOverride ?? start.minuteOfDay,
         timeZoneId: c.timeZoneId,
       );
-    } else if (c.durationMinutes != null && !c.isAllDay) {
+    } else if (c.durationMinutes != null &&
+        (!c.isAllDay || c.durationMinutes! % _minutesPerDay == 0)) {
+      // **全天任务的结束只能是「整天」。**
+      //
+      // 「全天」与「几点结束」是矛盾的，所以半天的时长在全天任务上
+      // 被无声忽略（下面那条 `% 1440` 就是这个意思）。但**跨几天的
+      // 全天任务是有结束的** —— 一次三天的休假，结束在第三天。
+      // 一律不给 end 的话，它在日历与甘特上只剩第一天，
+      // 而那看起来像「数据只存了一天」，不像「刻意不表示时刻」。
+      //
+      // 整天数的 end 落在午夜，与全天 `start` 用的是同一个占位午夜
+      // （`LocalWallTime.allDay` 的注释）—— 它表示的是**哪一天**，
+      // 不是「零点」这个时刻。
       end = start.addMinutes(c.durationMinutes!);
     }
 

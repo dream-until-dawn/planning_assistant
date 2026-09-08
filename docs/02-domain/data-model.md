@@ -59,7 +59,7 @@
 | `isAllDay` | BOOL | NOT NULL DEFAULT 0 | |
 | `planDate` | TEXT | NULL | `yyyy-MM-dd`。重复任务即 DTSTART 的日期 |
 | `startMinute` | INT | NULL | 0..1439，`isAllDay=1` 时为 NULL |
-| `endDate` | TEXT | NULL | 跨天任务的结束日。非空时 `planDate` 必须非空 |
+| `endDate` | TEXT | NULL | 跨天任务的结束日。非空时 `planDate` 必须非空。**有 `endDate` 而 `endMinute` 为空 = 到那天的 23:59**，见下 |
 | `endMinute` | INT | NULL | 0..1439，`isAllDay=1` 时为 NULL；非空时 `endDate` 必须非空。与开始侧同一套规矩，由 `Task.checkInvariants` 强制 |
 | `timeZoneId` | TEXT | NOT NULL | IANA，创建时的时区 |
 | `recurrenceRule` | TEXT | NULL | RFC 5545 `RRULE:` 串。NULL = 不重复。**必须是本应用 `encodeRrule()` 产出的规范形**（含 `UNTIL` 时必带 `Z`），不得直接存外部原串 —— 见[重复引擎 §2.3](recurrence-engine.md#23-编码-rrule-必须显式开启-istimeutc强制) |
@@ -76,6 +76,23 @@
 
 > 归档与删除都用时间戳列表达（`archivedAt` / `deletedAt`），不占用 `status` 取值。
 > 否则重复任务（`status` 恒为 `pending`）将永远无法被归档。三个可见性谓词见[任务生命周期 §1.1](task-lifecycle.md#11-归档与删除不是状态)。
+
+#### 3.1.1 「有结束日期、没有结束时刻」是什么意思
+
+编辑器允许只选结束日不选结束时刻（「从今天 14:00 忙到后天」）。
+这个形态**必须在三处读成同一件事**，否则同一份数据会有两个意思，
+而屏幕上只表现为「跨天任务莫名其妙不跨天」：
+
+| 谁 | 怎么读 |
+|---|---|
+| `Task._endsBeforeItStarts` | 判先后时把空的结束时刻当 **1439** |
+| `occurrence_expansion._durationOf()` | 折算重复任务的时长时按 **1439** |
+| `timeline_blocks._endOffset()` | 画块时按 **1439** |
+
+第三条的一分钟差在屏幕上看不见（1440 分钟摊在一屏上，不到一像素），
+所以这里的一致**不是为了好看，是为了只有一套语义**。
+`test/application/expand_in_window_test.dart` 的「两条路径必须读出同一个块」
+把前两条钉在一起。
 
 ### 3.2 `stages`
 

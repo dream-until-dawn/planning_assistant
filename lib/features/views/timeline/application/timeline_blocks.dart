@@ -122,20 +122,19 @@ TimelineDay timelineDayFor(List<TaskOccurrence> rows, PlanDate date) {
 ///
 /// * 连结束日期都没有 → **与开始同一刻**（零长）。不替用户假设时长；
 ///   块高由界面按「最小块高」兜底（§1.2），那是显示的事，不是数据的事。
-/// * 有结束日期、没有结束时刻 → **到那一天结束**。编辑器允许只选结束日
-///   不选结束时刻（「从今天 14:00 忙到后天」），而 `Task` 的
-///   `_endsBeforeItStarts` 也是按「那天的末尾」读这种形态的 ——
-///   这里若按零长画，同一份数据在校验器和时间轴上就是两个意思，
+/// * 有结束日期、没有结束时刻 → **到那一天的 23:59**。编辑器允许只选
+///   结束日不选结束时刻（「从今天 14:00 忙到后天」）。这个读法在三处
+///   必须一致：`Task._endsBeforeItStarts`（判先后时把空的结束时刻当
+///   1439）、`occurrence_expansion` 折算重复任务的时长时、以及这里。
+///   任意一处按零长读，同一份数据就有了两个意思 ——
 ///   而屏幕上只会表现为「跨天任务莫名其妙不跨天」。
 /// * 两者都有 → 就是它。
 int _endOffset(TaskOccurrence row, PlanDate date, int startOffset) {
   final endDate = row.endDate;
   if (endDate == null) return startOffset;
   final dayStart = endDate.differenceInDays(date) * minutesPerDay;
-  // 末尾取 1440 而不是校验器里的 1439：那边比的是先后，差一分钟无妨；
-  // 这边是画出来的长度，少一分钟就是当天末尾留一道缝。
   final endMinute = row.endMinute;
-  return dayStart + (endMinute?.value ?? minutesPerDay);
+  return dayStart + (endMinute?.value ?? minutesPerDay - 1);
 }
 
 /// 这一行有没有覆盖到 [date]（含跨天）。

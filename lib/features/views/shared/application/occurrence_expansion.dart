@@ -163,6 +163,9 @@ List<TaskOccurrence> expandForList({
 ///
 /// **没有日期的任务不进来** —— 它不落在任何一天上。
 /// 列表另有「无日期」分组管它（§2.1）。
+/// 一天有多少分钟。
+const int _minutesPerDay = 1440;
+
 List<TaskOccurrence> expandInWindow({
   required List<Task> tasks,
   required List<OccurrenceOverride> overrides,
@@ -215,4 +218,32 @@ RecurrenceContext _contextOf(Task task, PlanDate date) => RecurrenceContext(
   ),
   isAllDay: task.isAllDay,
   recurrence: task.recurrence,
+  durationMinutes: _durationOf(task, date),
 );
+
+/// 一条规则的每一次持续多久（墙钟分钟，recurrence-engine §5）。
+///
+/// ## 这里一度是空的
+///
+/// `RecurrenceContext.durationMinutes` 声明了、引擎也读它，但**没有
+/// 任何地方写它** —— 于是每一次发生的 `end` 恒为 null。
+/// 列表只显示开始时刻，所以整个 M2 都看不出来；时间轴是第一个
+/// 要用结束时刻的视图，一接上就是「每条重复任务都是零长块」。
+///
+/// 又是一次「模型有字段、写入侧没有生产者」（testing-strategy §1.6）。
+/// 引擎里那段两端各自解析 DST 的代码（§4.1.1）也因此从未在
+/// 规则推导出的 end 上跑过。
+int? _durationOf(Task task, PlanDate start) {
+  final endDate = task.endDate;
+  if (endDate == null) return null;
+
+  final days = endDate.differenceInDays(task.planDate ?? start);
+  if (task.isAllDay) return days * _minutesPerDay;
+
+  final startMinute = task.startMinute?.value ?? 0;
+  // 有结束日期却没有结束时刻 = **到那天结束**。与 `Task` 自己
+  // 判先后时的读法一致（`_endsBeforeItStarts` 把空的结束时刻当 1439），
+  // 也与时间轴的 `_endOffset` 一致 —— 同一份数据在三处必须是同一个意思。
+  final endMinute = task.endMinute?.value ?? (_minutesPerDay - 1);
+  return days * _minutesPerDay + (endMinute - startMinute);
+}
