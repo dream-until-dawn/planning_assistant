@@ -225,9 +225,14 @@ void main() {
 
   group('界面表达不了的规则，编辑时不许被抹掉', () {
     testAppWidgets('显示成只读一行，保存之后规则原样还在', (tester) async {
-      // `RecurrenceDraft.fromRrule` 认不出 `BYDAY=-1FR`（每月最后一个
-      // 周五）。当成「不重复」显示的话，用户改个标题一保存，
+      // `RecurrenceDraft.fromRrule` 认不出 `BYSETPOS`（每月最后一个工作日）。
+      // 当成「不重复」显示的话，用户改个标题一保存，
       // **规则就被悄悄抹掉了** —— 什么都没做却坏了东西。
+      //
+      // 夹具原本用的是 `BYDAY=-1FR`（每月最后一个周五）。界面把它做出来
+      // 之后这条测试变红了 —— **红得对**：它钉的是「表达不了的规则怎么办」，
+      // 而那条已经表达得了。换一条仍然表达不了的进来，
+      // 别顺手把断言改松（那会让这条测试跟着能力边界一起消失）。
       final harness = await _pumpApp(tester);
       await _create(tester, '月度复盘');
 
@@ -236,7 +241,9 @@ void main() {
       await harness.db.customUpdate(
         'UPDATE tasks SET recurrence_rule = ?, plan_date = ? WHERE id = ?',
         variables: [
-          const Variable<String>('RRULE:FREQ=MONTHLY;BYDAY=-1FR'),
+          const Variable<String>(
+            'RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1',
+          ),
           const Variable<String>('2026-09-08'),
           Variable<String>(id),
         ],
@@ -266,7 +273,7 @@ void main() {
       expect(task.title, '季度复盘');
       expect(
         task.recurrenceRule,
-        'RRULE:FREQ=MONTHLY;BYDAY=-1FR',
+        'RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1',
         reason: '改标题不该动到那条规则',
       );
     });

@@ -39,6 +39,43 @@ enum RecurrenceFrequency {
   final String unitLabel;
 }
 
+/// 「每月」怎么定位重复的那一天（FR-TASK-03 里的「每月 15 号」
+/// 「每月最后一个周五」）。
+///
+/// [followStart] 是**默认且唯一的旧行为**：不写任何 `BY` 部件时，
+/// RRULE 按 DTSTART 的号数重复。这条留着不是为了凑数 ——
+/// 库里已有的每月规则全长这样，去掉它们就没法原样还原。
+enum MonthlyMode {
+  followStart('跟开始日期同一天'),
+  onDate('每月某号'),
+  onWeekday('第几个周几');
+
+  const MonthlyMode(this.label);
+
+  final String label;
+}
+
+/// [RecurrenceDraft.monthDay] 取这个值＝「当月最后一天」（`BYMONTHDAY=-1`）。
+///
+/// **单列一档，而不是让想月末的人去选 31。** 实测（2026 全年）：
+/// `BYMONTHDAY=31` 只命中 7 个月 —— 没有 31 号的月份按 RFC 5545 是
+/// **跳过**，不是夹到月末。想「月末结账」的人选 31 会静悄悄漏掉 5 次。
+const int lastDayOfMonth = -1;
+
+/// 序号（第几个周几）。`-1` = 最后一个。
+///
+/// 只有这五档：RRULE 允许 `5MO`、`-2FR` 之类，但「第五个周一」大半年份
+/// 不存在，摆出来是个陷阱。认不出来的规则走 [RecurrenceDraft.fromRrule]
+/// 那条「表达不了就说一句『重复』」。
+const List<int> monthOrdinals = [1, 2, 3, 4, lastDayOfMonth];
+
+/// 序号的说法。
+String monthOrdinalLabel(int ordinal) =>
+    ordinal == lastDayOfMonth ? '最后一个' : '第 $ordinal 个';
+
+/// 号数的说法。
+String monthDayLabel(int day) => day == lastDayOfMonth ? '最后一天' : '$day 号';
+
 /// 结束条件（FR-TASK-04）。
 enum RecurrenceEndMode {
   never('永不结束'),
@@ -57,6 +94,10 @@ final class RecurrenceDraft {
     this.frequency = RecurrenceFrequency.daily,
     this.interval = 1,
     this.weekdays = const {},
+    this.monthlyMode = MonthlyMode.followStart,
+    this.monthDay = 1,
+    this.monthOrdinal = 1,
+    this.monthWeekday = Weekday.monday,
     this.endMode = RecurrenceEndMode.never,
     this.count = 10,
     this.until,
@@ -76,6 +117,23 @@ final class RecurrenceDraft {
   /// （不写 BYDAY 时按 DTSTART 的星期几重复），不是「一天都不重复」。
   final Set<Weekday> weekdays;
 
+  /// 「每月」怎么定位那一天。**仅 [RecurrenceFrequency.monthly] 用**。
+  final MonthlyMode monthlyMode;
+
+  /// 每月几号。1…31，或 [lastDayOfMonth]。仅 [MonthlyMode.onDate] 用。
+  final int monthDay;
+
+  /// 第几个。见 [monthOrdinals]。仅 [MonthlyMode.onWeekday] 用。
+  final int monthOrdinal;
+
+  /// 哪个星期几。仅 [MonthlyMode.onWeekday] 用。
+  ///
+  /// **不复用 [weekdays]**：那是个集合（每周可以选好几天），
+  /// 而「每月第二个周二」只有一天。挤在一个字段里的话，
+  /// 「周一三五」切到「每月」会变成一条 `BYDAY=2MO,2WE,2FR` ——
+  /// 一条合法但用户没选过的规则。
+  final Weekday monthWeekday;
+
   final RecurrenceEndMode endMode;
 
   /// 重复次数。**含首次** —— 与 RFC 5545 的 COUNT 一致。
@@ -93,6 +151,10 @@ final class RecurrenceDraft {
     RecurrenceFrequency? frequency,
     int? interval,
     Set<Weekday>? weekdays,
+    MonthlyMode? monthlyMode,
+    int? monthDay,
+    int? monthOrdinal,
+    Weekday? monthWeekday,
     RecurrenceEndMode? endMode,
     int? count,
     Object? until = unset,
@@ -101,6 +163,10 @@ final class RecurrenceDraft {
     frequency: frequency ?? this.frequency,
     interval: interval ?? this.interval,
     weekdays: weekdays ?? this.weekdays,
+    monthlyMode: monthlyMode ?? this.monthlyMode,
+    monthDay: monthDay ?? this.monthDay,
+    monthOrdinal: monthOrdinal ?? this.monthOrdinal,
+    monthWeekday: monthWeekday ?? this.monthWeekday,
     endMode: endMode ?? this.endMode,
     count: count ?? this.count,
     until: patch(until, this.until),
@@ -122,9 +188,13 @@ final class RecurrenceDraft {
   /// 说一句「重复」，而不是挑几个认得的部件拼一句**说错的**话 ——
   /// 卡片上一度就是那样：`INTERVAL=3` 的规则显示成「每周」。
   ///
-  /// 表达不了的例子：`BYDAY=-1FR`（每月最后一个周五）、`BYMONTHDAY=15`、
-  /// `BYSETPOS`。FR-TASK-03 点了前两种的名，界面还没做。
-  // TODO(M3): 补 BYMONTHDAY / 带序号的 BYDAY，那时这里也要跟着认。
+  /// 表达不了的例子：`BYSETPOS`、`BYWEEKNO`、`BYDAY=5MO`（第五个周一）、
+  /// `BYMONTHDAY=15,20`（一个月里两天）。
+  ///
+  /// `BYMONTHDAY=15` 与 `BYDAY=-1FR` 一度也在这张名单上 ——
+  /// FR-TASK-03 点了它们的名而界面没做。现在做了，于是这里也认了；
+  /// 认与不认必须跟界面同进同退，多认一种就会把**用户改不了的规则**
+  /// 显示成一条能改的。
   static RecurrenceDraft? fromRrule(Recurrence recurrence) {
     final r = recurrence.rule;
 
@@ -141,17 +211,46 @@ final class RecurrenceDraft {
     if (r.bySeconds.isNotEmpty ||
         r.byMinutes.isNotEmpty ||
         r.byHours.isNotEmpty ||
-        r.byMonthDays.isNotEmpty ||
         r.byYearDays.isNotEmpty ||
         r.byWeeks.isNotEmpty ||
         r.byMonths.isNotEmpty ||
         r.bySetPositions.isNotEmpty) {
       return null;
     }
-    // 带序号的星期（`-1FR` = 最后一个周五）与「每周五」是两回事。
-    if (r.byWeekDays.any((d) => d.hasOccurrence)) return null;
-    // BYDAY 只在「每周」下有对应控件。
-    if (r.byWeekDays.isNotEmpty && frequency != RecurrenceFrequency.weekly) {
+
+    // ── BYMONTHDAY / 带序号的 BYDAY：只在「每月」下有控件 ──────────
+    final monthly = frequency == RecurrenceFrequency.monthly;
+    var monthlyMode = MonthlyMode.followStart;
+    var monthDay = 1;
+    var monthOrdinal = 1;
+    var monthWeekday = Weekday.monday;
+
+    if (r.byMonthDays.isNotEmpty) {
+      // 一次只能选一天，且只有这些值有控件。
+      if (!monthly || r.byMonthDays.length != 1) return null;
+      final d = r.byMonthDays.single;
+      if (d != lastDayOfMonth && (d < 1 || d > 31)) return null;
+      monthlyMode = MonthlyMode.onDate;
+      monthDay = d;
+    }
+
+    // 带序号的星期（`-1FR` = 最后一个周五）与「每周五」是两回事：
+    // 前者是「每月」下的控件，后者是「每周」下的。
+    final ordinalDays = r.byWeekDays.where((d) => d.hasOccurrence).toList();
+    if (ordinalDays.isNotEmpty) {
+      if (!monthly ||
+          r.byWeekDays.length != 1 ||
+          monthlyMode != MonthlyMode.followStart) {
+        return null;
+      }
+      final entry = ordinalDays.single;
+      if (!monthOrdinals.contains(entry.occurrence)) return null;
+      monthlyMode = MonthlyMode.onWeekday;
+      monthOrdinal = entry.occurrence!;
+      monthWeekday = Weekday.fromIso(entry.day);
+    } else if (r.byWeekDays.isNotEmpty &&
+        frequency != RecurrenceFrequency.weekly) {
+      // 不带序号的 BYDAY 只在「每周」下有对应控件。
       return null;
     }
 
@@ -162,7 +261,14 @@ final class RecurrenceDraft {
       frequency: frequency,
       // 不写 INTERVAL 等同于 1（RFC 5545）。
       interval: r.interval ?? 1,
-      weekdays: {for (final d in r.byWeekDays) Weekday.fromIso(d.day)},
+      // 「每周」以外的 BYDAY 上面已经消化掉了，这里只收每周那种。
+      weekdays: frequency == RecurrenceFrequency.weekly
+          ? {for (final d in r.byWeekDays) Weekday.fromIso(d.day)}
+          : const {},
+      monthlyMode: monthlyMode,
+      monthDay: monthDay,
+      monthOrdinal: monthOrdinal,
+      monthWeekday: monthWeekday,
       endMode: until != null
           ? RecurrenceEndMode.until
           : count != null
@@ -193,6 +299,18 @@ final class RecurrenceDraft {
     if (!enabled) return null;
     if (interval < 1) return '间隔至少是 1';
     if (endMode == RecurrenceEndMode.count && count < 1) return '次数至少是 1';
+    if (frequency == RecurrenceFrequency.monthly) {
+      switch (monthlyMode) {
+        case MonthlyMode.followStart:
+          break;
+        case MonthlyMode.onDate:
+          if (monthDay != lastDayOfMonth && (monthDay < 1 || monthDay > 31)) {
+            return '号数要在 1 到 31 之间';
+          }
+        case MonthlyMode.onWeekday:
+          if (!monthOrdinals.contains(monthOrdinal)) return '选一个序号';
+      }
+    }
     if (endMode == RecurrenceEndMode.until && until == null) {
       return '选一个结束日期';
     }
@@ -215,6 +333,18 @@ final class RecurrenceDraft {
 
     final parts = <String>['FREQ=${frequency.rruleName}'];
     if (interval != 1) parts.add('INTERVAL=$interval');
+
+    if (frequency == RecurrenceFrequency.monthly) {
+      switch (monthlyMode) {
+        // 不写 BY 部件＝按 DTSTART 的号数重复（RFC 5545）。
+        case MonthlyMode.followStart:
+          break;
+        case MonthlyMode.onDate:
+          parts.add('BYMONTHDAY=$monthDay');
+        case MonthlyMode.onWeekday:
+          parts.add('BYDAY=$monthOrdinal${monthWeekday.rruleName}');
+      }
+    }
 
     if (frequency == RecurrenceFrequency.weekly && weekdays.isNotEmpty) {
       // 按周一到周日排序输出，而不是集合的迭代序 ——
@@ -259,6 +389,20 @@ final class RecurrenceDraft {
       final sorted = weekdays.toList()
         ..sort((a, b) => a.isoNumber.compareTo(b.isoNumber));
       buffer.write('的${sorted.map((w) => w.label).join('、')}');
+    }
+    if (frequency == RecurrenceFrequency.monthly) {
+      switch (monthlyMode) {
+        // 「跟开始日期同一天」说不出比「每月」更多的东西 ——
+        // 那一天是任务的开始日期，不在这条规则里。
+        case MonthlyMode.followStart:
+          break;
+        case MonthlyMode.onDate:
+          buffer.write('的${monthDayLabel(monthDay)}');
+        case MonthlyMode.onWeekday:
+          buffer.write(
+            '的${monthOrdinalLabel(monthOrdinal)}周${monthWeekday.label}',
+          );
+      }
     }
     if (withEnd) {
       switch (endMode) {

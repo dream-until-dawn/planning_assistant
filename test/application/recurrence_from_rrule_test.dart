@@ -57,6 +57,35 @@ void main() {
         endMode: RecurrenceEndMode.until,
         until: PlanDate(2027, 5, 20),
       ),
+      // FR-TASK-03 点名的那两种，界面补上之后进了这张表 ——
+      // 它们此前在下面「表达不了」那一组里。
+      '每月 15 号': const RecurrenceDraft(
+        enabled: true,
+        frequency: RecurrenceFrequency.monthly,
+        monthlyMode: MonthlyMode.onDate,
+        monthDay: 15,
+      ),
+      '每月最后一天': const RecurrenceDraft(
+        enabled: true,
+        frequency: RecurrenceFrequency.monthly,
+        monthlyMode: MonthlyMode.onDate,
+        monthDay: lastDayOfMonth,
+      ),
+      '每月最后一个周五': const RecurrenceDraft(
+        enabled: true,
+        frequency: RecurrenceFrequency.monthly,
+        monthlyMode: MonthlyMode.onWeekday,
+        monthOrdinal: lastDayOfMonth,
+        monthWeekday: Weekday.friday,
+      ),
+      '每 2 月的第二个周二': const RecurrenceDraft(
+        enabled: true,
+        frequency: RecurrenceFrequency.monthly,
+        interval: 2,
+        monthlyMode: MonthlyMode.onWeekday,
+        monthOrdinal: 2,
+        monthWeekday: Weekday.tuesday,
+      ),
     };
 
     cases.forEach((name, original) {
@@ -69,6 +98,14 @@ void main() {
         expect(back!.frequency, original.frequency);
         expect(back.interval, original.interval);
         expect(back.weekdays, original.weekdays);
+        expect(back.monthlyMode, original.monthlyMode);
+        if (original.monthlyMode == MonthlyMode.onDate) {
+          expect(back.monthDay, original.monthDay);
+        }
+        if (original.monthlyMode == MonthlyMode.onWeekday) {
+          expect(back.monthOrdinal, original.monthOrdinal);
+          expect(back.monthWeekday, original.monthWeekday);
+        }
         expect(back.endMode, original.endMode);
         if (original.endMode == RecurrenceEndMode.count) {
           expect(back.count, original.count);
@@ -87,9 +124,19 @@ void main() {
     // 每一条都是**能被 rrule 包正常解析**的合法规则 ——
     // 验的是「我们认得出自己认不得它」，不是「解析会抛异常」。
     final unsupported = <String, String>{
-      '每月最后一个周五（带序号的 BYDAY）': 'RRULE:FREQ=MONTHLY;BYDAY=-1FR',
-      '每月 15 号（BYMONTHDAY）': 'RRULE:FREQ=MONTHLY;BYMONTHDAY=15',
       '每年第 100 天（BYYEARDAY）': 'RRULE:FREQ=YEARLY;BYYEARDAY=100',
+      // 「每月」下的 BYMONTHDAY / 序号 BYDAY 现在认得了，
+      // 但**只认界面真造得出来的那些形状**：
+      '一个月里两天（BYMONTHDAY=15,20）': 'RRULE:FREQ=MONTHLY;BYMONTHDAY=15,20',
+      '倒数第二天（界面只有「最后一天」）': 'RRULE:FREQ=MONTHLY;BYMONTHDAY=-2',
+      '第五个周一（多数月份不存在，界面不给选）': 'RRULE:FREQ=MONTHLY;BYDAY=5MO',
+      '倒数第二个周五': 'RRULE:FREQ=MONTHLY;BYDAY=-2FR',
+      '一个月里两个序号（BYDAY=1MO,3MO）': 'RRULE:FREQ=MONTHLY;BYDAY=1MO,3MO',
+      '号数与序号同时给（界面是二选一）': 'RRULE:FREQ=MONTHLY;BYMONTHDAY=15;BYDAY=1MO',
+      // 不能拿 `FREQ=WEEKLY;BYMONTHDAY=15` 当例子：RFC 5545 直接禁了那个组合，
+      // 库在解析时就抛 —— 这一组验的是「合法但我们表达不了」，不是「解析失败」。
+      '每天里的 15 号（频率对不上）': 'RRULE:FREQ=DAILY;BYMONTHDAY=15',
+      '每年下的序号 BYDAY（频率对不上）': 'RRULE:FREQ=YEARLY;BYDAY=-1FR',
       '每年 5 月（BYMONTH）': 'RRULE:FREQ=YEARLY;BYMONTH=5',
       '每天 9 点与 18 点（BYHOUR）': 'RRULE:FREQ=DAILY;BYHOUR=9,18',
       '每月工作日里的最后一个（BYSETPOS）':

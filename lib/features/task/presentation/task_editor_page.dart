@@ -112,6 +112,23 @@ class TaskEditorPage extends ConsumerStatefulWidget {
   static Key endModeKey(RecurrenceEndMode m) =>
       ValueKey('editor-repeat-end-${m.name}');
 
+  /// 「每月」那三个档位与它们各自的输入（FR-TASK-03 的
+  /// 「每月 15 号」「每月最后一个周五」）。
+  static Key monthlyModeKey(MonthlyMode m) =>
+      ValueKey('editor-repeat-monthly-${m.name}');
+  static Key monthOrdinalKey(int ordinal) =>
+      ValueKey('editor-repeat-ordinal-$ordinal');
+
+  /// **与 [weekdayKey] 分开。** 两处选的不是一件事（一个是集合、一个是单选），
+  /// 共用 Key 的话测试里「点周二」会指向两个不同的语义。
+  static Key monthWeekdayKey(Weekday d) =>
+      ValueKey('editor-repeat-monthday-${d.name}');
+  static const Key lastDayOfMonthKey = ValueKey('editor-repeat-lastday');
+
+  /// 「29/30/31 号的月份会跳过」那句提醒。
+  static const Key monthSkipHintKey = ValueKey('editor-repeat-skip-hint');
+  static const String monthDayStepper = 'editor-repeat-monthday';
+
   /// 间隔（每 N 天/周/…）与次数的加减器，以及「到某天为止」的日期。
   ///
   /// 这三个一度**只存在于模型里，界面上够不着** —— `interval` 恒为 1、
@@ -1105,6 +1122,7 @@ class _RecurrenceSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final colors = context.appColors;
 
     // 界面表达不了的规则：**只读一行，不给动**。
     //
@@ -1166,6 +1184,97 @@ class _RecurrenceSection extends StatelessWidget {
             onChanged: (v) =>
                 controller.setRecurrence(draft.copyWith(interval: v)),
           ),
+          if (draft.frequency == RecurrenceFrequency.monthly) ...[
+            const SizedBox(height: Spacing.sm),
+            Text('每月哪一天', style: text.bodySmall),
+            const SizedBox(height: Spacing.xs),
+            _ChipRow(
+              options: [
+                for (final m in MonthlyMode.values)
+                  (
+                    TaskEditorPage.monthlyModeKey(m),
+                    m.label,
+                    draft.monthlyMode == m,
+                    () => controller.setRecurrence(
+                      draft.copyWith(monthlyMode: m),
+                    ),
+                  ),
+              ],
+            ),
+            // 与结束条件同一个做法：选中哪档就只给哪档的输入。
+            if (draft.monthlyMode == MonthlyMode.onDate) ...[
+              const SizedBox(height: Spacing.xs),
+              _ChipRow(
+                options: [
+                  (
+                    TaskEditorPage.lastDayOfMonthKey,
+                    '最后一天',
+                    draft.monthDay == lastDayOfMonth,
+                    () => controller.setRecurrence(
+                      draft.copyWith(
+                        // 再点一次回到 1 号 —— 不给「取消选中但没有号数」
+                        // 这种状态，那会让保存按钮灰着而看不出原因。
+                        monthDay: draft.monthDay == lastDayOfMonth
+                            ? 1
+                            : lastDayOfMonth,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (draft.monthDay != lastDayOfMonth)
+                _Stepper(
+                  name: TaskEditorPage.monthDayStepper,
+                  label: '几号',
+                  display: monthDayLabel(draft.monthDay),
+                  value: draft.monthDay,
+                  max: 31,
+                  onChanged: (v) =>
+                      controller.setRecurrence(draft.copyWith(monthDay: v)),
+                ),
+              // 29/30/31 号在短月份是**跳过**，不是夹到月末（RFC 5545）。
+              // 不说的话，选了 31 号的人要到三月才发现二月没提醒。
+              if (draft.monthDay >= 29)
+                Padding(
+                  key: TaskEditorPage.monthSkipHintKey,
+                  padding: const EdgeInsets.only(top: Spacing.xs),
+                  child: Text(
+                    '没有 ${draft.monthDay} 号的月份会跳过。想每月月末，选「最后一天」。',
+                    style: text.bodySmall?.copyWith(color: colors.dangerText),
+                  ),
+                ),
+            ],
+            if (draft.monthlyMode == MonthlyMode.onWeekday) ...[
+              const SizedBox(height: Spacing.xs),
+              _ChipRow(
+                options: [
+                  for (final o in monthOrdinals)
+                    (
+                      TaskEditorPage.monthOrdinalKey(o),
+                      monthOrdinalLabel(o),
+                      draft.monthOrdinal == o,
+                      () => controller.setRecurrence(
+                        draft.copyWith(monthOrdinal: o),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: Spacing.xs),
+              _ChipRow(
+                options: [
+                  for (final d in Weekday.values)
+                    (
+                      TaskEditorPage.monthWeekdayKey(d),
+                      '周${d.label}',
+                      draft.monthWeekday == d,
+                      () => controller.setRecurrence(
+                        draft.copyWith(monthWeekday: d),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ],
           if (draft.frequency == RecurrenceFrequency.weekly) ...[
             const SizedBox(height: Spacing.sm),
             Text('周几（不选＝跟开始日期同一天）', style: text.bodySmall),
@@ -1274,7 +1383,7 @@ class _UntilRow extends StatelessWidget {
 /// 非数字、粘进来的负号 —— 那些 [RecurrenceDraft.blockedReason] 里都有兜底，
 /// 但让用户先打错再看红字，不如根本打不错。
 ///
-/// 上界 [_max] 是**控件的**限制，不是模型的：RRULE 的 COUNT 可以很大，
+/// 上界 [max] 是**控件的**限制，不是模型的：RRULE 的 COUNT 可以很大，
 /// 同步下来一条 `COUNT=500` 照样正常展开。真要重复很多次的场景
 /// （「今年每天」），「到某天为止」才是顺手的控件。
 class _Stepper extends StatelessWidget {
@@ -1284,10 +1393,15 @@ class _Stepper extends StatelessWidget {
     required this.display,
     required this.value,
     required this.onChanged,
+    this.max = 99,
   });
 
   static const int _min = 1;
-  static const int _max = 99;
+
+  /// 上界跟着用途走：间隔与次数是 99，而「几号」是 31。
+  /// 一律 99 的话，加号能一路点到 45 号 —— 一条编得出来、
+  /// 但一次都不会发生的规则。
+  final int max;
 
   /// Key 前缀，见 [TaskEditorPage.stepperValueKey]。
   final String name;
@@ -1306,7 +1420,7 @@ class _Stepper extends StatelessWidget {
     // 到头了就禁用按钮，而不是点了没反应 —— 后者与「界面卡住了」
     // 在用户看来一模一样。
     final canDec = value > _min;
-    final canInc = value < _max;
+    final canInc = value < max;
 
     return Padding(
       padding: const EdgeInsets.only(top: Spacing.sm),
