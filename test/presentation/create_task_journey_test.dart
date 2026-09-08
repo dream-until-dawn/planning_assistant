@@ -294,4 +294,54 @@ void main() {
       await disposeTree(tester);
     });
   });
+
+  group('日期栏', () {
+    testWidgets('非全天时不给清空日期', (tester) async {
+      // 清了就又回到「有时刻没哪天」。save() 那道兜底会补回来，
+      // 但表单上不该出现那个瞬间 —— 用户看到的是「空着也能存」，
+      // 存下去却有日期，两件事对不上。
+      await _pumpApp(tester);
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+
+      // 关掉全天 → 自动补今天 → 清除按钮应当消失。
+      await tester.tap(find.byKey(TaskEditorPage.allDaySwitchKey));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.descendant(
+          of: find.byKey(TaskEditorPage.dateFieldKey),
+          matching: find.byIcon(Icons.close),
+        ),
+        findsNothing,
+        reason: '非全天时不该有清除按钮',
+      );
+
+      await disposeTree(tester);
+    });
+
+    testWidgets('对照组：全天时可以清空日期', (tester) async {
+      // 否则「一律不给清」也能让上面那条绿，而那样日期就永远去不掉了。
+      await _pumpApp(tester);
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+
+      // 全天状态下先关再开，让日期被补上又保留（关时补今天，开时不清日期）。
+      await tester.tap(find.byKey(TaskEditorPage.allDaySwitchKey));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TaskEditorPage.allDaySwitchKey));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.descendant(
+          of: find.byKey(TaskEditorPage.dateFieldKey),
+          matching: find.byIcon(Icons.close),
+        ),
+        findsOneWidget,
+        reason: '全天 + 有日期时应当能清掉',
+      );
+
+      await disposeTree(tester);
+    });
+  });
 }

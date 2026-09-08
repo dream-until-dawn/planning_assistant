@@ -122,6 +122,10 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
             _DateRow(
               date: draft.planDate,
               today: _today(),
+              // 非全天时**不许清空日期**：清了就又回到「有时刻没哪天」。
+              // save() 那道兜底会把它补回来，但表单上不该出现那个瞬间 ——
+              // 用户看到的是「日期空着也能存」，而存下去却有日期。
+              clearable: draft.isAllDay,
               onPick: controller.setPlanDate,
             ),
             SwitchListTile(
@@ -156,6 +160,7 @@ class _DateRow extends StatelessWidget {
   const _DateRow({
     required this.date,
     required this.today,
+    required this.clearable,
     required this.onPick,
   });
 
@@ -163,6 +168,9 @@ class _DateRow extends StatelessWidget {
 
   /// 本地墙钟的今天。选择器的默认与可选范围都以它为基准。
   final PlanDate today;
+
+  /// 能不能清空。非全天任务必须有日期，所以那时不给清。
+  final bool clearable;
 
   final ValueChanged<PlanDate?> onPick;
 
@@ -173,7 +181,7 @@ class _DateRow extends StatelessWidget {
       contentPadding: EdgeInsets.zero,
       leading: const Icon(Icons.event_outlined),
       title: Text(date == null ? '选个日期（可选）' : '$date'),
-      trailing: date == null
+      trailing: (date == null || !clearable)
           ? null
           : IconButton(
               onPressed: () => onPick(null),
