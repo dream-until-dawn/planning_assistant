@@ -34,14 +34,32 @@ enum TaskKind {
 
 /// 优先级。存 INT，但取值受控。
 enum TaskPriority {
-  none(0),
-  low(1),
-  normal(2),
-  high(3),
-  urgent(4);
+  none(0, '无'),
+  low(1, '低'),
+  normal(2, '普通'),
+  high(3, '高'),
+  urgent(4, '紧急');
 
-  const TaskPriority(this.value);
+  const TaskPriority(this.value, this.label);
+
+  /// 存进库里的数值（data-model §3.1）。**枚举顺序不是它** ——
+  /// 改枚举顺序不该改写用户的数据。
   final int value;
+
+  /// 给人看的名字。
+  // TODO(M4): 走 l10n 资源（NFR-A11Y-04）
+  final String label;
+
+  /// 从高到低。列表的「按优先级」分组与筛选条都按这个顺序摆
+  /// （view-specs §2.1「紧急 → 高 → 普通 → 低 → 无」）——
+  /// 两处各写一遍的话，筛选条与分组的次序会对不上。
+  static const List<TaskPriority> byImportance = [
+    TaskPriority.urgent,
+    TaskPriority.high,
+    TaskPriority.normal,
+    TaskPriority.low,
+    TaskPriority.none,
+  ];
 
   static TaskPriority fromValue(int value) {
     for (final p in TaskPriority.values) {

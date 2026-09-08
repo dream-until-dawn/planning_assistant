@@ -23,6 +23,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../design/components/app_chip.dart';
 import '../../../../design/tokens/dimensions.dart';
+import '../../../../domain/entities/task.dart';
 import '../../../../domain/value_objects/task_status.dart';
 import '../application/category_providers.dart';
 import '../application/view_shared_state.dart';
@@ -39,6 +40,14 @@ class FilterBar extends ConsumerWidget {
 
   static Key statusKey(TaskStatus status) =>
       ValueKey('filter-status-${status.name}');
+
+  /// 优先级那一维。
+  ///
+  /// **这一维是补出来的。** `FilterSpec.priorities` 与 `applyFilter`
+  /// 早就有了，唯独筛选条上没有 —— 于是那一维**永远筛不出任何东西**
+  /// （用户造不出非空的 priorities）。与编辑器缺优先级控件是同一笔债的两半。
+  static Key priorityKey(TaskPriority p) =>
+      ValueKey('filter-priority-${p.name}');
 
   /// 状态维度暴露哪几项。**只放设得出来的**。
   ///
@@ -86,6 +95,17 @@ class FilterBar extends ConsumerWidget {
               selected: filter.statuses.contains(status),
               onSelected: (_) =>
                   notifier.setFilter(filter.toggleStatus(status)),
+            ),
+            const SizedBox(width: Spacing.sm),
+          ],
+          // 优先级：按 `byImportance`（紧急 → … → 无），
+          // 与列表的「按优先级」分组、编辑器里的选择区**同一份顺序**。
+          for (final p in TaskPriority.byImportance) ...[
+            SelectableChip(
+              key: priorityKey(p),
+              label: p.label,
+              selected: filter.priorities.contains(p),
+              onSelected: (_) => notifier.setFilter(filter.togglePriority(p)),
             ),
             const SizedBox(width: Spacing.sm),
           ],

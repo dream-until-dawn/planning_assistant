@@ -48,6 +48,10 @@ TaskCardData occurrenceCardData(
     timeLabel: timeLabelOf(row),
     stageProgress: progressOf(stages),
     isRecurring: task.isRecurring,
+    // 「普通」不显示（见 `TaskCardData.priorityLabel`）。
+    priorityLabel: task.priority == TaskPriority.normal
+        ? null
+        : task.priority.label,
     // 状态也走**行**的 —— 重复任务的 tasks.status 恒为 pending，
     // 看它的话每一次都显示成未完成（data-model §4.3）。
     isDone: row.status == TaskStatus.done,

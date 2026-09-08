@@ -25,6 +25,7 @@ import '../../../design/components/app_button.dart';
 import '../../../design/components/app_chip.dart';
 import '../../../design/theme/app_theme.dart';
 import '../../../design/tokens/dimensions.dart';
+import '../../../domain/entities/task.dart';
 import '../../views/shared/application/category_providers.dart';
 import '../application/recurrence_draft.dart';
 import '../application/stage_time.dart';
@@ -53,6 +54,14 @@ class TaskEditorPage extends ConsumerStatefulWidget {
 
   /// 分类选择区。每个选项的 Key 见 [categoryChipKey]。
   static const Key categoryPickerKey = ValueKey('editor-category');
+
+  /// 优先级选择区。每个选项的 Key 见 [priorityChipKey]。
+  ///
+  /// **这一区是补出来的。** `priority` 在模型、命令、筛选里都有，
+  /// 唯独界面上没有 —— 于是所有任务恒为「普通」，
+  /// 而筛选条那一维筛出来的永远只有那一档。
+  /// 又是一次「模型上有旋钮，界面上够不着」（testing-strategy §1.6）。
+  static const Key priorityPickerKey = ValueKey('editor-priority');
 
   /// 阶段区。
   static const Key stageSectionKey = ValueKey('editor-stages');
@@ -108,6 +117,9 @@ class TaskEditorPage extends ConsumerStatefulWidget {
   static const Key stageTimeClearKey = ValueKey('stage-time-clear');
 
   /// 某个分类选项的 Key。`null` 是「未分类」那一项。
+  static Key priorityChipKey(TaskPriority p) =>
+      ValueKey('editor-priority-${p.name}');
+
   static Key categoryChipKey(String? categoryId) =>
       ValueKey('editor-category-${categoryId ?? 'none'}');
 
@@ -214,6 +226,11 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
             _CategoryPicker(
               selectedId: draft.categoryId,
               onSelected: controller.setCategory,
+            ),
+            const SizedBox(height: Spacing.xl),
+            _PriorityPicker(
+              selected: draft.priority,
+              onSelected: controller.setPriority,
             ),
             const SizedBox(height: Spacing.xl),
             _DateRow(
@@ -804,6 +821,45 @@ class _CategoryPicker extends ConsumerWidget {
     selected: id == selectedId,
     onSelected: (_) => onSelected(id),
   );
+}
+
+/// 优先级选择区（FR-TASK-01）。
+///
+/// 顺序按 [TaskPriority.byImportance]（紧急 → … → 无），
+/// 与列表的「按优先级」分组、筛选条用的是**同一份顺序** ——
+/// 各写一遍的话，三处的次序迟早对不上。
+class _PriorityPicker extends StatelessWidget {
+  const _PriorityPicker({required this.selected, required this.onSelected});
+
+  final TaskPriority selected;
+  final ValueChanged<TaskPriority> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+
+    return Column(
+      key: TaskEditorPage.priorityPickerKey,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('优先级', style: text.bodySmall),
+        const SizedBox(height: Spacing.xs),
+        Wrap(
+          spacing: Spacing.sm,
+          runSpacing: Spacing.xs,
+          children: [
+            for (final p in TaskPriority.byImportance)
+              SelectableChip(
+                key: TaskEditorPage.priorityChipKey(p),
+                label: p.label,
+                selected: p == selected,
+                onSelected: (_) => onSelected(p),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
 }
 
 /// 阶段区（FR-TASK-02）。

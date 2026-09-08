@@ -88,6 +88,7 @@ final class TaskDraft {
     this.endDate,
     this.endMinute,
     this.categoryId,
+    this.priority = TaskPriority.normal,
     this.stages = const [],
     this.recurrence = const RecurrenceDraft(),
   });
@@ -140,6 +141,11 @@ final class TaskDraft {
   /// 分类。**null 就是「未分类」**（settings-spec §3.0），
   /// 不是「还没选」—— 库里没有「未分类」那一行，选它就是写 null。
   final String? categoryId;
+
+  /// 优先级（FR-TASK-01）。默认「普通」——
+  /// 与 `CreateTaskCommand` 的默认值一致，两处分叉的话
+  /// 「不选就是普通」这句话会在某条路径上不成立。
+  final TaskPriority priority;
 
   /// 阶段。空 = 单项任务（FR-TASK-01）；≥2 = 阶段事项（FR-TASK-02）。
   ///
@@ -239,6 +245,7 @@ final class TaskDraft {
     Object? endDate = unset,
     Object? endMinute = unset,
     Object? categoryId = unset,
+    TaskPriority? priority,
     List<StageDraft>? stages,
     RecurrenceDraft? recurrence,
   }) => TaskDraft(
@@ -259,6 +266,7 @@ final class TaskDraft {
     endDate: patch(endDate, this.endDate),
     endMinute: patch(endMinute, this.endMinute),
     categoryId: patch(categoryId, this.categoryId),
+    priority: priority ?? this.priority,
     stages: stages ?? this.stages,
     recurrence: recurrence ?? this.recurrence,
   );
@@ -296,6 +304,7 @@ TaskDraft draftFromTask(
     endDate: task.endDate,
     endMinute: task.endMinute,
     categoryId: task.categoryId,
+    priority: task.priority,
     stages: [
       for (final s in stages)
         StageDraft(
@@ -367,6 +376,9 @@ final class TaskEditorController extends Notifier<TaskDraft> {
   /// 选分类。**传 null 即「未分类」**，不是「不改」。
   void setCategory(String? categoryId) =>
       state = state.copyWith(categoryId: categoryId);
+
+  void setPriority(TaskPriority priority) =>
+      state = state.copyWith(priority: priority);
 
   /// 本地墙钟的今天。由 [todayProvider] 统一给出，
   /// **不用 `DateTime.now()`**（cross-cutting §1）。
@@ -533,6 +545,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     // null 即「未分类」（settings-spec §3.0）—— 库里没有那一行，
     // 所以这里原样传，不做任何「空则填默认分类」的转换。
     categoryId: draft.categoryId,
+    priority: draft.priority,
     // 存**规范形**：拼出来的串不保证是规范形，而 data-model
     // 要求库里存的是规范形（否则同一条规则可能有两种写法，
     // 往返与同步都会分叉）。
@@ -658,6 +671,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
               title: draft.title.trim(),
               note: draft.note.trim().isEmpty ? null : draft.note.trim(),
               categoryId: draft.categoryId,
+              priority: draft.priority,
               recurrenceRule: _canonicalRule(draft),
               planDate: planDate,
               startMinute: draft.isAllDay ? null : draft.startMinute,
