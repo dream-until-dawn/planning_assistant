@@ -20,6 +20,8 @@ import 'package:planning_assistant/features/views/shared/application/view_shared
 import 'package:planning_assistant/features/views/task_list/application/task_list_providers.dart';
 import 'package:planning_assistant/features/views/task_list/presentation/task_list_page.dart';
 
+import '../support/app_harness.dart';
+
 const _today = PlanDate(2026, 9, 8);
 
 /// 夹具里的任务标题**不能和分组标题重名**。
@@ -44,8 +46,7 @@ Future<void> _pump(
   List<Task> tasks, {
   FilterSpec filter = FilterSpec.none,
 }) async {
-  await tester.binding.setSurfaceSize(const Size(390, 844));
-  addTearDown(() => tester.binding.setSurfaceSize(null));
+  await setScreenSize(tester, const Size(390, 844));
 
   late ProviderContainer container;
   await tester.pumpWidget(

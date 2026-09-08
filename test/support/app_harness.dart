@@ -142,6 +142,52 @@ void testAppWidgets(
   });
 }
 
+/// 设定测试里的「屏幕」。**两处都要设。**
+///
+/// `setSurfaceSize` 只改渲染视口，改不到 `tester.view` ——
+/// 而 `MediaQuery` 是从 `tester.view` 来的。只设前者的话，
+/// 应用**按 390×844 布局**，`MediaQuery` 却报测试默认的
+/// 2400×1800@3.0 = **800×600 横屏**。
+///
+/// 于是任何按 `MediaQuery` 的尺寸或朝向分支的东西都走错分支，
+/// 而且**布局本身看不出异常**（没有溢出、没有报错）。
+/// 撞见的形态：Material 的时间选择器选了**横屏版式**，「确定」落在
+/// x≈424，屏幕却只有 390 宽 —— 点不着；而失败信息说的是
+/// 「保存之后页面还在」，隔着三层。
+///
+/// 顺带把 dpr 设成 1，让逻辑像素与传进来的数一致 ——
+/// 否则「390」到底是逻辑还是物理，每次都要重新想一遍。
+/// **要 await**：`setSurfaceSize` 是受保护的异步 API，
+/// 不等它就 `pumpWidget` 会撞上「Guarded function conflict」。
+Future<void> setScreenSize(WidgetTester tester, Size size) async {
+  await tester.binding.setSurfaceSize(size);
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(() {
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+    return tester.binding.setSurfaceSize(null);
+  });
+}
+
+/// 点一个控件，**先把它滚进可视区**。
+///
+/// `ListView` 的 cacheExtent 会在视口外先把控件建出来，于是
+/// `find.byKey` 找得到、而 `tap` 算出的坐标落在视口外 ——
+/// 那一下点在了底部固定的保存按钮上：任务直接存了、页面弹回列表，
+/// 随后的断言报的却是「找不到某个控件」。看起来完全不像「控件在屏幕外」。
+///
+/// 这个坑犯过两次：第二次是表单里多加了一行「有结束时间」，
+/// 把重复区往下挤了 56 像素，两条与结束时间毫无关系的用例一起红了。
+/// 所以放进 support，别再各文件自己写一遍。
+Future<void> tapVisible(WidgetTester tester, Key key) async {
+  final finder = find.byKey(key);
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
 /// 写入默认分类。
 ///
 /// **`appHarness()` 不自动做** —— 它是同步的，而播种要落库。

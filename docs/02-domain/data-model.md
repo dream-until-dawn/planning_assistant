@@ -59,8 +59,8 @@
 | `isAllDay` | BOOL | NOT NULL DEFAULT 0 | |
 | `planDate` | TEXT | NULL | `yyyy-MM-dd`。重复任务即 DTSTART 的日期 |
 | `startMinute` | INT | NULL | 0..1439，`isAllDay=1` 时为 NULL |
-| `endDate` | TEXT | NULL | 跨天任务的结束日 |
-| `endMinute` | INT | NULL | |
+| `endDate` | TEXT | NULL | 跨天任务的结束日。非空时 `planDate` 必须非空 |
+| `endMinute` | INT | NULL | 0..1439，`isAllDay=1` 时为 NULL；非空时 `endDate` 必须非空。与开始侧同一套规矩，由 `Task.checkInvariants` 强制 |
 | `timeZoneId` | TEXT | NOT NULL | IANA，创建时的时区 |
 | `recurrenceRule` | TEXT | NULL | RFC 5545 `RRULE:` 串。NULL = 不重复。**必须是本应用 `encodeRrule()` 产出的规范形**（含 `UNTIL` 时必带 `Z`），不得直接存外部原串 —— 见[重复引擎 §2.3](recurrence-engine.md#23-编码-rrule-必须显式开启-istimeutc强制) |
 | `recurrenceExDates` | TEXT | NULL | JSON 数组。**V1 不参与展开**，仅作导入 `.ics` 的原始留档，见 §4.5 |

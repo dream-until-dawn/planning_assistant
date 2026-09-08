@@ -50,6 +50,8 @@ final class TaskDraft {
     this.isAllDay = true,
     this.planDate,
     this.startMinute,
+    this.endDate,
+    this.endMinute,
     this.categoryId,
     this.stages = const [],
     this.recurrence = const RecurrenceDraft(),
@@ -64,6 +66,14 @@ final class TaskDraft {
 
   final PlanDate? planDate;
   final MinuteOfDay? startMinute;
+
+  /// 结束（FR-TASK-01 的「可选计划时间段」）。
+  ///
+  /// **全可选**：绝大多数任务只有一个「哪天」，没有跨度。
+  /// 有结束时刻就必须有结束日期，有结束日期就必须有开始日期 ——
+  /// 与开始侧同一套规矩，由 `Task.checkInvariants` 兜底。
+  final PlanDate? endDate;
+  final MinuteOfDay? endMinute;
 
   /// 分类。**null 就是「未分类」**（settings-spec §3.0），
   /// 不是「还没选」—— 库里没有「未分类」那一行，选它就是写 null。
@@ -92,20 +102,19 @@ final class TaskDraft {
   /// 没有起点就无从展开。与「非全天必须有日期」是同一类约束。
   bool get needsDateForRecurrence => recurrence.enabled && planDate == null;
 
-  /// 能不能保存。**只要求标题非空**（FR-TASK-01：仅填标题即可保存）。
-  ///
-  /// 用 `trim()`：一串空格不是标题。不 trim 的话用户能存出一条
-  /// 看起来空白、却怎么也搜不到的任务。
   /// 能不能保存。
   ///
   /// 标题非空是底线（FR-TASK-01：仅填标题即可保存）。
+  /// 用 `trim()`：一串空格不是标题 —— 不 trim 的话用户能存出一条
+  /// 看起来空白、却怎么也搜不到的任务。
   /// 另外**动过阶段就得填够两个**：加了一行却只填一个，保存下去会得到
   /// 一个领域层直接拒绝的命令 —— 与其让它在保存时炸，不如当场禁用按钮。
   bool get canSave {
     if (title.trim().isEmpty) return false;
     // 一个阶段都没添 = 单项任务，随便存。
     if (!recurrence.isValid) return false;
-    if (_endsBeforeItStarts) return false;
+    if (_recurrenceEndsBeforeStart) return false;
+    if (_taskEndsBeforeStart) return false;
     if (stages.isEmpty) return true;
     // 添了就得够两个（0 也行，那是把加出来的空行全删了）。
     final filled = filledStages.length;
@@ -118,7 +127,7 @@ final class TaskDraft {
   /// 日期选择器已经把下界卡在开始日期上了，但那只挡住「先定开始、再选结束」；
   /// 反过来先选结束再把开始日期往后挪，就绕过去了。
   /// 绕过去的结果是一条**一次都展不出来的规则**，而它长得完全正常。
-  bool get _endsBeforeItStarts {
+  bool get _recurrenceEndsBeforeStart {
     final until = recurrence.until;
     final start = planDate;
     if (!recurrence.enabled ||
@@ -130,13 +139,32 @@ final class TaskDraft {
     return until.isBefore(start);
   }
 
+  /// 任务自身的结束早于开始。
+  ///
+  /// 与 [_recurrenceEndsBeforeStart] 是两件事：那个说的是「这条规则重复到
+  /// 哪天为止」，这个说的是「这一次要做多久」。文案也要分开 ——
+  /// 合成一句「结束早于开始」的话，用户不知道该去改哪一个。
+  ///
+  /// 先比日期，同一天才比分钟；缺失的结束时刻按当天最后一分钟算，
+  /// 与 `Task._endsBeforeItStarts` 同一套规矩（那边是最后一道防线，
+  /// 这边是当场就告诉用户）。
+  bool get _taskEndsBeforeStart {
+    final start = planDate;
+    final end = endDate;
+    if (start == null || end == null) return false;
+    if (end.isBefore(start)) return true;
+    if (end != start) return false;
+    return (endMinute?.value ?? 1439) < (startMinute?.value ?? 0);
+  }
+
   /// 为什么不能存 —— 给界面显示用。null 表示能存。
   String? get blockedReason {
     if (title.trim().isEmpty) return null; // 标题为空时按钮本来就灰着，不用再说
     if (stages.isNotEmpty && filledStages.length == 1) {
       return '阶段事项至少要两个阶段';
     }
-    if (_endsBeforeItStarts) return '结束日期早于开始日期';
+    if (_taskEndsBeforeStart) return '结束时间早于开始时间';
+    if (_recurrenceEndsBeforeStart) return '重复的结束日期早于开始日期';
     return recurrence.blockedReason;
   }
 
@@ -146,6 +174,8 @@ final class TaskDraft {
     bool? isAllDay,
     Object? planDate = unset,
     Object? startMinute = unset,
+    Object? endDate = unset,
+    Object? endMinute = unset,
     Object? categoryId = unset,
     List<StageDraft>? stages,
     RecurrenceDraft? recurrence,
@@ -161,6 +191,8 @@ final class TaskDraft {
     // 在同一个类里补了两处、漏了第三处，是测试抓出来的。
     planDate: patch(planDate, this.planDate),
     startMinute: patch(startMinute, this.startMinute),
+    endDate: patch(endDate, this.endDate),
+    endMinute: patch(endMinute, this.endMinute),
     categoryId: patch(categoryId, this.categoryId),
     stages: stages ?? this.stages,
     recurrence: recurrence ?? this.recurrence,
@@ -200,7 +232,10 @@ final class TaskEditorController extends Notifier<TaskDraft> {
   /// 为什么不是「不让存」：那会把一个能自动答对的问题推给用户，
   /// 而 FR-TASK-01 的基调是「填得越少越好」。
   void setAllDay(bool value) => state = value
-      ? state.copyWith(isAllDay: true, startMinute: null)
+      // **两个时刻都要清**。只清 startMinute 的话会留下一条
+      // 「全天但 18:00 结束」的任务 —— 领域不变量直接拒绝，
+      // 而用户看到的只是保存时炸了一下。
+      ? state.copyWith(isAllDay: true, startMinute: null, endMinute: null)
       : state.copyWith(isAllDay: false, planDate: state.planDate ?? _today());
 
   void setStartMinute(MinuteOfDay? minute) => state = minute == null
@@ -210,6 +245,32 @@ final class TaskEditorController extends Notifier<TaskDraft> {
           isAllDay: false,
           planDate: state.planDate ?? _today(),
         );
+
+  /// 选结束日期。传 null 即清空，**同时把结束时刻一起清掉** ——
+  /// 留着的话就是「有几点、没有哪天」，与开始侧栽过的是同一个坑。
+  void setEndDate(PlanDate? date) => state = date == null
+      ? state.copyWith(endDate: null, endMinute: null)
+      // 结束日期要求先有开始日期，没有就补今天（与关全天、开重复同理）。
+      : state.copyWith(endDate: date, planDate: state.planDate ?? _today());
+
+  /// 选结束时刻。
+  ///
+  /// 有时刻就必须有日期：没选过结束日期时**补上开始那天**，
+  /// 而不是今天 —— 「今天 9 点开始，18 点结束」里的 18 点显然是同一天，
+  /// 而任务的开始日期未必是今天。
+  void setEndMinute(MinuteOfDay? minute) {
+    if (minute == null) {
+      state = state.copyWith(endMinute: null);
+      return;
+    }
+    final start = state.planDate ?? _today();
+    state = state.copyWith(
+      endMinute: minute,
+      isAllDay: false,
+      planDate: start,
+      endDate: state.endDate ?? start,
+    );
+  }
 
   void setRecurrence(RecurrenceDraft value) {
     // 打开重复时**没有日期就补今天** —— RRULE 的展开以 DTSTART 为锚点，
@@ -313,6 +374,13 @@ final class TaskEditorController extends Notifier<TaskDraft> {
             isAllDay: draft.isAllDay,
             planDate: planDate,
             startMinute: draft.isAllDay ? null : draft.startMinute,
+            // **兜底同样要做到结束侧**：全天不带时刻，没有结束日期
+            // 就连结束时刻一起丢掉。少任何一条都会造出一个
+            // 领域层直接拒绝的命令 —— 那时用户看到的只是保存炸了。
+            endDate: draft.endDate,
+            endMinute: draft.endDate == null || draft.isAllDay
+                ? null
+                : draft.endMinute,
           ),
         );
     // 阶段是**第二条命令** —— 任务得先存在才能给它挂阶段。

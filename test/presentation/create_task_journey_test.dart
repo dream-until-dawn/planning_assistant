@@ -23,8 +23,7 @@ import 'package:planning_assistant/features/task/presentation/task_editor_page.d
 import '../support/app_harness.dart';
 
 Future<Harness> _pumpApp(WidgetTester tester, {bool seed = false}) async {
-  await tester.binding.setSurfaceSize(const Size(390, 844));
-  addTearDown(() => tester.binding.setSurfaceSize(null));
+  await setScreenSize(tester, const Size(390, 844));
 
   final harness = appHarness();
   // 默认**不播种分类**：有没有分类要每个用例显式表态，
@@ -408,6 +407,83 @@ void main() {
     });
   });
 
+  group('计划时间段（FR-TASK-01：可选的开始与结束）', () {
+    testAppWidgets('开结束开关 → 选日期与时刻 → 一起落库', (tester) async {
+      final harness = await _pumpApp(tester);
+
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
+      await tester.pump();
+
+      // 关掉全天才谈得上时刻。
+      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+      await tapVisible(tester, TaskEditorPage.endSwitchKey);
+
+      // 开关一开就该有一个看得见的默认（与开始同一天），
+      // 而不是留一行「选个日期」等着再点一次。
+      expect(find.byKey(TaskEditorPage.endDateFieldKey), findsOneWidget);
+
+      // 结束时刻走时间选择器。
+      await tapVisible(tester, TaskEditorPage.endTimeFieldKey);
+      await tester.tap(find.text('确定'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      final task = (await harness.db.select(harness.db.tasks).get()).single;
+      expect(task.endDate, isNotNull, reason: '结束日期该跟着落库');
+      expect(task.endMinute, isNotNull, reason: '结束时刻该跟着落库');
+      // 结束日期默认取开始那天。
+      expect(task.endDate, task.planDate);
+    });
+
+    testAppWidgets('对照组：不开那个开关就没有结束', (tester) async {
+      // 少了这条，一个「永远写一个结束时间」的实现也能让上面绿。
+      final harness = await _pumpApp(tester);
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
+      await tester.pump();
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      final task = (await harness.db.select(harness.db.tasks).get()).single;
+      expect(task.endDate, isNull);
+      expect(task.endMinute, isNull);
+    });
+
+    testAppWidgets('切回全天会把结束时刻一起清掉', (tester) async {
+      // 留着的话就是一条「全天但 18:00 结束」的任务 ——
+      // 领域不变量直接拒绝，而用户看到的只是保存时炸了一下。
+      final harness = await _pumpApp(tester);
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
+      await tester.pump();
+
+      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+      await tapVisible(tester, TaskEditorPage.endSwitchKey);
+      await tapVisible(tester, TaskEditorPage.endTimeFieldKey);
+      await tester.tap(find.text('确定'));
+      await tester.pumpAndSettle();
+      // 再切回全天。
+      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      // 存下去了（没被不变量拒），而且时刻确实没了。
+      expect(find.byType(TaskEditorPage), findsNothing, reason: '应当存成功并返回');
+      final task = (await harness.db.select(harness.db.tasks).get()).single;
+      expect(task.isAllDay, isTrue);
+      expect(task.startMinute, isNull);
+      expect(task.endMinute, isNull);
+      expect(task.endDate, isNotNull, reason: '「哪天结束」与全天不矛盾，不该一起清掉');
+    });
+  });
+
   group('重复任务（FR-TASK-03/04）', () {
     testAppWidgets('建一条每周一三五的任务，规则以规范形落库', (tester) async {
       final harness = await _pumpApp(tester);
@@ -417,15 +493,13 @@ void main() {
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
       await tester.pump();
 
-      await tester.tap(find.byKey(TaskEditorPage.recurrenceSwitchKey));
-      await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(TaskEditorPage.frequencyKey(RecurrenceFrequency.weekly)),
+      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+      await tapVisible(
+        tester,
+        TaskEditorPage.frequencyKey(RecurrenceFrequency.weekly),
       );
-      await tester.pumpAndSettle();
       for (final d in [Weekday.monday, Weekday.wednesday, Weekday.friday]) {
-        await tester.tap(find.byKey(TaskEditorPage.weekdayKey(d)));
-        await tester.pumpAndSettle();
+        await tapVisible(tester, TaskEditorPage.weekdayKey(d));
       }
 
       await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
@@ -446,8 +520,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
       await tester.pump();
-      await tester.tap(find.byKey(TaskEditorPage.recurrenceSwitchKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
       await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
       await tester.pumpAndSettle();
 
@@ -466,22 +539,17 @@ void main() {
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '周会');
       await tester.pump();
-      await tester.tap(find.byKey(TaskEditorPage.recurrenceSwitchKey));
-      await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(TaskEditorPage.frequencyKey(RecurrenceFrequency.weekly)),
+      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+      await tapVisible(
+        tester,
+        TaskEditorPage.frequencyKey(RecurrenceFrequency.weekly),
       );
-      await tester.pumpAndSettle();
-
-      // 间隔 1 → 3。加减器在折线以下，先滚进来再点。
-      final inc = find.byKey(
-        TaskEditorPage.stepperIncKey(TaskEditorPage.intervalStepper),
-      );
+      // 间隔 1 → 3。
       for (var i = 0; i < 2; i++) {
-        await tester.ensureVisible(inc);
-        await tester.pumpAndSettle();
-        await tester.tap(inc);
-        await tester.pumpAndSettle();
+        await tapVisible(
+          tester,
+          TaskEditorPage.stepperIncKey(TaskEditorPage.intervalStepper),
+        );
       }
 
       await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
@@ -513,12 +581,11 @@ void main() {
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
       await tester.pump();
-      await tester.tap(find.byKey(TaskEditorPage.recurrenceSwitchKey));
-      await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(TaskEditorPage.endModeKey(RecurrenceEndMode.until)),
+      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+      await tapVisible(
+        tester,
+        TaskEditorPage.endModeKey(RecurrenceEndMode.until),
       );
-      await tester.pumpAndSettle();
 
       expect(find.byKey(TaskEditorPage.blockedReasonKey), findsOneWidget);
       await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));

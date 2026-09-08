@@ -41,6 +41,14 @@ class TaskEditorPage extends ConsumerStatefulWidget {
   static const Key dateFieldKey = ValueKey('editor-date');
   static const Key timeFieldKey = ValueKey('editor-time');
 
+  /// 结束侧（FR-TASK-01 的「可选计划时间段」）。
+  ///
+  /// 收在一个开关后面：绝大多数任务只有一个「哪天」，没有跨度，
+  /// 默认摊开两行日期两行时刻是把少数情形的成本摊给所有人。
+  static const Key endSwitchKey = ValueKey('editor-has-end');
+  static const Key endDateFieldKey = ValueKey('editor-end-date');
+  static const Key endTimeFieldKey = ValueKey('editor-end-time');
+
   /// 分类选择区。每个选项的 Key 见 [categoryChipKey]。
   static const Key categoryPickerKey = ValueKey('editor-category');
 
@@ -162,6 +170,7 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
             ),
             const SizedBox(height: Spacing.xl),
             _DateRow(
+              key: TaskEditorPage.dateFieldKey,
               date: draft.planDate,
               today: _today(),
               // 非全天时**不许清空日期**：清了就又回到「有时刻没哪天」。
@@ -179,9 +188,49 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
             ),
             if (!draft.isAllDay)
               _TimeRow(
+                key: TaskEditorPage.timeFieldKey,
                 minute: draft.startMinute,
                 onPick: controller.setStartMinute,
               ),
+            SwitchListTile(
+              key: TaskEditorPage.endSwitchKey,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('有结束时间'),
+              subtitle: Text(
+                draft.endDate == null ? '不设结束' : '到 ${_endText(draft)}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              value: draft.endDate != null,
+              // 打开时**先给一个看得见的默认**（与开始同一天），
+              // 而不是打开后留一行「选个日期」等着用户再点一次。
+              onChanged: (on) => controller.setEndDate(
+                on ? (draft.planDate ?? _today()) : null,
+              ),
+            ),
+            if (draft.endDate != null) ...[
+              _DateRow(
+                key: TaskEditorPage.endDateFieldKey,
+                date: draft.endDate,
+                today: _today(),
+                // 结束日期不在这里清 —— 关上面那个开关才是「不设结束」。
+                // 留一个清除按钮的话，清完还剩一个「有结束时间」开着的
+                // 空行，那是个没有意义的中间态。
+                clearable: false,
+                label: '结束日期',
+                // 结束不能早于开始。选择器就把下界卡在这儿，
+                // 顺手挡掉一半的错法；另一半（先选结束再改开始）
+                // 由 `TaskDraft.blockedReason` 兜。
+                firstDate: draft.planDate,
+                onPick: controller.setEndDate,
+              ),
+              if (!draft.isAllDay)
+                _TimeRow(
+                  key: TaskEditorPage.endTimeFieldKey,
+                  minute: draft.endMinute,
+                  label: '结束时间',
+                  onPick: controller.setEndMinute,
+                ),
+            ],
             const SizedBox(height: Spacing.xl),
             _RecurrenceSection(
               draft: draft.recurrence,
@@ -236,15 +285,36 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
   }
 }
 
+/// 结束那一截给人看的说法：「9-10」或「9-10 18:00」。
+String _endText(TaskDraft draft) {
+  final date = draft.endDate;
+  if (date == null) return '';
+  final m = draft.endMinute;
+  if (m == null || draft.isAllDay) return '$date';
+  return '$date '
+      '${m.hour.toString().padLeft(2, '0')}:'
+      '${m.minute.toString().padLeft(2, '0')}';
+}
+
 class _DateRow extends StatelessWidget {
   const _DateRow({
     required this.date,
     required this.today,
     required this.clearable,
     required this.onPick,
+    this.label,
+    this.firstDate,
+    super.key,
   });
 
   final PlanDate? date;
+
+  /// 行首的说明。开始那一行不写（它就是「日期」），
+  /// 结束那一行必须写 —— 两行长得一模一样时分不出哪行是哪个。
+  final String? label;
+
+  /// 可选范围的下界。null 时用 [today] 往前五年（见下）。
+  final PlanDate? firstDate;
 
   /// 本地墙钟的今天。选择器的默认与可选范围都以它为基准。
   final PlanDate today;
@@ -257,10 +327,14 @@ class _DateRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListTile(
-      key: TaskEditorPage.dateFieldKey,
+      // **不在这里带 key**：key 由调用方给到 widget 上。
+      // 两处都带的话同一个 key 会被 find 到两个（widget 一个、
+      // ListTile 一个），报错是「is too many」，离原因隔着一层。
       contentPadding: EdgeInsets.zero,
       leading: const Icon(Icons.event_outlined),
-      title: Text(date == null ? '选个日期（可选）' : '$date'),
+      title: Text(
+        date == null ? '选个日期（可选）' : '${label == null ? '' : '$label '}$date',
+      ),
       trailing: (date == null || !clearable)
           ? null
           : IconButton(
@@ -269,14 +343,19 @@ class _DateRow extends StatelessWidget {
               tooltip: '清除日期',
             ),
       onTap: () async {
-        final anchor = date ?? today;
+        // 没选过时停在下界（结束行 = 开始那天），否则停在今天。
+        final anchor = date ?? firstDate ?? today;
         final picked = await showDatePicker(
           context: context,
           initialDate: DateTime(anchor.year, anchor.month, anchor.day),
           // 往前留五年（补记旧事），往后十年。范围以**今天**为基准，
           // 不以已选日期为基准 —— 否则选了一个很远的日期之后，
           // 可选范围会跟着漂走。
-          firstDate: DateTime(today.year - 5),
+          // 结束日期传了下界就用它（结束不能早于开始）；
+          // 开始日期往前留五年（补记旧事）。
+          firstDate: firstDate == null
+              ? DateTime(today.year - 5)
+              : DateTime(firstDate!.year, firstDate!.month, firstDate!.day),
           lastDate: DateTime(today.year + 10),
         );
         if (picked != null) {
@@ -288,22 +367,32 @@ class _DateRow extends StatelessWidget {
 }
 
 class _TimeRow extends StatelessWidget {
-  const _TimeRow({required this.minute, required this.onPick});
+  const _TimeRow({
+    required this.minute,
+    required this.onPick,
+    this.label,
+    super.key,
+  });
 
   final MinuteOfDay? minute;
+
+  /// 见 [_DateRow.label]。
+  final String? label;
+
   final ValueChanged<MinuteOfDay?> onPick;
 
   @override
   Widget build(BuildContext context) {
     final m = minute;
     return ListTile(
-      key: TaskEditorPage.timeFieldKey,
+      // 见 [_DateRow]：key 由调用方给到 widget 上。
       contentPadding: EdgeInsets.zero,
       leading: const Icon(Icons.schedule_outlined),
       title: Text(
         m == null
-            ? '选个时间'
-            : '${m.hour.toString().padLeft(2, '0')}:'
+            ? (label == null ? '选个时间' : '选个$label')
+            : '${label == null ? '' : '$label '}'
+                  '${m.hour.toString().padLeft(2, '0')}:'
                   '${m.minute.toString().padLeft(2, '0')}',
       ),
       onTap: () async {

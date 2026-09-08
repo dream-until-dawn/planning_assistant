@@ -42,8 +42,7 @@ import '../support/app_harness.dart';
 const _plusThirty = '20261007';
 
 Future<Harness> _pumpEditor(WidgetTester tester) async {
-  await tester.binding.setSurfaceSize(const Size(390, 844));
-  addTearDown(() => tester.binding.setSurfaceSize(null));
+  await setScreenSize(tester, const Size(390, 844));
 
   final harness = appHarness();
   await tester.pumpWidget(
@@ -58,23 +57,9 @@ Future<Harness> _pumpEditor(WidgetTester tester) async {
   return harness;
 }
 
-/// 点一个控件，**先把它滚进可视区**。
-///
-/// 不滚的话 `ListView` 的 cacheExtent 会在视口外先把控件建出来，
-/// `tap` 于是算出一个落在视口外的坐标 —— 那一下点在了底部的保存按钮上，
-/// 任务直接存了、页面弹回列表，随后的断言报的却是「找不到 editor-save」。
-/// 一次误点导致的连环失败，看起来完全不像「控件在屏幕外」。
-Future<void> _tap(WidgetTester tester, Key key) async {
-  final finder = find.byKey(key);
-  await tester.ensureVisible(finder);
-  await tester.pumpAndSettle();
-  await tester.tap(finder);
-  await tester.pumpAndSettle();
-}
-
 /// 保存并取回落库的规则串。
 Future<String?> _saveAndReadRule(WidgetTester tester, Harness harness) async {
-  await _tap(tester, TaskEditorPage.saveButtonKey);
+  await tapVisible(tester, TaskEditorPage.saveButtonKey);
   final rows = await harness.db.select(harness.db.tasks).get();
   return rows.single.recurrenceRule;
 }
@@ -101,7 +86,7 @@ final List<_Probe> _probes = [
   (
     field: 'frequency',
     drive: (t) =>
-        _tap(t, TaskEditorPage.frequencyKey(RecurrenceFrequency.monthly)),
+        tapVisible(t, TaskEditorPage.frequencyKey(RecurrenceFrequency.monthly)),
     rule: contains('FREQ=MONTHLY'),
   ),
   (
@@ -109,22 +94,26 @@ final List<_Probe> _probes = [
     // 加两下：1 → 3。加一下也行，但 2 比 3 更容易与别的默认值撞上。
     drive: (t) async {
       final inc = TaskEditorPage.stepperIncKey(TaskEditorPage.intervalStepper);
-      await _tap(t, inc);
-      await _tap(t, inc);
+      await tapVisible(t, inc);
+      await tapVisible(t, inc);
     },
     rule: contains('INTERVAL=3'),
   ),
   (
     field: 'weekdays',
     drive: (t) async {
-      await _tap(t, TaskEditorPage.frequencyKey(RecurrenceFrequency.weekly));
-      await _tap(t, TaskEditorPage.weekdayKey(Weekday.tuesday));
+      await tapVisible(
+        t,
+        TaskEditorPage.frequencyKey(RecurrenceFrequency.weekly),
+      );
+      await tapVisible(t, TaskEditorPage.weekdayKey(Weekday.tuesday));
     },
     rule: contains('BYDAY=TU'),
   ),
   (
     field: 'endMode',
-    drive: (t) => _tap(t, TaskEditorPage.endModeKey(RecurrenceEndMode.count)),
+    drive: (t) =>
+        tapVisible(t, TaskEditorPage.endModeKey(RecurrenceEndMode.count)),
     rule: contains('COUNT='),
   ),
   (
@@ -132,8 +121,11 @@ final List<_Probe> _probes = [
     // 减一下：10 → 9。减而不是加，是为了让期望值与默认值差一位数字，
     // 「加减器根本没接上」时 COUNT=10 会立刻露馅。
     drive: (t) async {
-      await _tap(t, TaskEditorPage.endModeKey(RecurrenceEndMode.count));
-      await _tap(t, TaskEditorPage.stepperDecKey(TaskEditorPage.countStepper));
+      await tapVisible(t, TaskEditorPage.endModeKey(RecurrenceEndMode.count));
+      await tapVisible(
+        t,
+        TaskEditorPage.stepperDecKey(TaskEditorPage.countStepper),
+      );
     },
     rule: contains('COUNT=9'),
   ),
@@ -141,8 +133,8 @@ final List<_Probe> _probes = [
     field: 'until',
     // 选择器默认停在「开始日期 + 30 天」，直接确定就是那天。
     drive: (t) async {
-      await _tap(t, TaskEditorPage.endModeKey(RecurrenceEndMode.until));
-      await _tap(t, TaskEditorPage.untilFieldKey);
+      await tapVisible(t, TaskEditorPage.endModeKey(RecurrenceEndMode.until));
+      await tapVisible(t, TaskEditorPage.untilFieldKey);
       await t.tap(find.text('确定'));
       await t.pumpAndSettle();
     },
@@ -155,7 +147,7 @@ void main() {
     for (final probe in _probes) {
       testAppWidgets(probe.field, (tester) async {
         final harness = await _pumpEditor(tester);
-        await _tap(tester, TaskEditorPage.recurrenceSwitchKey);
+        await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
         await probe.drive(tester);
 
         // 界面上没被挡住 —— 挡住的话下面读到的会是 null，

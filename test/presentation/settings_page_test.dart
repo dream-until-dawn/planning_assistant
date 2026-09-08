@@ -22,8 +22,7 @@ import 'package:planning_assistant/features/views/task_list/presentation/task_li
 import '../support/app_harness.dart';
 
 Future<Harness> _pumpApp(WidgetTester tester) async {
-  await tester.binding.setSurfaceSize(const Size(390, 844));
-  addTearDown(() => tester.binding.setSurfaceSize(null));
+  await setScreenSize(tester, const Size(390, 844));
 
   final harness = appHarness();
   await seedCategories(harness);
