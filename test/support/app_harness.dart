@@ -10,6 +10,7 @@ library;
 
 import 'package:drift/native.dart';
 import 'package:flutter/widgets.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meta/meta.dart';
@@ -209,6 +210,37 @@ List<Override> viewPipelineOverrides({
     // 今天绿明天红，而那种红看不出是代码变了还是日历翻页了。
     todayProvider.overrideWithValue(today),
   ];
+}
+
+/// 把视图流水线的几条流**等到有值**再往下走。
+///
+/// ## 为什么需要它
+///
+/// 流水线的输入全是 `StreamProvider`（任务、例外、阶段、分类、配置）。
+/// 在 `ProviderContainer` 建好之后**同步**读下游，读到的是
+/// `AsyncLoading` 那一支 —— 而每一处的 loading 回落都是刻意设计成
+/// 「看起来正常」的：任务给空表、配置给默认值。
+///
+/// 于是断言会失败在一个完全无关的地方（「一周从周日起，却从周一起了」），
+/// 真正的原因是那一帧配置还没到。这与之前 `settingsRepositoryProvider`
+/// 没覆盖时是同一种错觉：**错误/未就绪分支被设计得跟正常态一模一样。**
+///
+/// widget 测试里 `pumpAndSettle` 顺手解决了这件事，所以只有纯
+/// container 测试会撞上。
+/// **必须先挂上监听再等。** `container.read(p.future)` 单用不行：
+/// `read` 不持有订阅，元素在 loading 状态下当场被回收，那个 future
+/// 于是永远不完成 —— 表现是用例卡到 30 秒超时，报
+/// 「disposed during loading state」，与被测的东西毫无关系。
+Future<void> settleViewPipeline(ProviderContainer container) async {
+  void keep<T>(ProviderListenable<T> provider) =>
+      container.listen<T>(provider, (_, _) {});
+
+  keep(visibleTasksProvider);
+  keep(allOverridesProvider);
+  keep(allStagesProvider);
+  keep(categoriesProvider);
+  keep(rawSettingsProvider);
+  await pumpEventQueue();
 }
 
 /// 设定测试里的「屏幕」。**两处都要设。**

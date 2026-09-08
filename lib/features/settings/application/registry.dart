@@ -17,6 +17,7 @@
 /// 每接一个功能，把它对应的那条搬进来。
 library;
 
+import '../../../core/time/weekday.dart';
 import '../../../design/tokens/dimensions.dart';
 import '../../views/shared/application/view_kind.dart';
 import '../../views/task_list/application/task_grouping.dart';
@@ -77,6 +78,7 @@ final List<SettingSpecBase> settingsRegistry = [
   listGroupBy,
   listSortBy,
   timelineTickMinutes,
+  firstDayOfWeek,
   defaultCategoryId,
   swipeRight,
   swipeLeft,
@@ -224,6 +226,26 @@ final SettingSpec<ListGroupBy> listGroupBy = _enumSpec(
   fromStorageKey: ListGroupBy.fromStorageKey,
   group: SettingGroup.view,
   label: '列表分组',
+);
+
+/// 一周从周几起（view-specs §3.2，日历与甘特都用）。
+///
+/// 只给三个选项，不是七个：周一（ISO / 多数地区）、周日（北美等）、
+/// 周六（部分中东地区）。剩下四个在现实里没有哪个地区用作周起始日，
+/// 列出来只会让这个选择器变长。
+final SettingSpec<Weekday> firstDayOfWeek = _enumSpec(
+  key: 'view.firstDayOfWeek',
+  defaultValue: Weekday.monday,
+  options: const [
+    (Weekday.monday, '周一'),
+    (Weekday.sunday, '周日'),
+    (Weekday.saturday, '周六'),
+  ],
+  storageKeyOf: (v) => v.storageKey,
+  fromStorageKey: Weekday.fromStorageKey,
+  group: SettingGroup.view,
+  label: '一周从哪天开始',
+  description: '影响日历的排列',
 );
 
 /// 时间轴的刻度粒度（view-specs §1.2）。

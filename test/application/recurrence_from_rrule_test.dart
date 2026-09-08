@@ -18,6 +18,7 @@ library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
+import 'package:planning_assistant/core/time/weekday.dart';
 import 'package:planning_assistant/domain/value_objects/recurrence.dart';
 import 'package:planning_assistant/features/task/application/recurrence_draft.dart';
 

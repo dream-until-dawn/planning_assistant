@@ -16,6 +16,7 @@ import 'package:rrule/rrule.dart';
 
 import '../../../core/patch/unset.dart';
 import '../../../core/time/plan_date.dart';
+import '../../../core/time/weekday.dart';
 import '../../../domain/value_objects/recurrence.dart';
 
 /// 重复频率。**只有 FR-TASK-03 点名的四种。**
@@ -47,28 +48,6 @@ enum RecurrenceEndMode {
   const RecurrenceEndMode(this.label);
 
   final String label;
-}
-
-/// 周几。`rrule` 包用的是两字母缩写。
-enum Weekday {
-  monday('MO', '一', 1),
-  tuesday('TU', '二', 2),
-  wednesday('WE', '三', 3),
-  thursday('TH', '四', 4),
-  friday('FR', '五', 5),
-  saturday('SA', '六', 6),
-  sunday('SU', '日', 7);
-
-  const Weekday(this.rruleName, this.label, this.isoNumber);
-
-  final String rruleName;
-  final String label;
-
-  /// `DateTime.weekday` 的取值（周一 = 1）。
-  final int isoNumber;
-
-  static Weekday fromIso(int iso) =>
-      values.firstWhere((w) => w.isoNumber == iso);
 }
 
 @immutable

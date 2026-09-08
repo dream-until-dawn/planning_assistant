@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
+import 'package:planning_assistant/core/time/weekday.dart';
 import 'package:planning_assistant/design/components/app_chip.dart';
 import 'package:planning_assistant/design/components/empty_state.dart';
 import 'package:planning_assistant/design/components/task_card.dart';

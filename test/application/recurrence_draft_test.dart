@@ -10,6 +10,7 @@ import 'package:planning_assistant/core/time/local_wall_time.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/core/time/time_zone_resolver.dart';
+import 'package:planning_assistant/core/time/weekday.dart';
 import 'package:planning_assistant/domain/recurrence/recurrence_engine.dart';
 import 'package:planning_assistant/domain/value_objects/recurrence.dart';
 import 'package:planning_assistant/features/task/application/recurrence_draft.dart';

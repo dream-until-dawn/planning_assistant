@@ -20,6 +20,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app_providers.dart';
 import '../../../core/time/minute_of_day.dart';
 import '../../../core/time/plan_date.dart';
+import '../../../core/time/weekday.dart';
 import '../../../design/components/app_button.dart';
 import '../../../design/components/app_chip.dart';
 import '../../../design/theme/app_theme.dart';
