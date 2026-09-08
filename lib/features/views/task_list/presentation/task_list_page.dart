@@ -16,6 +16,7 @@ import '../../../../domain/entities/category.dart';
 import '../../../../domain/entities/stage.dart';
 import '../../../../domain/entities/task.dart';
 import '../../../../domain/value_objects/task_status.dart';
+import '../../../task/application/recurrence_draft.dart';
 import '../../shared/application/category_providers.dart';
 import '../../shared/application/view_shared_state.dart';
 import '../application/task_grouping.dart';
@@ -221,16 +222,19 @@ TaskCardData _toCardData(
 /// **只认界面自己造得出来的那几种**（`RecurrenceDraft` 覆盖的范围）。
 /// 认不出来时退回一句「重复」——库里可能有导入进来的、更复杂的规则，
 /// 那时说「重复」是对的，而硬猜一个描述会说错。
+///
+/// 一度是在这里 `rule.contains('FREQ=WEEKLY')` 挑关键字拼句子，于是
+/// `INTERVAL=3` 的规则在卡片上显示成**「每周」**—— 挑着认的部件拼出来的
+/// 句子，缺的那部分不是「没说」，是「说错了」。现在整条交给
+/// [RecurrenceDraft.fromRrule]：它认不全就返回 null，一个字都不猜。
+///
+/// 结束条件不上卡片（`withEnd: false`）：副信息只有一行且会截断，
+/// 而「重复什么」比「什么时候停」更要紧。
 String _describeRule(Task task) {
-  final rule = task.recurrence?.canonical ?? '';
-  final freq = switch (true) {
-    _ when rule.contains('FREQ=DAILY') => '每天',
-    _ when rule.contains('FREQ=WEEKLY') => '每周',
-    _ when rule.contains('FREQ=MONTHLY') => '每月',
-    _ when rule.contains('FREQ=YEARLY') => '每年',
-    _ => '重复',
-  };
-  return freq;
+  final recurrence = task.recurrence;
+  if (recurrence == null) return '重复';
+  return RecurrenceDraft.fromRrule(recurrence)?.describe(withEnd: false) ??
+      '重复';
 }
 
 /// 阶段进度 = 已完成阶段数 / 总数（FR-TASK-02）。

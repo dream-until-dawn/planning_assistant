@@ -31,17 +31,20 @@ const _longTitle =
 TaskCardData _data({
   String title = _shortTitle,
   String? timeLabel = '14:00',
+  String categoryName = '工作',
   (int, int)? stageProgress,
   bool isDone = false,
   bool isOverdue = false,
+  bool isRecurring = false,
 }) => TaskCardData(
   title: title,
-  categoryName: '工作',
+  categoryName: categoryName,
   categoryColor: const Color(0xFF7FD1C1),
   timeLabel: timeLabel,
   stageProgress: stageProgress,
   isDone: isDone,
   isOverdue: isOverdue,
+  isRecurring: isRecurring,
 );
 
 /// 在指定字号缩放与主题下渲染一张卡片。
@@ -282,6 +285,54 @@ void main() {
       );
       expect(tester.takeException(), isNull);
       expect(isStacked(tester, absurdTime), isTrue, reason: '挤成这样必须下沉');
+    });
+
+    // 副信息也得参数化，理由与时间标签同（§1.5）。
+    //
+    // 夹具里它一直钉死成「工作」两个字，而真实取值早就长得多了：
+    // 重复任务的副信息是「分类 · 每 3 周的一、三、五」——
+    // 一条**已经在跑的**代码路径，夹具却从没喂过它。
+    group('副信息很长时（重复任务的规则说明）', () {
+      const longSubtitle = '未分类 · 每 3 周的一、三、五';
+      const absurdSubtitle =
+          '某个名字特别长的分类 · 每 3 周的一、二、三、四、五、六、日，'
+          '到 2027-12-31 为止';
+
+      for (final scale in FontScale.goldenScales) {
+        for (final subtitle in const [longSubtitle, absurdSubtitle]) {
+          testWidgets('缩放 $scale × 长副信息（${subtitle.length} 字）：不溢出', (
+            tester,
+          ) async {
+            await _pumpCard(
+              tester,
+              data: _data(
+                title: _longTitle,
+                categoryName: subtitle,
+                // 重复图标要占掉副信息那一行的宽度，一并算进来。
+                isRecurring: true,
+                stageProgress: (2, 5),
+              ),
+              textScale: scale,
+            );
+            expect(tester.takeException(), isNull);
+          });
+        }
+      }
+
+      testWidgets('长副信息会被截断，而不是把卡片撑开', (tester) async {
+        // 截断是刻意的（`maxLines: 1` + ellipsis）。没有这条的话，
+        // 把它改成 `maxLines: 3` 也不会有任何测试变红，
+        // 而那会让每张重复任务的卡片高度都不一样。
+        await _pumpCard(
+          tester,
+          data: _data(categoryName: absurdSubtitle, isRecurring: true),
+        );
+        expect(
+          _paragraphOf(tester, absurdSubtitle).didExceedMaxLines,
+          isTrue,
+          reason: '这么长的副信息应当省略号截断',
+        );
+      });
     });
 
     // ↓ 对照组（测试策略 §7.1.1）：保护的是**实现选择**，不是需求。

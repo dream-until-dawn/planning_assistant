@@ -74,8 +74,12 @@ class TaskCard extends StatelessWidget {
 
   /// 重复标记的图标。
   ///
-  /// 图标之外**副信息里还有文字**（「每周一、三、五」），
-  /// 不靠图标单独承载（§8.1）。
+  /// 图标之外**副信息里还有文字**（「每 3 周的一、三、五」），
+  /// 不靠图标单独承载（§8.1）。文字由调用方拼进 `categoryName`，
+  /// 见 `task_list_page.dart` 的 `_describeRule`。
+  ///
+  /// 这段注释一度写着同样的话，而当时那边只输出「每周」——
+  /// 举的例子是我以为的行为，不是代码的行为。举例子就要举**真跑出来的**。
   static const IconData recurringIcon = Icons.repeat;
 
   /// 左侧分类色条宽度（§8.1）。

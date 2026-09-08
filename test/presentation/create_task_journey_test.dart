@@ -456,6 +456,43 @@ void main() {
       expect(find.textContaining('每天'), findsOneWidget);
     });
 
+    testAppWidgets('卡片上的规则说明要准，不能只说对一半', (tester) async {
+      // 一度是 `rule.contains('FREQ=WEEKLY')` 挑关键字拼句子，
+      // 于是 INTERVAL=3 的规则在卡片上显示成「每周」——
+      // 挑着认的部件拼出来的句子，缺的那部分不是没说，是说错了。
+      await _pumpApp(tester);
+
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '周会');
+      await tester.pump();
+      await tester.tap(find.byKey(TaskEditorPage.recurrenceSwitchKey));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(TaskEditorPage.frequencyKey(RecurrenceFrequency.weekly)),
+      );
+      await tester.pumpAndSettle();
+
+      // 间隔 1 → 3。加减器在折线以下，先滚进来再点。
+      final inc = find.byKey(
+        TaskEditorPage.stepperIncKey(TaskEditorPage.intervalStepper),
+      );
+      for (var i = 0; i < 2; i++) {
+        await tester.ensureVisible(inc);
+        await tester.pumpAndSettle();
+        await tester.tap(inc);
+        await tester.pumpAndSettle();
+      }
+
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('每 3 周'), findsOneWidget);
+      // 「每周」曾经是这里显示的内容 —— 它是错的，必须不在。
+      // （「每 3 周」里不含「每周」这两个连续的字，所以这条不会自相矛盾。）
+      expect(find.textContaining('未分类 · 每周'), findsNothing);
+    });
+
     testAppWidgets('对照组：不重复的任务没有那个标记', (tester) async {
       await _pumpApp(tester);
       await tester.tap(find.byKey(AppShell.fabKey));
