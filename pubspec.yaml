@@ -46,8 +46,6 @@ dependencies:
   # 引入它会强制 compileSdk 37（当前仍是预览版）。见 environment-notes §3.2。
   flutter_local_notifications: ^22.3.0
 
-  # 日历视图骨架（样式全部自定义）
-  table_calendar: ^3.2.1
 
 dev_dependencies:
   flutter_test:

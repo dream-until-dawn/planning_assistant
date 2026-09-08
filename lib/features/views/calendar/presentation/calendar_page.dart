@@ -1,0 +1,579 @@
+/// 日历视图（view-specs §3、FR-VIEW-03）。
+///
+/// ```
+/// │  一  二  三  四  五  六  日        │ ← 表头，顺序随 firstDayOfWeek
+/// ├───┬───┬───┬───┬───┬───┬───┤
+/// │ 31│ 1 │ 2 │ 3 │ 4 │ 5 │ 6 │
+/// │   │▓▓▓▓▓▓▓▓▓▓▓│   │   │   │ ← 跨天任务：一条，贯穿，不断开
+/// │   │ ● │ ●●│   │+2 │   │   │ ← 当天的事用色点
+/// ├───┴───┴───┴───┴───┴───┴───┤
+/// │ ════ 拖这里改上下比例 ════ │
+/// ├───────────────────────────┤
+/// │ 选中那天的任务列表          │
+/// ```
+///
+/// **格子是自己搭的，不用 `table_calendar`**（§3.3 记了变更理由）：
+/// 那个库的 builder 全是按格子调的，而「横条贯穿不断开」要的是
+/// 一行一个 widget。自己搭之后横条就是 `Positioned`，不存在拼接缝。
+library;
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../../app_providers.dart';
+import '../../../../core/time/plan_date.dart';
+import '../../../../design/components/app_chip.dart';
+import '../../../../design/components/empty_state.dart';
+import '../../../../design/components/task_card.dart';
+import '../../../../design/theme/app_theme.dart';
+import '../../../../design/tokens/dimensions.dart';
+import '../../../../domain/entities/category.dart';
+import '../../../settings/application/motion.dart';
+import '../../../settings/application/registry.dart';
+import '../../../settings/application/settings_providers.dart';
+import '../../shared/application/category_providers.dart';
+import '../../shared/application/task_occurrence.dart';
+import '../../shared/application/task_providers.dart';
+import '../../shared/application/view_shared_state.dart';
+import '../../shared/presentation/occurrence_card_data.dart';
+import '../../task_list/application/task_list_actions.dart';
+import '../../task_list/presentation/occurrence_actions_sheet.dart';
+import '../application/calendar_providers.dart';
+import '../application/calendar_split.dart';
+import '../application/day_bands.dart';
+import '../application/month_grid.dart';
+import 'calendar_metrics.dart';
+
+/// 打开某条任务（重复的先问「改哪一次」）。
+typedef OpenTask = void Function(String taskId, {String? from});
+
+class CalendarPage extends ConsumerStatefulWidget {
+  const CalendarPage({this.onCreateTask, this.onEditTask, super.key});
+
+  final OpenTask? onEditTask;
+  final VoidCallback? onCreateTask;
+
+  static const Key gridKey = ValueKey('calendar-grid');
+  static const Key headerKey = ValueKey('calendar-header');
+  static const Key handleKey = ValueKey('calendar-split-handle');
+  static const Key selectedListKey = ValueKey('calendar-selected-list');
+  static const Key selectedEmptyKey = ValueKey('calendar-selected-empty');
+  static const Key errorKey = ValueKey('calendar-error');
+
+  /// 某一格。
+  static Key dayKey(PlanDate date) => ValueKey('calendar-day-$date');
+
+  /// 某一格里的「+N」。
+  static Key overflowKey(PlanDate date) => ValueKey('calendar-more-$date');
+
+  /// 某一行里的某条横条。**带上行号** —— 一条跨两行的任务会有两条横条，
+  /// 只用 taskId 的话两个 widget 会撞 key。
+  static Key bandKey(String rowId, int week) =>
+      ValueKey('calendar-band-$week-$rowId');
+
+  @override
+  ConsumerState<CalendarPage> createState() => _CalendarPageState();
+}
+
+class _CalendarPageState extends ConsumerState<CalendarPage> {
+  /// 拖拽中的比例。松手才落库 —— 每一帧都写一次配置的话，
+  /// 一次拖拽会往 change_log 里塞几十条记录。
+  double? _dragging;
+
+  @override
+  Widget build(BuildContext context) {
+    if (ref.watch(visibleTasksProvider).hasError) {
+      return const EmptyState(
+        key: CalendarPage.errorKey,
+        illustration: EmptyIllustration(icon: Icons.cloud_off_outlined),
+        message: '没能读出这个月的安排。\n重开一次试试？',
+      );
+    }
+
+    final double split = _dragging ?? ref.setting(calendarSplitRatio);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final usable =
+            constraints.maxHeight -
+            CalendarMetrics.headerHeight -
+            CalendarMetrics.handleHeight;
+        final gridHeight = usable * split;
+
+        return Column(
+          children: [
+            const _WeekdayHeader(key: CalendarPage.headerKey),
+            SizedBox(
+              height: gridHeight,
+              child: _Grid(
+                key: CalendarPage.gridKey,
+                onEditTask: widget.onEditTask,
+              ),
+            ),
+            _SplitHandle(
+              key: CalendarPage.handleKey,
+              onDelta: (dy) => setState(() {
+                _dragging = CalendarSplit.clamp((split * usable + dy) / usable);
+              }),
+              onDone: () async {
+                final value = _dragging;
+                if (value == null) return;
+                // **先落库，再交还给配置。**
+                //
+                // 反过来写（先清 `_dragging` 再异步写库）的话，中间那几帧
+                // 读到的还是**旧**比例 —— 屏幕会先弹回去再跳到新位置。
+                // 第一版就是那么写的，测试里表现为「拖完高度一点没变」。
+                await ref
+                    .read(settingsWriterProvider)
+                    .set(calendarSplitRatio, value);
+                if (mounted) setState(() => _dragging = null);
+              },
+            ),
+            Expanded(
+              child: _SelectedDayList(
+                onEditTask: widget.onEditTask,
+                onCreateTask: widget.onCreateTask,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// 星期表头。顺序随 `view.firstDayOfWeek`（§3.2）。
+class _WeekdayHeader extends ConsumerWidget {
+  const _WeekdayHeader({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final text = Theme.of(context).textTheme;
+    return SizedBox(
+      height: CalendarMetrics.headerHeight,
+      child: Row(
+        children: [
+          for (final w in ref.watch(calendarWeekdayOrderProvider))
+            Expanded(
+              child: Center(child: Text(w.label, style: text.bodySmall)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 格子本体。左右滑动切月/切周（§3.2）。
+///
+/// ## 「带惯性」这一半没做，记在这里
+///
+/// §3.2 写的是「左右滑动切月，**带惯性**」。现在是**松手才切**，
+/// 页面不跟手。跟手要求相邻月份同时能画出来，而布局是按**聚焦月**
+/// 算的一份 —— 要跟手就得把 `calendarLayoutProvider` 改成按月的 family，
+/// 让 `PageView` 的每一页各取各的。那是一笔独立的改动。
+///
+/// 切换本身的动画是有的，且 `reduceMotion` 时降为 0（§3.2 后半句、
+/// design-system §7）—— **降为 0 而不是跳过切换**，状态变化本身要保留。
+class _Grid extends ConsumerStatefulWidget {
+  const _Grid({required this.onEditTask, super.key});
+
+  final OpenTask? onEditTask;
+
+  @override
+  ConsumerState<_Grid> createState() => _GridState();
+}
+
+class _GridState extends ConsumerState<_Grid> {
+  /// 上一次往哪边翻：+1 往后，-1 往前。决定新页从哪一侧滑进来。
+  int _direction = 1;
+
+  @override
+  Widget build(BuildContext context) {
+    final layout = ref.watch(calendarLayoutProvider);
+    final isMonth = ref.watch(calendarIsMonthProvider);
+    final shared = ref.read(viewSharedStateProvider.notifier);
+    final focused = ref.watch(viewSharedStateProvider).focusedDate;
+    final reduced = reducedMotionOf(context, ref);
+
+    // 同一页内点选别的日子**不该触发转场** —— 所以 key 取的是「哪一页」
+    // （月视图取年月，周视图取那一周的头一天），不是聚焦日本身。
+    final pageKey = isMonth
+        ? '${focused.year}-${focused.month}'
+        : '${layout.weeks.first.first.date}';
+
+    return GestureDetector(
+      // 只认水平方向 —— 竖直留给下半屏那份列表滚动。
+      onHorizontalDragEnd: (details) {
+        final v = details.primaryVelocity ?? 0;
+        if (v == 0) return;
+        // 往左划（负速度）= 看下一个月。
+        final step = v < 0 ? 1 : -1;
+        setState(() => _direction = step);
+        shared.focusDate(_shift(focused, isMonth, step));
+      },
+      child: AnimatedSwitcher(
+        duration: Motion.of(Motion.slow, reduced: reduced),
+        switchInCurve: Motion.slowCurve,
+        switchOutCurve: Motion.slowCurve,
+        transitionBuilder: (child, animation) => SlideTransition(
+          position: Tween<Offset>(
+            begin: Offset(_direction.toDouble(), 0),
+            end: Offset.zero,
+          ).animate(animation),
+          child: child,
+        ),
+        // 两页同时在场时按顺序叠，别让旧页盖住新页。
+        layoutBuilder: (current, previous) =>
+            Stack(children: [...previous, ?current]),
+        child: Column(
+          key: ValueKey(pageKey),
+          children: [
+            for (final (i, week) in layout.weeks.indexed)
+              Expanded(
+                child: _WeekRow(
+                  week: week,
+                  bands: layout.bands[i],
+                  dots: layout.dots[i],
+                  weekIndex: i,
+                  onEditTask: widget.onEditTask,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 往前/往后翻一页。
+  ///
+  /// 月视图翻一个月时**日号可能不存在**（1/31 往后翻是 2/31）——
+  /// 夹到当月最后一天，而不是让 `PlanDate` 抛。
+  PlanDate _shift(PlanDate from, bool isMonth, int step) {
+    if (!isMonth) return from.addDays(7 * step);
+    final total = from.year * 12 + (from.month - 1) + step;
+    final year = total ~/ 12;
+    final month = total % 12 + 1;
+    final day = from.day <= PlanDate.daysInMonth(year, month)
+        ? from.day
+        : PlanDate.daysInMonth(year, month);
+    return PlanDate(year, month, day);
+  }
+}
+
+/// 一行七格 + 叠在上面的横条。
+///
+/// **横条画在这一层，不是画在每个格子里** —— 一条跨三天的横条是**一个**
+/// `Positioned`，所以它不可能在格子边界上出现缝（§3.2「连续多日不断开」）。
+class _WeekRow extends ConsumerWidget {
+  const _WeekRow({
+    required this.week,
+    required this.bands,
+    required this.dots,
+    required this.weekIndex,
+    required this.onEditTask,
+  });
+
+  final List<MonthCell> week;
+  final WeekBands bands;
+  final List<DayDots> dots;
+  final int weekIndex;
+  final OpenTask? onEditTask;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final categories = ref.watch(categoryByIdProvider);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cellWidth = constraints.maxWidth / daysPerWeek;
+
+        return Stack(
+          children: [
+            Row(
+              children: [
+                for (final (i, cell) in week.indexed)
+                  Expanded(
+                    child: _DayCell(
+                      key: CalendarPage.dayKey(cell.date),
+                      cell: cell,
+                      dots: dots[i],
+                      categories: categories,
+                    ),
+                  ),
+              ],
+            ),
+            for (final band in bands.bands)
+              Positioned(
+                key: CalendarPage.bandKey(band.row.id, weekIndex),
+                top: CalendarMetrics.bandTop(band.lane),
+                left: band.startIndex * cellWidth,
+                width: band.spanDays * cellWidth,
+                height: CalendarMetrics.bandHeight,
+                child: _Band(
+                  band: band,
+                  color: _colorOf(band.row, categories),
+                  onEditTask: onEditTask,
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// 一格。
+class _DayCell extends ConsumerWidget {
+  const _DayCell({
+    required this.cell,
+    required this.dots,
+    required this.categories,
+    super.key,
+  });
+
+  final MonthCell cell;
+  final DayDots dots;
+  final Map<String, Category> categories;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.appColors;
+    final text = Theme.of(context).textTheme;
+    final today = ref.watch(todayProvider);
+    final selected = ref.watch(viewSharedStateProvider).focusedDate;
+
+    final isToday = cell.date == today;
+    final isSelected = cell.date == selected;
+
+    return Semantics(
+      button: true,
+      selected: isSelected,
+      label: _semanticsLabel(cell.date, isToday, dots),
+      excludeSemantics: true,
+      child: InkWell(
+        onTap: () =>
+            ref.read(viewSharedStateProvider.notifier).focusDate(cell.date),
+        child: Column(
+          children: [
+            Container(
+              width: CalendarMetrics.dayCircle,
+              height: CalendarMetrics.dayCircle,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                // 今天：主色描边；选中：主色实心（§3.2）。
+                // 两者可以同时成立，实心盖过描边。
+                color: isSelected ? colors.brandFill : null,
+                border: isToday && !isSelected
+                    ? Border.all(color: colors.brandGraphic, width: 1.5)
+                    : null,
+              ),
+              child: Text(
+                '${cell.date.day}',
+                style: text.bodySmall?.copyWith(
+                  color: isSelected
+                      ? colors.onBrand
+                      // 补进来的上/下月尾巴画淡一些，但**仍然可读** ——
+                      // 它们照样显示标记，点得动，不是装饰。
+                      : (cell.inMonth ? null : colors.disabledText),
+                ),
+              ),
+            ),
+            const Spacer(),
+            _Dots(dots: dots, date: cell.date, categories: categories),
+            const SizedBox(height: Spacing.xxs),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 一格底部的色点与「+N」。
+class _Dots extends StatelessWidget {
+  const _Dots({
+    required this.dots,
+    required this.date,
+    required this.categories,
+  });
+
+  final DayDots dots;
+  final PlanDate date;
+  final Map<String, Category> categories;
+
+  @override
+  Widget build(BuildContext context) {
+    if (dots.isEmpty) return const SizedBox.shrink();
+    final text = Theme.of(context).textTheme;
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        for (final row in dots.rows) ...[
+          Container(
+            width: CalendarMetrics.dotSize,
+            height: CalendarMetrics.dotSize,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _colorOf(row, categories),
+            ),
+          ),
+          const SizedBox(width: CalendarMetrics.dotGap),
+        ],
+        if (dots.overflow > 0)
+          Text(
+            '+${dots.overflow}',
+            key: CalendarPage.overflowKey(date),
+            style: text.bodySmall,
+          ),
+      ],
+    );
+  }
+}
+
+/// 一条横条。
+class _Band extends StatelessWidget {
+  const _Band({
+    required this.band,
+    required this.color,
+    required this.onEditTask,
+  });
+
+  final DayBand band;
+  final Color color;
+  final OpenTask? onEditTask;
+
+  @override
+  Widget build(BuildContext context) {
+    // 延续出去的那一头画成方的：圆角意味着「到这儿结束了」，
+    // 而它其实还没完（§3.2）。
+    final radius = Radius.circular(context.appShape.radius(Radii.xs));
+    final text = Theme.of(context).textTheme;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 1),
+      child: Semantics(
+        button: true,
+        label: band.row.title,
+        excludeSemantics: true,
+        child: GestureDetector(
+          onTap: () => _openRow(context, band.row, onEditTask),
+          child: Container(
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.28),
+              borderRadius: BorderRadius.horizontal(
+                left: band.continuesBefore ? Radius.zero : radius,
+                right: band.continuesAfter ? Radius.zero : radius,
+              ),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: Spacing.xs),
+            alignment: Alignment.centerLeft,
+            child: Text(
+              band.row.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: text.bodySmall,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 上下两半之间那条把手。
+class _SplitHandle extends StatelessWidget {
+  const _SplitHandle({required this.onDelta, required this.onDone, super.key});
+
+  final ValueChanged<double> onDelta;
+  final Future<void> Function() onDone;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.appColors;
+    return GestureDetector(
+      onVerticalDragUpdate: (d) => onDelta(d.delta.dy),
+      onVerticalDragEnd: (_) => onDone(),
+      child: Semantics(
+        label: '拖动调整日历与列表的高度',
+        child: SizedBox(
+          height: CalendarMetrics.handleHeight,
+          child: Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: colors.borderSubtle,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 下半屏：选中那天的任务。
+class _SelectedDayList extends ConsumerWidget {
+  const _SelectedDayList({
+    required this.onEditTask,
+    required this.onCreateTask,
+  });
+
+  final OpenTask? onEditTask;
+  final VoidCallback? onCreateTask;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final rows = ref.watch(selectedDayRowsProvider);
+    if (rows.isEmpty) {
+      return EmptyState(
+        key: CalendarPage.selectedEmptyKey,
+        illustration: const EmptyIllustration(icon: Icons.event_available),
+        message: '这一天还空着。',
+        actionLabel: onCreateTask == null ? null : '新建任务',
+        onAction: onCreateTask,
+      );
+    }
+
+    final categories = ref.watch(categoryByIdProvider);
+    final stages = ref.watch(stagesByTaskProvider);
+
+    return ListView.separated(
+      key: CalendarPage.selectedListKey,
+      padding: const EdgeInsets.all(Spacing.pageHorizontal),
+      itemCount: rows.length,
+      separatorBuilder: (_, _) => const SizedBox(height: Spacing.cardGap),
+      itemBuilder: (context, i) {
+        final row = rows[i];
+        return TaskCard(
+          key: ValueKey(row.id),
+          data: occurrenceCardData(row, categories, stages[row.taskId]),
+          onToggleDone: () => ref.read(toggleTaskDoneProvider)(row),
+          onTap: () => _openRow(context, row, onEditTask),
+        );
+      },
+    );
+  }
+}
+
+Color _colorOf(TaskOccurrence row, Map<String, Category> categories) {
+  final id = row.categoryId;
+  final category = id == null ? null : categories[id];
+  return category == null ? Uncategorized.color : Color(category.colorArgb);
+}
+
+String _semanticsLabel(PlanDate date, bool isToday, DayDots dots) {
+  final count = dots.rows.length + dots.overflow;
+  return '${date.month} 月 ${date.day} 日${isToday ? '，今天' : ''}'
+      '${count == 0 ? '' : '，$count 件事'}';
+}
+
+void _openRow(BuildContext context, TaskOccurrence row, OpenTask? onEditTask) {
+  if (row.isOccurrence) {
+    showOccurrenceActions(context, row, onEditSeries: onEditTask);
+  } else {
+    onEditTask?.call(row.taskId);
+  }
+}

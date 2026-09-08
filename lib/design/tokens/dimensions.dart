@@ -4,6 +4,7 @@
 /// Widget 树的情况下直接查这些值（测试策略 §7.1）。
 library;
 
+import 'package:flutter/animation.dart';
 import 'package:flutter/painting.dart';
 
 /// 字阶（§3.3）。行高偏大（1.4–1.6）是刻意的：中文在宽松行高下更「轻松」。
@@ -66,6 +67,39 @@ abstract final class FontScale {
     systemScaleMax,
     worstEffectiveScale,
   ];
+}
+
+/// 动效（§7）。
+///
+/// **文档里那张表一直没有代码。** 加它是因为日历切月是第一个消费者 ——
+/// 在此之前「motion.slow = 320ms」只是一行 Markdown，
+/// 谁写动画都是随手填个数字，而那正是 token 要防的事。
+///
+/// **关动效时时长降为 0，但状态变化本身保留**（§7 的原话）——
+/// 不能因为关了动效就看不出发生了什么。所以这里给的是**时长**，
+/// 由调用方在 `reducedMotionOf()` 为真时换成 [Duration.zero]，
+/// 而不是让调用方跳过整个切换。
+abstract final class Motion {
+  /// 按压反馈、涟漪。
+  static const Duration fast = Duration(milliseconds: 120);
+
+  /// 展开收起、淡入淡出。
+  static const Duration base = Duration(milliseconds: 200);
+
+  /// 页面转场。
+  static const Duration slow = Duration(milliseconds: 320);
+
+  /// **仅限**勾选完成、新增落位的回弹（§7：只用在正反馈上）。
+  static const Duration bouncy = Duration(milliseconds: 280);
+
+  static const Curve fastCurve = Curves.easeOutCubic;
+  static const Curve baseCurve = Curves.easeOutCubic;
+  static const Curve slowCurve = Curves.easeInOutCubic;
+  static const Curve bouncyCurve = Curves.easeOutBack;
+
+  /// 关掉动效时用它，而不是各处写 `Duration.zero`。
+  static Duration of(Duration duration, {required bool reduced}) =>
+      reduced ? Duration.zero : duration;
 }
 
 /// 圆角（§4）。

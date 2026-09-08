@@ -83,12 +83,12 @@ Stream<T> watchSetting<T>(SettingSpec<T> spec);
 | key | 类型 | 默认值 | 暴露 | 说明 |
 |---|---|---|---|---|
 | `view.defaultView` | enum | `list` | ✅ | list / timeline / calendar / gantt |
-| `view.firstDayOfWeek` | enum | `monday` | ✅ | |
+| `view.firstDayOfWeek` | enum | `monday` | ✅ | 周一 / 周日 / 周六（其余四个没有地区用作周起始日） |
 | `view.showCompleted` | bool | `true` | ✅ | |
 | `view.timelineTickMinutes` | int | `60` | ✅ | 15 / 30 / 60 |
 | `view.listGroupBy` | enum | `date` | ✅ | date / category / priority / status |
 | `view.listSortBy` | enum | `time` | ✅ | time / priority / created / manual |
-| `view.calendarMode` | enum | `month` | ✅ | month / week |
+| ~~`view.calendarMode`~~ | — | — | ❌ | **不做**，见 §2.4a |
 | `view.ganttLaneBy` | enum | `category` | ✅ | category / task / tag |
 | `view.ganttGranularity` | enum | `day` | ✅ | day / week / month |
 | `view.timelineStartHour` | int | `6` | 🔒 | 时间轴默认可视起点 |
@@ -114,6 +114,19 @@ Stream<T> watchSetting<T>(SettingSpec<T> spec);
 | `reminder.maxScheduled` | int | `400` | 🔒 | 系统待触发上限保护 |
 | `reminder.vibrate` | bool | `true` | 🔒 | |
 | `reminder.sound` | string | `default` | 🔒 | |
+
+### 2.4a `view.calendarMode` 不做 —— 它与共享状态抢同一件事
+
+原表里有一条 `view.calendarMode`（month / week）。做日历时发现它与
+[视图规格 §0.1](view-specs.md#01-共享状态) 的 `granularity`（日/周/月，
+**甘特与日历共用**）说的是同一件事。
+
+两者都存在的话，「现在是月还是周」就有了两个来源：从甘特切到日历时读哪一个？
+用户在日历上切到周视图，甘特那边的粒度跟不跟着变？——这两个问题没有好答案，
+而 FR-VIEW-05/06 要求的恰恰是「切视图时状态保持」。
+
+**保留共享状态那一份，配置项不做。** 「重启后回到上次的月/周」是另一回事
+（那是持久化，不是第二个真值来源），要做的话是一条隐藏项，等有人真的提再说。
 
 ### 2.4 行为 `behavior.*`
 

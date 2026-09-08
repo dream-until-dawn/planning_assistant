@@ -19,6 +19,7 @@ library;
 
 import '../../../core/time/weekday.dart';
 import '../../../design/tokens/dimensions.dart';
+import '../../views/calendar/application/calendar_split.dart';
 import '../../views/shared/application/view_kind.dart';
 import '../../views/task_list/application/task_grouping.dart';
 import '../domain/setting_spec.dart';
@@ -74,11 +75,13 @@ SettingSpec<T> _enumSpec<T>({
 final List<SettingSpecBase> settingsRegistry = [
   themeMode,
   cornerStyle,
+  reduceMotion,
   defaultView,
   listGroupBy,
   listSortBy,
   timelineTickMinutes,
   firstDayOfWeek,
+  calendarSplitRatio,
   defaultCategoryId,
   swipeRight,
   swipeLeft,
@@ -94,6 +97,22 @@ final SettingSpec<ThemeModeSetting> themeMode = _enumSpec(
   fromStorageKey: ThemeModeSetting.fromStorageKey,
   group: SettingGroup.appearance,
   label: '主题',
+);
+
+/// 关掉动效（design-system §7、NFR-A11Y）。
+///
+/// **与系统设置取「或」**，不是取代它 —— 打开系统的「减少动态效果」
+/// 之后还要再来应用里关一次，那等于没有响应系统设置。
+/// 取「或」的那一步在 `reducedMotionProvider` 里，这里只是应用内这一半。
+final SettingSpec<bool> reduceMotion = SettingSpec<bool>(
+  key: 'theme.reduceMotion',
+  defaultValue: false,
+  exposure: SettingExposure.exposed,
+  group: SettingGroup.appearance,
+  label: '减少动态效果',
+  description: '关掉切换与过渡动画；系统开了这项时自动生效',
+  encode: (v) => v,
+  decode: (json) => json is bool ? json : false,
 );
 
 final SettingSpec<CornerStyle> cornerStyle = _enumSpec(
@@ -246,6 +265,21 @@ final SettingSpec<Weekday> firstDayOfWeek = _enumSpec(
   group: SettingGroup.view,
   label: '一周从哪天开始',
   description: '影响日历的排列',
+);
+
+/// 日历上下两半的比例（view-specs §3.1「比例可拖拽，记住用户选择」）。
+///
+/// **隐藏项**：它由拖拽产生，不由设置页产生。摆一个数字输入框让人填
+/// 「0.58」，比没有这个选项更糟。
+final SettingSpec<double> calendarSplitRatio = SettingSpec<double>(
+  key: 'view.calendarSplitRatio',
+  defaultValue: CalendarSplit.byDefault,
+  encode: (v) => v,
+  // 存进来的值可能来自手改的配置文件。**夹回合法区间**而不是照单全收：
+  // 0 或 1 会让某一半压成零高，而那一半再也拖不回来。
+  decode: (json) => json is num
+      ? CalendarSplit.clamp(json.toDouble())
+      : CalendarSplit.byDefault,
 );
 
 /// 时间轴的刻度粒度（view-specs §1.2）。

@@ -41,7 +41,11 @@ enum ViewKind {
   ///
   /// 放在枚举上而不是组合根：设置页属于 settings feature，
   /// 够不到组合根（module-map §3），而它确实需要知道这件事。
-  static const Set<ViewKind> implemented = {ViewKind.list, ViewKind.timeline};
+  static const Set<ViewKind> implemented = {
+    ViewKind.list,
+    ViewKind.timeline,
+    ViewKind.calendar,
+  };
 
   /// 从配置里存的字符串还原。
   ///
