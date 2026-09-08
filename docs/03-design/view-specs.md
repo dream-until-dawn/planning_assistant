@@ -83,6 +83,10 @@ Stream<List<Occurrence>> visibleOccurrences(DateRange window, FilterSpec filter)
 多要的天数按**任务自己的时长**算，上限 62 天
 （`_maxSpanDays`，性质同 `lookaheadDays`：刻意的上界，不是遗漏）。
 
+这个上界由 `expand_in_window_test.dart` 的**两条边界用例**夹住：
+跨 62 天的在、跨 63 天的缺席。少了后一条，把上限改成 400 全绿 ——
+而那会让每条重复规则都多展开三百多天。
+
 #### 0.2.3 三个窗口常量（`ListHorizon`）
 
 | 常量 | 值 | 决定什么 |

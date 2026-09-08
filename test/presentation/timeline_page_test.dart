@@ -353,7 +353,52 @@ void main() {
     });
   });
 
-  group('刻度', () {
+  group('刻度粒度同时决定纵向比例尺', () {
+    // ## 为什么这一组要参数化
+    //
+    // `view.timelineTickMinutes` 是 FR 里明写的可配项（15/30/60），而它
+    // **不只是加密刻度线** —— 一格恒为 `tickHeight`，所以选 15 分钟等于
+    // 把一天拉长四倍。只在模拟器上手工验过的话，下次改布局时没人会重跑它，
+    // 而失效的样子是「设置里改了没反应」：那一族缺陷这个项目已经撞过三次。
+
+    for (final tick in [15, 30, 60]) {
+      testAppWidgets('$tick 分钟一格：一格恒为 tickHeight，块按比例', (tester) async {
+        await _pump(
+          tester,
+          tasks: [_task('晨会', start: 9 * 60, endDate: _today, end: 10 * 60)],
+          settings: {'view.timelineTickMinutes': tick},
+        );
+
+        // 相邻两个刻度之间恒为一格高 —— 这是「比例尺变了」的直接证据。
+        final first = tester
+            .getRect(find.byKey(TimelinePage.tickKey(0)))
+            .center
+            .dy;
+        final second = tester
+            .getRect(find.byKey(TimelinePage.tickKey(tick)))
+            .center
+            .dy;
+        expect(second - first, closeTo(TimelineMetrics.tickHeight, 0.5));
+
+        // 一小时的块 = 60 分钟 × 该档比例。
+        // 60 档下是 48，30 档下 96，15 档下 192 —— 三档必须各不相同，
+        // 否则「改了没反应」就是绿的。
+        expect(
+          _blockRect(tester, '晨会').height,
+          closeTo(60 * TimelineMetrics.pixelsPerMinute(tick), 0.5),
+        );
+      });
+    }
+
+    testAppWidgets('三档的块高确实两两不同 —— 否则上面三条可以一起绿', (tester) async {
+      // 上面每条各自比对自己那一档的期望值。若哪天 `pixelsPerMinute`
+      // 退化成常量，三条会一起绿（期望值也跟着退化成同一个数）——
+      // 与「守卫比的是两张都过时的表」是同一种毛病。这条盯的是**期望值本身**。
+      expect({
+        for (final t in [15, 30, 60]) TimelineMetrics.pixelsPerMinute(t),
+      }, hasLength(3));
+    });
+
     testAppWidgets('默认一小时一格，00:00 与 23:00 都在', (tester) async {
       await _pump(tester, tasks: [_task('晨会', start: 9 * 60)]);
       expect(find.byKey(TimelinePage.tickKey(0)), findsOneWidget);
