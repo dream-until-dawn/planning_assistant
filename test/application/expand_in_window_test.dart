@@ -101,6 +101,119 @@ void main() {
     });
   });
 
+  group('按覆盖区间收，不按开始日期', () {
+    // 「9/1 到 9/30 的项目」在 9/15 那天的时间轴上必须在。
+    // 按开始日期筛的话它只在 9/1 出现一次，中间二十九天空空如也 ——
+    // 那看起来像「这个任务不见了」，不像「窗口没框住它」。
+
+    test('跨月的项目，中间任何一天都在', () {
+      final tasks = [
+        _task(
+          '项目',
+          date: _today.addDays(-7),
+          endDate: _today.addDays(7),
+          isAllDay: true,
+        ),
+      ];
+      expect(_window(tasks, _today, _today), hasLength(1));
+      expect(
+        _window(tasks, _today.addDays(7), _today.addDays(7)),
+        hasLength(1),
+      );
+      expect(_window(tasks, _today.addDays(8), _today.addDays(8)), isEmpty);
+      expect(
+        _window(tasks, _today.addDays(-8), _today.addDays(-8)),
+        isEmpty,
+        reason: '开始之前也不该有',
+      );
+    });
+
+    test('昨晚的值夜，今天上午这一段也要在', () {
+      // 22:00 干到明早 6:00。只看开始日期的话，今天的时间轴上
+      // 从零点到六点是空的 —— 而人正睡在那儿。
+      final rows = _window(
+        [
+          _task(
+            '值夜',
+            date: _today.addDays(-1),
+            start: 22 * 60,
+            endDate: _today,
+            end: 6 * 60,
+          ),
+        ],
+        _today,
+        _today,
+      );
+      expect(rows, hasLength(1));
+    });
+
+    test('重复的值夜也一样 —— 引擎按开始日期筛，得往前多展开', () {
+      final rows = _window(
+        [
+          _task(
+            '值夜',
+            date: _today.addDays(-30),
+            start: 22 * 60,
+            endDate: _today.addDays(-29),
+            end: 6 * 60,
+            rrule: 'RRULE:FREQ=DAILY',
+          ),
+        ],
+        _today,
+        _today,
+      );
+      // 今天开始的那一次，加上昨晚延续过来的那一次。
+      expect(rows, hasLength(2));
+      expect(rows.map((r) => r.planDate).toSet(), {_today, _today.addDays(-1)});
+    });
+
+    test('跨三天的重复排班，落在中间那天也要在', () {
+      // 往前多展开的天数如果写死成 1，这条就红：这一次的开始在两天前，
+      // 引擎在「窗口前一天」里根本生成不出它。
+      //
+      // 上面那条值夜只跨一天，写死 1 也能过 —— 单靠它，
+      // 「按任务自己的时长往前展」与「一律往前一天」区分不开。
+      final rows = _window(
+        [
+          _task(
+            '排班',
+            date: _today.addDays(-2),
+            start: 8 * 60,
+            endDate: _today.addDays(1),
+            end: 8 * 60,
+            rrule: 'RRULE:FREQ=WEEKLY',
+          ),
+        ],
+        _today,
+        _today,
+      );
+      expect(rows, hasLength(1));
+      expect(rows.single.planDate, _today.addDays(-2));
+      expect(rows.single.endDate, _today.addDays(1));
+    });
+
+    test('对照组：多展开出来的那些，没碰到窗口就得扔掉', () {
+      // 少了这条，一个「多展开了就全都留下」的实现也能让上面绿 ——
+      // 而那会让每天的时间轴上都多出一条昨天的、早就结束了的事。
+      final rows = _window(
+        [
+          _task(
+            '晨会',
+            date: _today.addDays(-30),
+            start: 9 * 60,
+            endDate: _today.addDays(-30),
+            end: 10 * 60,
+            rrule: 'RRULE:FREQ=DAILY',
+          ),
+        ],
+        _today,
+        _today,
+      );
+      expect(rows, hasLength(1));
+      expect(rows.single.planDate, _today);
+    });
+  });
+
   group('每一次都要带上结束时刻', () {
     // ## 由来
     //

@@ -163,9 +163,12 @@ List<TaskOccurrence> expandForList({
 ///
 /// **没有日期的任务不进来** —— 它不落在任何一天上。
 /// 列表另有「无日期」分组管它（§2.1）。
-/// 一天有多少分钟。
-const int _minutesPerDay = 1440;
-
+///
+/// ## 按覆盖区间收，不按开始日期
+///
+/// 「9/1 到 9/30 的项目」在 9/15 那天的时间轴上必须在。按开始日期筛的话
+/// 它只在 9/1 出现一次，中间那二十九天空空如也 —— 而那看起来像
+/// 「这个任务不见了」，不像「窗口没框住它」。
 List<TaskOccurrence> expandInWindow({
   required List<Task> tasks,
   required List<OccurrenceOverride> overrides,
@@ -181,23 +184,60 @@ List<TaskOccurrence> expandInWindow({
     if (date == null) continue;
 
     if (!task.isRecurring) {
-      // 不重复：只有一次，落在窗口里才算。
-      if (window.contains(date)) out.add(TaskOccurrence(task: task));
+      // 不重复：只有一次，区间碰到窗口就算。
+      if (_intersects(date, task.endDate ?? date, window)) {
+        out.add(TaskOccurrence(task: task));
+      }
       continue;
     }
 
+    // 重复的跨天任务：某一次的**开始**可能在窗口之前，而引擎是按开始
+    // 日期筛的（`window.contains(occ.start.date)`）。所以往前多展开
+    // 「它自己那么长」，再按覆盖区间收。
+    //
+    // 多展开的天数由**任务自己的时长**决定，不是一个拍脑袋的常量 ——
+    // 一小时的晨会多展开一天，三天的排班多展开三天，各不相欠。
+    final back = _spanDays(task, date);
     for (final o in engine.expand(
       context: _contextOf(task, date),
-      window: window,
+      window: back == 0
+          ? window
+          : DateRange(window.start.addDays(-back), window.end),
       overrides: byTask[task.id] ?? const [],
       includeSkipped: includeSkipped,
     )) {
-      out.add(TaskOccurrence(task: task, occurrence: o));
+      final row = TaskOccurrence(task: task, occurrence: o);
+      final start = row.planDate;
+      if (start == null) continue;
+      if (_intersects(start, row.endDate ?? start, window)) out.add(row);
     }
   }
 
   return out;
 }
+
+/// 闭区间 `[start, end]` 与 [window] 有没有交集。
+bool _intersects(PlanDate start, PlanDate end, DateRange window) =>
+    !start.isAfter(window.end) && !end.isBefore(window.start);
+
+/// 这条规则的每一次横跨几天（向上取整）。
+///
+/// [_maxSpanDays] 是**刻意的上界**，同 `ListHorizon.lookaheadDays` 的性质：
+/// 跨度超过它的重复任务，中间那些天不会出现在窗口里。
+/// 一条「每周一次、每次持续三个月」的规则在现实里是排班表画错了，
+/// 而为它把每条规则的展开范围放大三个月，代价落在所有人身上。
+int _spanDays(Task task, PlanDate start) {
+  final minutes = _durationOf(task, start);
+  if (minutes == null || minutes <= 0) return 0;
+  final days = (minutes + _minutesPerDay - 1) ~/ _minutesPerDay;
+  return days > _maxSpanDays ? _maxSpanDays : days;
+}
+
+/// 一天有多少分钟。
+const int _minutesPerDay = 1440;
+
+/// 重复任务往前多展开的天数上限，见 [_spanDays]。
+const int _maxSpanDays = 62;
 
 Map<String, List<OccurrenceOverride>> _indexOverrides(
   List<OccurrenceOverride> overrides,
