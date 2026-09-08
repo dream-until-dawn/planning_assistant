@@ -77,11 +77,7 @@ List<TaskOccurrence> expandForList({
   bool includeSkipped = false,
   bool includeCompleted = false,
 }) {
-  final byTask = <String, List<OccurrenceOverride>>{};
-  for (final o in overrides) {
-    (byTask[o.taskId] ??= []).add(o);
-  }
-
+  final byTask = _indexOverrides(overrides);
   final out = <TaskOccurrence>[];
 
   for (final task in tasks) {
@@ -153,6 +149,61 @@ List<TaskOccurrence> expandForList({
   }
 
   return out;
+}
+
+/// **窗口内的全部发生**，一次不落，不做任何折叠。
+///
+/// 时间轴与日历用这个：它们问的是「这段时间里都发生什么」，
+/// 答案由日期决定，不掺任何取舍。
+///
+/// 列表用的是 [expandForList] —— 那里面是一套 **UX 策略**
+/// （逾期全留、未来只留下一次，§0.2.2）。两者刻意分开：
+/// 合成一个带开关的函数的话，「日历为什么少了几天」会变成一道
+/// 要读策略分支才答得上的题。
+///
+/// **没有日期的任务不进来** —— 它不落在任何一天上。
+/// 列表另有「无日期」分组管它（§2.1）。
+List<TaskOccurrence> expandInWindow({
+  required List<Task> tasks,
+  required List<OccurrenceOverride> overrides,
+  required DateRange window,
+  required RecurrenceEngine engine,
+  bool includeSkipped = false,
+}) {
+  final byTask = _indexOverrides(overrides);
+  final out = <TaskOccurrence>[];
+
+  for (final task in tasks) {
+    final date = task.planDate;
+    if (date == null) continue;
+
+    if (!task.isRecurring) {
+      // 不重复：只有一次，落在窗口里才算。
+      if (window.contains(date)) out.add(TaskOccurrence(task: task));
+      continue;
+    }
+
+    for (final o in engine.expand(
+      context: _contextOf(task, date),
+      window: window,
+      overrides: byTask[task.id] ?? const [],
+      includeSkipped: includeSkipped,
+    )) {
+      out.add(TaskOccurrence(task: task, occurrence: o));
+    }
+  }
+
+  return out;
+}
+
+Map<String, List<OccurrenceOverride>> _indexOverrides(
+  List<OccurrenceOverride> overrides,
+) {
+  final byTask = <String, List<OccurrenceOverride>>{};
+  for (final o in overrides) {
+    (byTask[o.taskId] ??= []).add(o);
+  }
+  return byTask;
 }
 
 RecurrenceContext _contextOf(Task task, PlanDate date) => RecurrenceContext(
