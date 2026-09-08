@@ -37,6 +37,7 @@ import 'features/task/presentation/task_editor_page.dart';
 import 'features/views/shared/application/view_kind.dart';
 import 'features/views/shared/presentation/filter_bar.dart';
 import 'features/views/task_list/presentation/task_list_page.dart';
+import 'features/views/timeline/presentation/timeline_page.dart';
 
 /// **视图注册表**（view-specs §7.3）。
 ///
@@ -51,6 +52,11 @@ final Map<ViewKind, Widget Function(BuildContext, VoidCallback?)> viewRegistry =
       ViewKind.list: (context, onCreateTask) => TaskListPage(
         onCreateTask: onCreateTask,
         // 路由由组合根接上 —— 视图自己不认识路由表。
+        onEditTask: (id, {from}) =>
+            context.go(AppRoutes.editTask(id, from: from)),
+      ),
+      ViewKind.timeline: (context, onCreateTask) => TimelinePage(
+        onCreateTask: onCreateTask,
         onEditTask: (id, {from}) =>
             context.go(AppRoutes.editTask(id, from: from)),
       ),

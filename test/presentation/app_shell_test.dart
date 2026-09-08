@@ -31,7 +31,7 @@ import '../support/app_harness.dart';
 /// 裸 ProviderScope 下它直接抛，整个应用起不来，
 /// 那时测的就不是「外壳对不对」了。
 List<Override> _overrides() =>
-    listPipelineOverrides(today: const PlanDate(2026, 9, 8));
+    viewPipelineOverrides(today: const PlanDate(2026, 9, 8));
 
 Future<void> _pumpApp(WidgetTester tester) async {
   await tester.pumpWidget(

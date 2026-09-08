@@ -25,9 +25,12 @@ import 'package:planning_assistant/data/repositories/settings_repository_impl.da
 import 'package:planning_assistant/data/repositories/task_repository_impl.dart';
 import 'package:planning_assistant/domain/commands/command_dispatcher.dart';
 import 'package:planning_assistant/domain/entities/category.dart';
+import 'package:planning_assistant/domain/entities/stage.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
+import 'package:planning_assistant/features/settings/application/settings_providers.dart';
 import 'package:planning_assistant/features/views/shared/application/category_providers.dart';
 import 'package:planning_assistant/features/views/shared/application/task_providers.dart';
+import 'package:planning_assistant/features/views/timeline/application/timeline_providers.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 
 /// 一套装好的依赖，供 `ProviderScope(overrides: ...)` 使用。
@@ -147,7 +150,7 @@ void testAppWidgets(
   });
 }
 
-/// 列表流水线要的一整套 override，**喂固定数据、不开库**。
+/// 视图流水线要的一整套 override，**喂固定数据、不开库**。
 ///
 /// 三处测试原本各自手写一份（外壳、列表页、外壳 golden）。
 /// 展开重复任务那次给流水线加了两个新依赖（时区换算器、例外流），
@@ -155,23 +158,58 @@ void testAppWidgets(
 /// 离「少了个 override」隔着两层。
 ///
 /// 集中在这里：以后流水线再多一个依赖，只改这一处。
-List<Override> listPipelineOverrides({
+///
+/// 名字里一度写着「列表」。时间轴接上来之后用的是同一套 ——
+/// 那不是复用了列表的东西，是它们本来就共享同一个数据源
+/// （view-specs §0.2）。
+List<Override> viewPipelineOverrides({
   List<Task> tasks = const [],
   List<Category> categories = const [],
+  List<Stage> stages = const [],
+  Map<String, Object?> settings = const {},
+  // 下面两个是**替换**用的口子，不是另加一条 override ——
+  // 同一个 provider 在一个容器里只许覆盖一次，追加会撞上
+  // 「Tried to override a provider twice」，而那条报错指的是
+  // `_FocusInheritedScope`，跟真正的原因隔着整棵树。
+  Stream<List<Task>>? tasksStream,
+  Stream<void> tick = const Stream<void>.empty(),
   required PlanDate today,
-}) => [
-  visibleTasksProvider.overrideWith((ref) => Stream.value(tasks)),
-  categoriesProvider.overrideWith((ref) => Stream.value(categories)),
-  allOverridesProvider.overrideWith((ref) => Stream.value(const [])),
-  // 展开按墙钟进行，要时区换算器。夹具里的任务多数不重复，
-  // 但展开那一步照样会读它。
-  timeZoneResolverProvider.overrideWithValue(
-    const TzTimeZoneResolver(fixedCurrentZoneId: 'Asia/Shanghai'),
-  ),
-  // **「今天」必须钉死**，否则日期分组会随跑测试的日子变 ——
-  // 今天绿明天红，而那种红看不出是代码变了还是日历翻页了。
-  todayProvider.overrideWithValue(today),
-];
+}) {
+  // 这里发的是 `TzTimeZoneResolver`，而它没有时区库就抛
+  // `UnknownTimeZoneException`。同 `appHarness()` 里那段 ——
+  // 放在**发放解析器的地方**，而不是让每个测试文件自己记得 setUpAll：
+  // 忘了的表现是「当前时刻线没画出来」，隔着三层才追得到时区上。
+  tzdata.initializeTimeZones();
+  return [
+    // **配置也要给。** 不给的话 `settingsRepositoryProvider` 抛
+    // 「必须在 overrides 中提供」，而配置的解析层对错误是**回落到默认值**
+    // 的（`_resolve` 的 `_ => const {}`）—— 于是界面看着完全正常，
+    // 每条 widget 测试却都在跑错误分支，还各留一个 Riverpod 的重试定时器。
+    // 撞见它是因为一个用显式容器的用例报了「Pending timers」，
+    // 而那与被测的行为毫无关系。
+    rawSettingsProvider.overrideWith((ref) => Stream.value(settings)),
+    visibleTasksProvider.overrideWith(
+      (ref) => tasksStream ?? Stream.value(tasks),
+    ),
+    categoriesProvider.overrideWith((ref) => Stream.value(categories)),
+    allOverridesProvider.overrideWith((ref) => Stream.value(const [])),
+    allStagesProvider.overrideWith((ref) => Stream.value(stages)),
+    // **心跳掐掉。** 真的那个每分钟响一次，而它在用例结束时
+    // 还剩着一个最多 60 秒的定时器 —— binding 判「树都拆了还有定时器在」，
+    // 报的是「Pending timers」，与被测的行为毫无关系。
+    //
+    // 要验当前时刻线**会动**的用例自己覆盖成一个受控的流。
+    minuteTickProvider.overrideWithValue(tick),
+    // 展开按墙钟进行，要时区换算器。夹具里的任务多数不重复，
+    // 但展开那一步照样会读它。
+    timeZoneResolverProvider.overrideWithValue(
+      const TzTimeZoneResolver(fixedCurrentZoneId: 'Asia/Shanghai'),
+    ),
+    // **「今天」必须钉死**，否则日期分组会随跑测试的日子变 ——
+    // 今天绿明天红，而那种红看不出是代码变了还是日历翻页了。
+    todayProvider.overrideWithValue(today),
+  ];
+}
 
 /// 设定测试里的「屏幕」。**两处都要设。**
 ///
