@@ -16,8 +16,10 @@ import '../../../app_providers.dart';
 import '../../../core/time/minute_of_day.dart';
 import '../../../core/time/plan_date.dart';
 import '../../../design/components/app_button.dart';
+import '../../../design/components/app_chip.dart';
 import '../../../design/theme/app_theme.dart';
 import '../../../design/tokens/dimensions.dart';
+import '../../views/shared/application/category_providers.dart';
 import '../application/task_editor_controller.dart';
 
 class TaskEditorPage extends ConsumerStatefulWidget {
@@ -32,6 +34,13 @@ class TaskEditorPage extends ConsumerStatefulWidget {
   static const Key allDaySwitchKey = ValueKey('editor-all-day');
   static const Key dateFieldKey = ValueKey('editor-date');
   static const Key timeFieldKey = ValueKey('editor-time');
+
+  /// 分类选择区。每个选项的 Key 见 [categoryChipKey]。
+  static const Key categoryPickerKey = ValueKey('editor-category');
+
+  /// 某个分类选项的 Key。`null` 是「未分类」那一项。
+  static Key categoryChipKey(String? categoryId) =>
+      ValueKey('editor-category-${categoryId ?? 'none'}');
 
   @override
   ConsumerState<TaskEditorPage> createState() => _TaskEditorPageState();
@@ -103,6 +112,11 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
               maxLines: 4,
               decoration: const InputDecoration(labelText: '备注（可选）'),
               onChanged: controller.setNote,
+            ),
+            const SizedBox(height: Spacing.xl),
+            _CategoryPicker(
+              selectedId: draft.categoryId,
+              onSelected: controller.setCategory,
             ),
             const SizedBox(height: Spacing.xl),
             _DateRow(
@@ -217,4 +231,48 @@ class _TimeRow extends StatelessWidget {
       },
     );
   }
+}
+
+/// 分类选择（FR-TASK-01：分类是可选字段）。
+///
+/// 「未分类」**永远是第一项**，而且它不是从仓库来的 ——
+/// 库里没有那一行，`categoryId IS NULL` 就是它（settings-spec §3.0）。
+///
+/// 用一排 Chip 而不是下拉：分类通常只有四五个，摊开一眼看全，
+/// 少一次「点开-再点」的往返（M2 那条 ≤3 次点击也吃这个便宜）。
+class _CategoryPicker extends ConsumerWidget {
+  const _CategoryPicker({required this.selectedId, required this.onSelected});
+
+  final String? selectedId;
+  final ValueChanged<String?> onSelected;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final categories = ref.watch(categoryListProvider);
+    final text = Theme.of(context).textTheme;
+
+    return Column(
+      key: TaskEditorPage.categoryPickerKey,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('分类', style: text.bodySmall),
+        const SizedBox(height: Spacing.xs),
+        Wrap(
+          spacing: Spacing.sm,
+          runSpacing: Spacing.xs,
+          children: [
+            _chip(null, Uncategorized.name),
+            for (final c in categories) _chip(c.id, c.name),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _chip(String? id, String label) => SelectableChip(
+    key: TaskEditorPage.categoryChipKey(id),
+    label: label,
+    selected: id == selectedId,
+    onSelected: (_) => onSelected(id),
+  );
 }

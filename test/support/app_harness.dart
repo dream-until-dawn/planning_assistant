@@ -18,6 +18,7 @@ import 'package:planning_assistant/core/time/clock.dart';
 import 'package:planning_assistant/core/time/time_zone_resolver.dart';
 import 'package:planning_assistant/data/database/app_database.dart';
 import 'package:planning_assistant/data/database/dao/synced_dao.dart';
+import 'package:planning_assistant/data/repositories/category_repository_impl.dart';
 import 'package:planning_assistant/data/repositories/task_repository_impl.dart';
 import 'package:planning_assistant/domain/commands/command_dispatcher.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
@@ -65,6 +66,13 @@ Harness appHarness({
       taskCommandDispatcherProvider.overrideWithValue(
         CommandDispatcher(repository, clock),
       ),
+      categoryRepositoryProvider.overrideWithValue(
+        DriftCategoryRepository(
+          db,
+          const FixedWriterIdentity('test-device'),
+          clock,
+        ),
+      ),
     ],
   );
 }
@@ -86,3 +94,15 @@ Future<void> disposeTree(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 1));
 }
+
+/// 写入默认分类。
+///
+/// **`appHarness()` 不自动做** —— 它是同步的，而播种要落库。
+/// 更要紧的是：有没有分类是个**测试要显式表态**的事。
+/// 自动播种的话，「空库时列表怎么显示」这类用例会莫名其妙有四个分类，
+/// 而作者不会注意到。
+Future<void> seedCategories(Harness harness) => DriftCategoryRepository(
+  harness.db,
+  const FixedWriterIdentity('test-device'),
+  FixedClock(DateTime.utc(2026, 9, 7, 3)),
+).seedDefaultsIfEmpty();

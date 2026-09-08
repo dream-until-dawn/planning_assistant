@@ -20,6 +20,7 @@ import 'core/time/time_zone_bootstrap.dart';
 import 'core/time/time_zone_resolver.dart';
 import 'data/database/app_database.dart';
 import 'data/database/dao/synced_dao.dart';
+import 'data/repositories/category_repository_impl.dart';
 import 'data/repositories/task_repository_impl.dart';
 import 'domain/commands/command_dispatcher.dart';
 import 'platform/timezone/platform_time_zone.dart';
@@ -76,6 +77,11 @@ Future<void> bootstrap(
 
   final repository = DriftTaskRepository(db, writer, clock);
   final dispatcher = CommandDispatcher(repository, clock);
+  final categories = DriftCategoryRepository(db, writer, clock);
+
+  // 首次启动写入默认分类（settings-spec §3.1）。**幂等**：
+  // 已经有过分类就什么都不做，否则用户删掉的分类每次启动都会长回来。
+  await categories.seedDefaultsIfEmpty();
 
   // TODO(M4): 通知渠道创建 → 提醒对账
 
@@ -88,6 +94,7 @@ Future<void> bootstrap(
         idGeneratorProvider.overrideWithValue(idGenerator),
         taskRepositoryProvider.overrideWithValue(repository),
         taskCommandDispatcherProvider.overrideWithValue(dispatcher),
+        categoryRepositoryProvider.overrideWithValue(categories),
         timeZoneSetupProvider.overrideWithValue(tzResult),
       ],
       child: appBuilder(),

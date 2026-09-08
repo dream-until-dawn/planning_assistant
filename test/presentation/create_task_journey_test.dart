@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
+import 'package:planning_assistant/design/components/app_chip.dart';
 import 'package:planning_assistant/design/components/empty_state.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
@@ -20,11 +21,14 @@ import 'package:planning_assistant/features/task/presentation/task_editor_page.d
 
 import '../support/app_harness.dart';
 
-Future<Harness> _pumpApp(WidgetTester tester) async {
+Future<Harness> _pumpApp(WidgetTester tester, {bool seed = false}) async {
   await tester.binding.setSurfaceSize(const Size(390, 844));
   addTearDown(() => tester.binding.setSurfaceSize(null));
 
   final harness = appHarness();
+  // 默认**不播种分类**：有没有分类要每个用例显式表态，
+  // 否则「空库时怎么显示」那类用例会莫名其妙有四个分类。
+  if (seed) await seedCategories(harness);
   await tester.pumpWidget(
     ProviderScope(overrides: harness.overrides, child: PlanningAssistantApp()),
   );
@@ -164,5 +168,105 @@ void main() {
     expect(undone.single.status, 'pending', reason: '取消完成应当回到 pending');
 
     await disposeTree(tester);
+  });
+
+  group('分类（FR-CFG-03、settings-spec §3.0）', () {
+    testWidgets('选一个分类，落库的是它的 id，列表上显示它的名字', (tester) async {
+      final harness = await _pumpApp(tester, seed: true);
+
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '写周报');
+      await tester.pump();
+
+      await tester.tap(
+        find.byKey(TaskEditorPage.categoryChipKey('cat-default-briefcase')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      final stored = await harness.db.select(harness.db.tasks).get();
+      expect(stored.single.categoryId, 'cat-default-briefcase');
+      // 卡片上分类名以**文字**出现（design-system §8.1：颜色不是唯一载体）。
+      expect(find.text('工作'), findsOneWidget);
+
+      await disposeTree(tester);
+    });
+
+    testWidgets('选「未分类」写的是 NULL，不是某一行的 id（§3.0）', (tester) async {
+      // 这是那条决定的落地检验：库里没有「未分类」那一行，
+      // 选中它必须产出 NULL。若哪天有人给它建了一行，这条会红。
+      final harness = await _pumpApp(tester, seed: true);
+
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '随便记一笔');
+      await tester.pump();
+
+      // 先选一个真分类，再改回未分类 —— 直接不选也是 null，
+      // 那样验不出「选未分类」这个动作本身。
+      await tester.tap(
+        find.byKey(TaskEditorPage.categoryChipKey('cat-default-home')),
+      );
+      await tester.pumpAndSettle();
+
+      // **中间这一步不能省**：只看最后落库的 null 的话，
+      // 「两次点击都没生效」也会让这条通过 —— 而那正是要排除的情形。
+      // 勾在哪个 Chip 上，是「点击真的生效了」的当场证据。
+      expect(
+        find.descendant(
+          of: find.byKey(TaskEditorPage.categoryChipKey('cat-default-home')),
+          matching: find.byIcon(SelectableChip.checkIcon),
+        ),
+        findsOneWidget,
+        reason: '点了「生活」却没选中，后面的断言就没有意义了',
+      );
+
+      await tester.tap(find.byKey(TaskEditorPage.categoryChipKey(null)));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.descendant(
+          of: find.byKey(TaskEditorPage.categoryChipKey(null)),
+          matching: find.byIcon(SelectableChip.checkIcon),
+        ),
+        findsOneWidget,
+        reason: '「未分类」没被选中',
+      );
+
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      final stored = await harness.db.select(harness.db.tasks).get();
+      expect(stored.single.categoryId, isNull);
+      expect(find.text('未分类'), findsOneWidget);
+
+      await disposeTree(tester);
+    });
+
+    testWidgets('「未分类」不是库里的一行', (tester) async {
+      final harness = await _pumpApp(tester, seed: true);
+      final rows = await harness.db.select(harness.db.categories).get();
+      expect(rows.map((r) => r.name), isNot(contains('未分类')));
+      expect(rows, hasLength(4));
+      await disposeTree(tester);
+    });
+
+    testWidgets('不选分类时默认就是未分类', (tester) async {
+      final harness = await _pumpApp(tester, seed: true);
+
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '买菜');
+      await tester.pump();
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      final stored = await harness.db.select(harness.db.tasks).get();
+      expect(stored.single.categoryId, isNull);
+
+      await disposeTree(tester);
+    });
   });
 }

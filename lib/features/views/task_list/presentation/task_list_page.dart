@@ -8,12 +8,14 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../design/components/app_chip.dart';
 import '../../../../design/components/empty_state.dart';
 import '../../../../design/components/task_card.dart';
-import '../../../../design/theme/app_theme.dart';
 import '../../../../design/tokens/dimensions.dart';
+import '../../../../domain/entities/category.dart';
 import '../../../../domain/entities/task.dart';
 import '../../../../domain/value_objects/task_status.dart';
+import '../../shared/application/category_providers.dart';
 import '../application/task_list_actions.dart';
 import '../application/task_list_providers.dart';
 
@@ -30,6 +32,7 @@ class TaskListPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tasks = ref.watch(visibleTasksProvider);
+    final categories = ref.watch(categoryByIdProvider);
 
     return tasks.when(
       // 加载中**不画转圈**：本地 SQLite 的首帧通常在一帧内就来了，
@@ -56,7 +59,7 @@ class TaskListPage extends ConsumerWidget {
                 final task = list[i];
                 final isDone = task.status == TaskStatus.done;
                 return TaskCard(
-                  data: _toCardData(context, task),
+                  data: _toCardData(task, categories),
                   // 就地完成（view-specs §0.3）。
                   //
                   // 完成后**不立即消失**（design-system §8.1）——
@@ -77,16 +80,17 @@ class TaskListPage extends ConsumerWidget {
 ///
 /// 卡片是纯展示的，不认识 [Task]（design-system §8.1 的分工），
 /// 所以整形放在这里。
-TaskCardData _toCardData(BuildContext context, Task task) {
-  final colors = context.appColors;
+TaskCardData _toCardData(Task task, Map<String, Category> categories) {
+  // `categoryId == null` 就是未分类（settings-spec §3.0）——
+  // 查不到也当未分类：那说明分类被删了，而删分类不该让任务消失。
+  final category = task.categoryId == null ? null : categories[task.categoryId];
+
   return TaskCardData(
     title: task.title,
-    // 分类还没实现（Categories 表在，领域实体与仓库查询都还没有）。
-    // **不假装有分类**：统一「未分类」+ 中性色条，
-    // 等分类做出来再接。编造一个分类名会让 §8.1 那条
-    // 「分类名必须以文字出现」看起来已经满足，其实没有。
-    categoryName: '未分类',
-    categoryColor: colors.borderSubtle,
+    categoryName: category?.name ?? Uncategorized.name,
+    categoryColor: category == null
+        ? Uncategorized.color
+        : Color(category.colorArgb),
     timeLabel: _timeLabelOf(task),
     isDone: task.status == TaskStatus.done,
   );

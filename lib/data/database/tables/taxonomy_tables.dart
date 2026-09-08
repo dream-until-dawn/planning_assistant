@@ -19,7 +19,9 @@ class Categories extends Table with SyncEnvelope {
 
   IntColumn get orderIndex => integer()();
 
-  /// 「未分类」这条不可删（settings-spec §4）。
+  /// **当前无使用者**：「未分类」是 `categoryId IS NULL`，不是一行
+  /// （settings-spec §3.0）。留着这列是因为删列要迁移。
+  /// **不得**拿它表达「未分类」—— 那会请回被去掉的第二种编码。
   BoolColumn get isSystemDefault =>
       boolean().withDefault(const Constant(false))();
 

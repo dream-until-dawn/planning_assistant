@@ -152,3 +152,19 @@ class SelectableChip extends StatelessWidget {
     );
   }
 }
+
+/// 「未分类」的显示样式（settings-spec §3.1）。
+///
+/// **是渲染时的常量，不是数据** —— 库里没有这一行，
+/// `categoryId IS NULL` 就是它（§3.0）。所以它的名字与颜色
+/// 只能写在展示层，不能从仓库里查。
+abstract final class Uncategorized {
+  static const String name = '未分类';
+
+  /// `#A9A5B0`。与 `text.disabled` 同值是巧合 —— 那是中性灰，
+  /// 而这里只当**色点**用（≥3:1 的门槛不适用于装饰性色点，
+  /// 且分类名同时以文字出现，见 design-system §2.5）。
+  static const Color color = Color(0xFFA9A5B0);
+
+  static const String icon = 'inbox';
+}

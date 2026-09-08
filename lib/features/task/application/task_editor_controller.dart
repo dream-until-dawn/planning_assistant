@@ -28,6 +28,7 @@ final class TaskDraft {
     this.isAllDay = true,
     this.planDate,
     this.startMinute,
+    this.categoryId,
   });
 
   final String title;
@@ -39,6 +40,10 @@ final class TaskDraft {
 
   final PlanDate? planDate;
   final MinuteOfDay? startMinute;
+
+  /// 分类。**null 就是「未分类」**（settings-spec §3.0），
+  /// 不是「还没选」—— 库里没有「未分类」那一行，选它就是写 null。
+  final String? categoryId;
 
   /// 能不能保存。**只要求标题非空**（FR-TASK-01：仅填标题即可保存）。
   ///
@@ -52,6 +57,7 @@ final class TaskDraft {
     bool? isAllDay,
     Object? planDate = unset,
     Object? startMinute = unset,
+    Object? categoryId = unset,
   }) => TaskDraft(
     title: title ?? this.title,
     note: note ?? this.note,
@@ -64,6 +70,7 @@ final class TaskDraft {
     // 在同一个类里补了两处、漏了第三处，是测试抓出来的。
     planDate: patch(planDate, this.planDate),
     startMinute: patch(startMinute, this.startMinute),
+    categoryId: patch(categoryId, this.categoryId),
   );
 }
 
@@ -77,6 +84,10 @@ final class TaskEditorController extends Notifier<TaskDraft> {
   void setNote(String value) => state = state.copyWith(note: value);
 
   void setPlanDate(PlanDate? date) => state = state.copyWith(planDate: date);
+
+  /// 选分类。**传 null 即「未分类」**，不是「不改」。
+  void setCategory(String? categoryId) =>
+      state = state.copyWith(categoryId: categoryId);
 
   /// 切全天。
   ///
@@ -115,6 +126,9 @@ final class TaskEditorController extends Notifier<TaskDraft> {
             // 「每天 07:00 起床」飞到伦敦后仍应是当地 07:00。
             timeZoneId: resolver.currentZoneId(),
             note: draft.note.trim().isEmpty ? null : draft.note.trim(),
+            // null 即「未分类」（settings-spec §3.0）—— 库里没有那一行，
+            // 所以这里原样传，不做任何「空则填默认分类」的转换。
+            categoryId: draft.categoryId,
             isAllDay: draft.isAllDay,
             planDate: draft.planDate,
             startMinute: draft.isAllDay ? null : draft.startMinute,

@@ -30,6 +30,7 @@ import 'core/time/clock.dart';
 import 'core/time/time_zone_bootstrap.dart';
 import 'core/time/time_zone_resolver.dart';
 import 'domain/commands/command_dispatcher.dart';
+import 'domain/repositories/category_repository.dart';
 import 'domain/repositories/task_repository.dart';
 
 Never _mustOverride(String what) =>
@@ -74,4 +75,13 @@ final taskRepositoryProvider = Provider<TaskRepository>(
 /// UI 直接写仓库的话，那条路就绕过了全部不变量与 outbox。
 final taskCommandDispatcherProvider = Provider<CommandDispatcher>(
   (ref) => _mustOverride('taskCommandDispatcherProvider'),
+);
+
+/// 分类仓库。
+///
+/// 分类是**实体不是配置项**（settings-spec §3），所以走仓库而不是配置中心。
+/// 读路径可以直接用它；写路径将来同样要收进命令（FR-AI-01），
+/// 目前分类还没有编辑界面，暂时没有写入方。
+final categoryRepositoryProvider = Provider<CategoryRepository>(
+  (ref) => _mustOverride('categoryRepositoryProvider'),
 );

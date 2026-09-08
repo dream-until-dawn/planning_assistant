@@ -15,9 +15,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
 import 'package:planning_assistant/design/tokens/dimensions.dart';
+import 'package:planning_assistant/domain/entities/category.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/domain/value_objects/task_status.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/views/shared/application/category_providers.dart';
 import 'package:planning_assistant/features/views/shared/application/view_kind.dart';
 import 'package:planning_assistant/features/views/task_list/application/task_list_providers.dart';
 import 'package:planning_assistant/features/views/task_list/presentation/task_list_page.dart';
@@ -53,6 +55,31 @@ Widget _withSwitcher(Brightness brightness, double scale) => _wrap(
   ),
 );
 
+/// golden 用的分类，与 `kDefaultCategories` 的固定 ID 对齐。
+const _categories = [
+  Category(
+    id: 'cat-default-briefcase',
+    name: '工作',
+    colorArgb: 0xFF7FD1C1,
+    icon: 'briefcase',
+    orderIndex: 0,
+  ),
+  Category(
+    id: 'cat-default-book',
+    name: '学习',
+    colorArgb: 0xFFA8C8F0,
+    icon: 'book',
+    orderIndex: 1,
+  ),
+  Category(
+    id: 'cat-default-home',
+    name: '生活',
+    colorArgb: 0xFFFFB7C5,
+    icon: 'home',
+    orderIndex: 2,
+  ),
+];
+
 /// 密集列表 + 超长文本（roadmap M2 验收要求 golden 覆盖这两种）。
 ///
 /// 空态那张图好看是好看，但它**验不到列表本身** —— 卡片间距、
@@ -64,12 +91,16 @@ List<Task> _denseTasks() => [
     kind: TaskKind.single,
     timeZoneId: 'Asia/Shanghai',
     isAllDay: true,
+    // 挂真实分类，否则这张图里色条永远是「未分类」的中性灰 ——
+    // 那样 §2.5 那套分类调色板一次都没进过 golden。
+    categoryId: 'cat-default-home',
   ),
   Task(
     id: 't2',
     title: '写季度总结',
     kind: TaskKind.single,
     timeZoneId: 'Asia/Shanghai',
+    categoryId: 'cat-default-briefcase',
     startMinute: MinuteOfDay.of(9, 30),
   ),
   Task(
@@ -92,6 +123,7 @@ List<Task> _denseTasks() => [
     title: '读完这本书',
     kind: TaskKind.single,
     timeZoneId: 'Asia/Shanghai',
+    categoryId: 'cat-default-book',
     isAllDay: true,
   ),
 ];
@@ -127,7 +159,12 @@ Widget _wrap(
   // 真库还会带来 drift 取消订阅时那个零延时 timer，
   // 让测试末尾报「Pending timers」。仓库的真实行为由
   // `application/` 与集成测试去验，那才是它该被验的地方。
-  overrides: [visibleTasksProvider.overrideWith((ref) => Stream.value(tasks))],
+  overrides: [
+    visibleTasksProvider.overrideWith((ref) => Stream.value(tasks)),
+    // 分类同样直接覆盖 —— 理由同上：这张图要的是一份确定的数据，
+    // 仓库怎么排序、怎么过滤墓碑与它无关。
+    categoriesProvider.overrideWith((ref) => Stream.value(_categories)),
+  ],
   child: MaterialApp(
     debugShowCheckedModeBanner: false,
     theme: brightness == Brightness.light ? AppTheme.light() : AppTheme.dark(),

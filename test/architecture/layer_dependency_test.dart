@@ -805,13 +805,27 @@ import
       // DAO 基类与各表 DAO 自身。
       'data/database/dao/synced_dao.dart',
       'data/database/dao/table_daos.dart',
-      // Repository 实现是 DAO 的唯一上层调用方。
-      'data/repositories/task_repository_impl.dart',
       // 导入导出与回放走裸 SQL，不经 DAO —— 它们是「恢复」不是「操作」，
       // 不该再写一遍 outbox。见各自文件的头部注释。
       'data/dto/export_bundle.dart',
       'data/outbox/change_log_replayer.dart',
     };
+
+    /// **Repository 实现是 DAO 的唯一上层调用方** —— 这是一条结构规则，
+    /// 按目录判，不按文件名列举。
+    ///
+    /// 初版把 `data/repositories/task_repository_impl.dart` 写进了上面的
+    /// 名单。加第二个仓库（分类）时它当场变红，而那次「违规」是合法的：
+    /// 一个仓库实现调它自己的 DAO，正是这一层该干的事。
+    ///
+    /// 照名单走的话，以后每加一个仓库就机械地补一行 —— 而补一行比想清楚
+    /// 容易，于是名单会一直长下去。上面那句「长白名单等于没有白名单」
+    /// 说的就是这个，所以这里换成按目录判。
+    ///
+    /// 范围没有变松：`data/repositories/` 下本来就只放仓库实现，
+    /// 而**谁能调仓库的写方法**由 `allowedRepoWriters` 另外管着 ——
+    /// FR-AI-01 那条「UI 必须经命令」靠的是那一张表，不是这一张。
+    bool isRepositoryImpl(String rel) => rel.startsWith('data/repositories/');
 
     final violations = <String>[];
     for (final file in _dartFiles('lib')) {
@@ -840,7 +854,11 @@ import
             '$m'
             r'\s*\(',
           ).hasMatch(line);
-          if (!calls || allowedDaoWriters.contains(rel)) continue;
+          if (!calls ||
+              allowedDaoWriters.contains(rel) ||
+              isRepositoryImpl(rel)) {
+            continue;
+          }
           violations.add(
             '  - lib/$rel:${i + 1}\n      $line\n'
             '      违反: DAO 写方法 $m 不得在 data/ 之外直接调用',

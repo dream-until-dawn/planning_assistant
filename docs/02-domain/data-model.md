@@ -156,10 +156,14 @@
 | `colorArgb` | INT NOT NULL | |
 | `icon` | TEXT NOT NULL | 图标标识串（不存二进制） |
 | `orderIndex` | INT NOT NULL | |
-| `isSystemDefault` | BOOL NOT NULL DEFAULT 0 | 「未分类」这条不可删 |
+| `isSystemDefault` | BOOL NOT NULL DEFAULT 0 | **当前无使用者**，见 settings-spec §3.0 |
 | **同步信封** | | |
 
-首次启动写入的默认分类见[配置中心规格](../03-design/settings-spec.md) §4。
+首次启动写入的默认分类见[配置中心规格](../03-design/settings-spec.md) §3.1
+（初版这里写的是「§4」，而 §4 是设置页的信息架构 —— 指错了）。
+
+⚠️ **「未分类」不是这张表里的一行**，而是 `tasks.categoryId IS NULL`。
+理由与后果见 [settings-spec §3.0](../03-design/settings-spec.md)。
 
 ### 3.7 `tags` / `task_tags`
 
