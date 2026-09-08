@@ -210,6 +210,95 @@ void main() {
     });
   });
 
+  group('阶段的时间段（FR-TASK-02）', () {
+    /// 建一个带两个阶段的草稿，返回容器与两个阶段 id。
+    (ProviderContainer, List<String>) withTwoStages() {
+      final c = _container();
+      final n = c.read(taskEditorProvider.notifier);
+      n.setTitle('写周报');
+      n.addStage();
+      n.addStage();
+      final ids = [for (final s in c.read(taskEditorProvider).stages) s.id];
+      n.setStageTitle(ids[0], '收集素材');
+      n.setStageTitle(ids[1], '整理成稿');
+      return (c, ids);
+    }
+
+    test('设了时间就存偏移与时长', () {
+      final (c, ids) = withTwoStages();
+      c
+          .read(taskEditorProvider.notifier)
+          .setStageTime(ids[1], startOffsetMinutes: 120, durationMinutes: 45);
+
+      final stage = c
+          .read(taskEditorProvider)
+          .stages
+          .firstWhere((s) => s.id == ids[1]);
+      expect(stage.startOffsetMinutes, 120);
+      expect(stage.durationMinutes, 45);
+    });
+
+    test('只动一个阶段，别的不受影响', () {
+      // 「给所有阶段都写上」也能让上面那条绿。
+      final (c, ids) = withTwoStages();
+      c
+          .read(taskEditorProvider.notifier)
+          .setStageTime(ids[1], startOffsetMinutes: 120, durationMinutes: 45);
+
+      final other = c
+          .read(taskEditorProvider)
+          .stages
+          .firstWhere((s) => s.id == ids[0]);
+      expect(other.startOffsetMinutes, isNull);
+      expect(other.durationMinutes, isNull);
+    });
+
+    test('清掉开始时，时长也必须跟着没', () {
+      // **这条界面自己走不到** —— 对话框的「不定时间」两个都传 null。
+      // 但 FR-AI-01 说了会有别的入口（语音、导入、Agent）构造同一批调用，
+      // 那时「只清开始、留着时长」就是一段悬空的长度：
+      // 领域侧会得到一个 durationMinutes 非空而 startOffsetMinutes 为空的
+      // 阶段，甘特图上无处安放。
+      //
+      // 一度只有旅程测试盯这里，而那条路上两个参数**总是同时为 null** ——
+      // 于是把这个分支改成直接透传，一条测试都不会红。
+      final (c, ids) = withTwoStages();
+      final n = c.read(taskEditorProvider.notifier);
+      n.setStageTime(ids[0], startOffsetMinutes: 30, durationMinutes: 60);
+      n.setStageTime(ids[0], startOffsetMinutes: null, durationMinutes: 60);
+
+      final stage = c
+          .read(taskEditorProvider)
+          .stages
+          .firstWhere((s) => s.id == ids[0]);
+      expect(stage.startOffsetMinutes, isNull);
+      expect(stage.durationMinutes, isNull, reason: '没有开始就不该留着时长');
+    });
+
+    test('设阶段时间会补上任务的开始日期', () {
+      // 偏移是相对任务开始算的，没有起点的偏移指向不了任何时刻。
+      final (c, ids) = withTwoStages();
+      expect(c.read(taskEditorProvider).planDate, isNull, reason: '前提：本来没有日期');
+
+      c
+          .read(taskEditorProvider.notifier)
+          .setStageTime(ids[0], startOffsetMinutes: 0, durationMinutes: 60);
+      expect(c.read(taskEditorProvider).planDate, isNotNull);
+    });
+
+    test('对照组：清时间时不该顺手补日期', () {
+      final (c, ids) = withTwoStages();
+      c
+          .read(taskEditorProvider.notifier)
+          .setStageTime(
+            ids[0],
+            startOffsetMinutes: null,
+            durationMinutes: null,
+          );
+      expect(c.read(taskEditorProvider).planDate, isNull);
+    });
+  });
+
   group('阶段（FR-TASK-02）', () {
     test('默认没有阶段 —— 大多数任务是单项的', () {
       expect(const TaskDraft().stages, isEmpty);

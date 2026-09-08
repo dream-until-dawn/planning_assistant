@@ -29,13 +29,41 @@ import 'recurrence_draft.dart';
 /// 而中间任何一步出错都会写出不连续的序号 —— 那是领域层会直接拒绝的。
 @immutable
 final class StageDraft {
-  const StageDraft({required this.id, this.title = ''});
+  const StageDraft({
+    required this.id,
+    this.title = '',
+    this.startOffsetMinutes,
+    this.durationMinutes,
+  });
 
   final String id;
   final String title;
 
-  StageDraft copyWith({String? title}) =>
-      StageDraft(id: id, title: title ?? this.title);
+  /// 相对**任务开始**的分钟偏移，与 `Stage` 存的是同一个东西
+  /// （data-model §4.1）。null = 这个阶段没定时间。
+  ///
+  /// 草稿里存偏移而不是绝对时刻，是为了跟存储同语义：
+  /// 把任务整体挪到下一周，阶段跟着挪 —— 存绝对时刻的话，
+  /// 编辑器里的表现会与存下去之后的表现不一样。
+  /// 界面上显示的绝对时刻由 `stage_time.dart` 现算（§4.1：看绝对、存偏移）。
+  final int? startOffsetMinutes;
+
+  /// 时长。null = 只有一个开始点，没有跨度。
+  final int? durationMinutes;
+
+  bool get hasTime => startOffsetMinutes != null;
+
+  StageDraft copyWith({
+    String? title,
+    Object? startOffsetMinutes = unset,
+    Object? durationMinutes = unset,
+  }) => StageDraft(
+    id: id,
+    title: title ?? this.title,
+    // 两个都要能清掉（「这个阶段其实不用定时间」），所以走哨兵。
+    startOffsetMinutes: patch(startOffsetMinutes, this.startOffsetMinutes),
+    durationMinutes: patch(durationMinutes, this.durationMinutes),
+  );
 }
 
 /// 编辑器里那张表单。
@@ -298,6 +326,39 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     ],
   );
 
+  /// 设一个阶段的时间段（FR-TASK-02：每阶段有独立时间段）。
+  ///
+  /// 传的是**偏移**，不是绝对时刻 —— 界面负责把用户选的绝对时刻
+  /// 折算成偏移（`stage_time.dart`），这一层只管存。
+  /// 两个都传 null 就是「这个阶段不定时间」。
+  ///
+  /// 顺带**保证任务有开始日期**：偏移是相对任务开始算的，
+  /// 没有起点的偏移指向不了任何时刻。与关全天、开重复同一条道理。
+  void setStageTime(
+    String id, {
+    required int? startOffsetMinutes,
+    required int? durationMinutes,
+  }) {
+    state = state.copyWith(
+      planDate: startOffsetMinutes == null
+          ? state.planDate
+          : (state.planDate ?? _today()),
+      stages: [
+        for (final s in state.stages)
+          if (s.id == id)
+            s.copyWith(
+              startOffsetMinutes: startOffsetMinutes,
+              // 没有开始就不该留着时长 —— 那是一段悬空的长度。
+              durationMinutes: startOffsetMinutes == null
+                  ? null
+                  : durationMinutes,
+            )
+          else
+            s,
+      ],
+    );
+  }
+
   void removeStage(String id) => state = state.copyWith(
     stages: [
       for (final s in state.stages)
@@ -400,7 +461,13 @@ final class TaskEditorController extends Notifier<TaskDraft> {
                 // 编辑期间用户增删拖拽，序号一直是乱的；
                 // 领域层要求从 0 起连续，所以在边界上一次转好。
                 for (final (i, s) in filled.indexed)
-                  StageSpec(id: s.id, title: s.title.trim(), orderIndex: i),
+                  StageSpec(
+                    id: s.id,
+                    title: s.title.trim(),
+                    orderIndex: i,
+                    startOffsetMinutes: s.startOffsetMinutes,
+                    durationMinutes: s.durationMinutes,
+                  ),
               ],
             ),
           );

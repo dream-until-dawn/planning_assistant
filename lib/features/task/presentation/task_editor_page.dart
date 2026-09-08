@@ -26,6 +26,7 @@ import '../../../design/theme/app_theme.dart';
 import '../../../design/tokens/dimensions.dart';
 import '../../views/shared/application/category_providers.dart';
 import '../application/recurrence_draft.dart';
+import '../application/stage_time.dart';
 import '../application/task_editor_controller.dart';
 
 class TaskEditorPage extends ConsumerStatefulWidget {
@@ -87,6 +88,18 @@ class TaskEditorPage extends ConsumerStatefulWidget {
   static Key stageRemoveKey(String stageId) =>
       ValueKey('editor-stage-remove-$stageId');
   static Key stageUpKey(String stageId) => ValueKey('editor-stage-up-$stageId');
+
+  /// 某个阶段的时间段按钮（FR-TASK-02：每阶段有独立时间段）。
+  static Key stageTimeKey(String stageId) =>
+      ValueKey('editor-stage-time-$stageId');
+
+  /// 阶段时间对话框里的四个选择器与两个按钮。
+  static const Key stageTimeStartDateKey = ValueKey('stage-time-start-date');
+  static const Key stageTimeStartTimeKey = ValueKey('stage-time-start-time');
+  static const Key stageTimeEndDateKey = ValueKey('stage-time-end-date');
+  static const Key stageTimeEndTimeKey = ValueKey('stage-time-end-time');
+  static const Key stageTimeConfirmKey = ValueKey('stage-time-confirm');
+  static const Key stageTimeClearKey = ValueKey('stage-time-clear');
 
   /// 某个分类选项的 Key。`null` 是「未分类」那一项。
   static Key categoryChipKey(String? categoryId) =>
@@ -240,7 +253,11 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
               controller: controller,
             ),
             const SizedBox(height: Spacing.xl),
-            _StageSection(draft: draft, controller: controller),
+            _StageSection(
+              draft: draft,
+              today: _today(),
+              controller: controller,
+            ),
             const SizedBox(height: Spacing.xxxl),
           ],
         ),
@@ -281,6 +298,298 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// 阶段偏移的锚点：任务的开始。
+///
+/// 没有日期时用一个占位日 —— `setStageTime` 会把今天补进草稿，
+/// 所以用户一旦真的设了时间，显示的和存下去的就是同一天。
+DateAndMinute _stageAnchor(TaskDraft draft, PlanDate today) => DateAndMinute(
+  draft.planDate ?? today,
+  draft.startMinute ?? MinuteOfDay.midnight,
+);
+
+/// 「几点」。
+String _hhmm(MinuteOfDay m) =>
+    '${(m.value ~/ 60).toString().padLeft(2, '0')}:'
+    '${(m.value % 60).toString().padLeft(2, '0')}';
+
+/// 「哪天几点」。全天任务只说到哪天。
+String _formatMoment(DateAndMinute m, {required bool withTime}) =>
+    withTime ? '${m.date} ${_hhmm(m.minute)}' : '${m.date}';
+
+/// 一个阶段的时间段按钮（FR-TASK-02：每阶段有独立时间段）。
+///
+/// **显示绝对时刻，存相对偏移**（data-model §4.1）——
+/// 「+90 分钟」谁也读不出是哪天几点；而绝对日期在重复的阶段事项上
+/// 根本写不出来（该写哪一周的？）。换算在 `stage_time.dart`。
+class _StageTimeButton extends StatelessWidget {
+  const _StageTimeButton({
+    required this.stage,
+    required this.anchor,
+    required this.isAllDay,
+    required this.onChanged,
+  });
+
+  final StageDraft stage;
+
+  /// 任务开始 —— 偏移相对它算。
+  final DateAndMinute anchor;
+
+  final bool isAllDay;
+
+  /// `(开始偏移, 时长)`，两个都为 null 即清空。
+  final void Function(int?, int?) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final offset = stage.startOffsetMinutes;
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton.icon(
+        key: TaskEditorPage.stageTimeKey(stage.id),
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: Spacing.xs),
+          // 可点即需 48dp（design-system §5）。
+          minimumSize: const Size(0, Spacing.minTouchTarget),
+        ),
+        icon: const Icon(Icons.schedule_outlined, size: TypeScale.captionSize),
+        label: Text(
+          offset == null ? '加时间' : _rangeLabel(offset, stage.durationMinutes),
+          style: text.bodySmall,
+        ),
+        onPressed: () async {
+          final result = await showDialog<_StageTimeResult>(
+            context: context,
+            builder: (_) => _StageTimeDialog(
+              anchor: anchor,
+              isAllDay: isAllDay,
+              startOffsetMinutes: offset,
+              durationMinutes: stage.durationMinutes,
+            ),
+          );
+          if (result != null) onChanged(result.startOffset, result.duration);
+        },
+      ),
+    );
+  }
+
+  String _rangeLabel(int offset, int? duration) {
+    final start = shiftFrom(anchor, offset);
+    final startText = _formatMoment(start, withTime: !isAllDay);
+    if (duration == null) return startText;
+    final end = shiftFrom(anchor, offset + duration);
+    // 同一天就不重复写日期 ——「2026-09-08 09:00 — 2026-09-08 10:30」
+    // 里有一半是噪声，而按钮只有一行。
+    final endText = (end.date == start.date && !isAllDay)
+        ? _hhmm(end.minute)
+        : _formatMoment(end, withTime: !isAllDay);
+    return '$startText — $endText';
+  }
+}
+
+/// 对话框返回的东西。
+///
+/// `null`（没返回）与 `_StageTimeResult(null, null)` 是两回事：
+/// 前者是「取消」，后者是「清掉这个阶段的时间」。
+/// 用同一个值表示会让「不定时间」变成一个按不动的按钮。
+@immutable
+class _StageTimeResult {
+  const _StageTimeResult(this.startOffset, this.duration);
+  final int? startOffset;
+  final int? duration;
+}
+
+/// 选一个阶段的开始与结束。
+class _StageTimeDialog extends StatefulWidget {
+  const _StageTimeDialog({
+    required this.anchor,
+    required this.isAllDay,
+    required this.startOffsetMinutes,
+    required this.durationMinutes,
+  });
+
+  final DateAndMinute anchor;
+  final bool isAllDay;
+  final int? startOffsetMinutes;
+  final int? durationMinutes;
+
+  @override
+  State<_StageTimeDialog> createState() => _StageTimeDialogState();
+}
+
+class _StageTimeDialogState extends State<_StageTimeDialog> {
+  late DateAndMinute _start;
+  late DateAndMinute _end;
+
+  @override
+  void initState() {
+    super.initState();
+    // 没设过就从任务开始那一刻起、默认一小时 —— 给一个能直接「确定」的
+    // 完整值，而不是让用户对着四个空栏位从头填。
+    final offset = widget.startOffsetMinutes ?? 0;
+    _start = shiftFrom(widget.anchor, offset);
+    _end = shiftFrom(widget.anchor, offset + (widget.durationMinutes ?? 60));
+  }
+
+  /// 结束早于开始、或阶段早于任务开始，都不给确定。
+  ///
+  /// **当场挡住**，而不是让它算出一个负数存下去：负时长在甘特图上
+  /// 是一根往回长的条，负偏移则让阶段跑到任务前面 —— 两者都能落库，
+  /// 而且落库之后没有任何界面会提示不对。
+  String? get _blockedReason {
+    if (offsetFrom(widget.anchor, _start) < 0) return '阶段不能早于任务开始';
+    if (offsetFrom(_start, _end) < 0) return '结束不能早于开始';
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final blocked = _blockedReason;
+
+    return AlertDialog(
+      title: const Text('这个阶段的时间'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '任务从 '
+            '${_formatMoment(widget.anchor, withTime: !widget.isAllDay)} 开始',
+            style: text.bodySmall,
+          ),
+          const SizedBox(height: Spacing.sm),
+          _MomentRow(
+            dateKey: TaskEditorPage.stageTimeStartDateKey,
+            timeKey: TaskEditorPage.stageTimeStartTimeKey,
+            label: '开始',
+            moment: _start,
+            withTime: !widget.isAllDay,
+            onChanged: (m) => setState(() => _start = m),
+          ),
+          _MomentRow(
+            dateKey: TaskEditorPage.stageTimeEndDateKey,
+            timeKey: TaskEditorPage.stageTimeEndTimeKey,
+            label: '结束',
+            moment: _end,
+            withTime: !widget.isAllDay,
+            onChanged: (m) => setState(() => _end = m),
+          ),
+          if (blocked != null)
+            Padding(
+              padding: const EdgeInsets.only(top: Spacing.xs),
+              child: Text(
+                blocked,
+                style: text.bodySmall?.copyWith(
+                  color: context.appColors.dangerText,
+                ),
+              ),
+            ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          key: TaskEditorPage.stageTimeClearKey,
+          onPressed: () =>
+              Navigator.of(context).pop(const _StageTimeResult(null, null)),
+          child: const Text('不定时间'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          key: TaskEditorPage.stageTimeConfirmKey,
+          onPressed: blocked != null
+              ? null
+              : () => Navigator.of(context).pop(
+                  _StageTimeResult(
+                    offsetFrom(widget.anchor, _start),
+                    offsetFrom(_start, _end),
+                  ),
+                ),
+          child: const Text('确定'),
+        ),
+      ],
+    );
+  }
+}
+
+/// 对话框里的一行：日期 +（非全天时）时刻。
+class _MomentRow extends StatelessWidget {
+  const _MomentRow({
+    required this.dateKey,
+    required this.timeKey,
+    required this.label,
+    required this.moment,
+    required this.withTime,
+    required this.onChanged,
+  });
+
+  final Key dateKey;
+  final Key timeKey;
+  final String label;
+  final DateAndMinute moment;
+  final bool withTime;
+  final ValueChanged<DateAndMinute> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final d = moment.date;
+    return Row(
+      children: [
+        SizedBox(
+          width: Spacing.xxxl,
+          child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+        ),
+        TextButton(
+          key: dateKey,
+          onPressed: () async {
+            final picked = await showDatePicker(
+              context: context,
+              initialDate: DateTime(d.year, d.month, d.day),
+              firstDate: DateTime(d.year - 5),
+              lastDate: DateTime(d.year + 10),
+            );
+            if (picked != null) {
+              onChanged(
+                DateAndMinute(
+                  PlanDate(picked.year, picked.month, picked.day),
+                  moment.minute,
+                ),
+              );
+            }
+          },
+          child: Text('$d'),
+        ),
+        if (withTime)
+          TextButton(
+            key: timeKey,
+            onPressed: () async {
+              final picked = await showTimePicker(
+                context: context,
+                initialTime: TimeOfDay(
+                  hour: moment.minute.value ~/ 60,
+                  minute: moment.minute.value % 60,
+                ),
+              );
+              if (picked != null) {
+                onChanged(
+                  DateAndMinute(
+                    moment.date,
+                    MinuteOfDay.of(picked.hour, picked.minute),
+                  ),
+                );
+              }
+            },
+            child: Text(_hhmm(moment.minute)),
+          ),
+      ],
     );
   }
 }
@@ -463,9 +772,18 @@ class _CategoryPicker extends ConsumerWidget {
 /// 拖拽在两三个阶段时收益很小，而它要处理滚动冲突与无障碍替代操作。
 /// TODO(M3): 换成 ReorderableListView，并保留箭头作为读屏用户的替代路径。
 class _StageSection extends StatelessWidget {
-  const _StageSection({required this.draft, required this.controller});
+  const _StageSection({
+    required this.draft,
+    required this.today,
+    required this.controller,
+  });
 
   final TaskDraft draft;
+
+  /// 本地墙钟的今天。任务还没定日期时，阶段时间以它为锚 ——
+  /// 与 `setStageTime` 补进草稿的是同一天。
+  final PlanDate today;
+
   final TaskEditorController controller;
 
   @override
@@ -481,34 +799,54 @@ class _StageSection extends StatelessWidget {
         for (final (i, stage) in draft.stages.indexed)
           Padding(
             padding: const EdgeInsets.only(bottom: Spacing.xs),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 序号跟着**列表位置**走，不是 orderIndex —— 编辑期间
-                // 后者还没算出来（保存时才转成连续的）。
-                SizedBox(
-                  width: Spacing.xxl,
-                  child: Text('${i + 1}.', style: text.bodySmall),
+                Row(
+                  children: [
+                    // 序号跟着**列表位置**走，不是 orderIndex —— 编辑期间
+                    // 后者还没算出来（保存时才转成连续的）。
+                    SizedBox(
+                      width: Spacing.xxl,
+                      child: Text('${i + 1}.', style: text.bodySmall),
+                    ),
+                    Expanded(
+                      child: TextField(
+                        key: TaskEditorPage.stageFieldKey(stage.id),
+                        decoration: const InputDecoration(hintText: '这一步做什么'),
+                        onChanged: (v) => controller.setStageTitle(stage.id, v),
+                      ),
+                    ),
+                    IconButton(
+                      key: TaskEditorPage.stageUpKey(stage.id),
+                      onPressed: i == 0
+                          ? null
+                          : () => controller.moveStageUp(stage.id),
+                      icon: const Icon(Icons.arrow_upward),
+                      tooltip: '上移',
+                    ),
+                    IconButton(
+                      key: TaskEditorPage.stageRemoveKey(stage.id),
+                      onPressed: () => controller.removeStage(stage.id),
+                      icon: const Icon(Icons.close),
+                      tooltip: '删除这个阶段',
+                    ),
+                  ],
                 ),
-                Expanded(
-                  child: TextField(
-                    key: TaskEditorPage.stageFieldKey(stage.id),
-                    decoration: const InputDecoration(hintText: '这一步做什么'),
-                    onChanged: (v) => controller.setStageTitle(stage.id, v),
+                // 时间收在标题下面一行的小按钮里：大多数阶段只是
+                // 「先做这个、再做那个」，没有具体时刻。
+                Padding(
+                  padding: const EdgeInsets.only(left: Spacing.xxl),
+                  child: _StageTimeButton(
+                    stage: stage,
+                    anchor: _stageAnchor(draft, today),
+                    isAllDay: draft.isAllDay,
+                    onChanged: (start, duration) => controller.setStageTime(
+                      stage.id,
+                      startOffsetMinutes: start,
+                      durationMinutes: duration,
+                    ),
                   ),
-                ),
-                IconButton(
-                  key: TaskEditorPage.stageUpKey(stage.id),
-                  onPressed: i == 0
-                      ? null
-                      : () => controller.moveStageUp(stage.id),
-                  icon: const Icon(Icons.arrow_upward),
-                  tooltip: '上移',
-                ),
-                IconButton(
-                  key: TaskEditorPage.stageRemoveKey(stage.id),
-                  onPressed: () => controller.removeStage(stage.id),
-                  icon: const Icon(Icons.close),
-                  tooltip: '删除这个阶段',
                 ),
               ],
             ),

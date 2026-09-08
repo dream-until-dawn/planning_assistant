@@ -407,6 +407,121 @@ void main() {
     });
   });
 
+  group('阶段的时间段（FR-TASK-02：每阶段有独立时间段）', () {
+    /// 建一条两阶段任务，并把标题填好。返回两个阶段行的 id。
+    Future<List<String>> twoStages(WidgetTester tester) async {
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '写周报');
+      await tester.pump();
+      // 关掉全天才有「几点」可谈。
+      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+
+      final ids = <String>[];
+      for (final title in ['收集素材', '整理成稿']) {
+        await tapVisible(tester, TaskEditorPage.addStageKey);
+        final field = find
+            .byWidgetPredicate(
+              (w) =>
+                  w is TextField &&
+                  (w.key as ValueKey<String>?)?.value.startsWith(
+                        'editor-stage-',
+                      ) ==
+                      true,
+            )
+            .last;
+        await tester.ensureVisible(field);
+        await tester.pumpAndSettle();
+        await tester.enterText(field, title);
+        await tester.pumpAndSettle();
+        ids.add(
+          ((tester.widget(field) as TextField).key! as ValueKey<String>).value
+              .replaceFirst('editor-stage-', ''),
+        );
+      }
+      return ids;
+    }
+
+    testAppWidgets('给第二个阶段定时间 → 偏移与时长落库', (tester) async {
+      final harness = await _pumpApp(tester);
+      final ids = await twoStages(tester);
+
+      // 默认对话框给的是「任务开始那一刻起、一小时」——
+      // 直接确定，验的是这条默认值真的能用（而不是四个空栏位）。
+      await tapVisible(tester, TaskEditorPage.stageTimeKey(ids[1]));
+      await tester.tap(find.byKey(TaskEditorPage.stageTimeConfirmKey));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      final stages = await harness.db.select(harness.db.stages).get();
+      expect(stages, hasLength(2));
+      final timed = stages.firstWhere((s) => s.id == ids[1]);
+      final untimed = stages.firstWhere((s) => s.id == ids[0]);
+
+      expect(timed.startOffsetMinutes, 0, reason: '从任务开始那一刻起');
+      expect(timed.durationMinutes, 60, reason: '默认一小时');
+      // 对照：**没设的那个阶段不许被顺手填上** ——
+      // 「给所有阶段都写个默认时长」也能让上面两条绿。
+      expect(untimed.startOffsetMinutes, isNull);
+      expect(untimed.durationMinutes, isNull);
+    });
+
+    testAppWidgets('「不定时间」把已设的清掉', (tester) async {
+      final harness = await _pumpApp(tester);
+      final ids = await twoStages(tester);
+
+      await tapVisible(tester, TaskEditorPage.stageTimeKey(ids[0]));
+      await tester.tap(find.byKey(TaskEditorPage.stageTimeConfirmKey));
+      await tester.pumpAndSettle();
+      // 再打开，选「不定时间」。
+      await tapVisible(tester, TaskEditorPage.stageTimeKey(ids[0]));
+      await tester.tap(find.byKey(TaskEditorPage.stageTimeClearKey));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      final stage = (await harness.db.select(harness.db.stages).get())
+          .firstWhere((s) => s.id == ids[0]);
+      expect(stage.startOffsetMinutes, isNull, reason: '清了就该真的清掉');
+      expect(stage.durationMinutes, isNull, reason: '时长不该留着 —— 那是一段悬空的长度');
+    });
+
+    testAppWidgets('结束早于开始时确定按钮点不动', (tester) async {
+      // 算出来会是负时长 —— 在甘特图上是一根往回长的条，
+      // 而它能安安静静地落库，之后没有任何界面提示不对。
+      await _pumpApp(tester);
+      final ids = await twoStages(tester);
+
+      await tapVisible(tester, TaskEditorPage.stageTimeKey(ids[0]));
+      // 把结束日期往前挪一天。
+      await tester.tap(find.byKey(TaskEditorPage.stageTimeEndDateKey));
+      await tester.pumpAndSettle();
+      // 日期选择器里点「上一个月」再选 1 号，稳妥地落在开始之前。
+      await tester.tap(find.byTooltip('上个月'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('1').first);
+      await tester.pumpAndSettle();
+      // **不能直接 find.text('确定')**：阶段时间对话框自己也有一个，
+      // 两个一起匹配到会报「ambiguously found multiple」。
+      await tester.tap(
+        find.descendant(
+          of: find.byType(DatePickerDialog),
+          matching: find.text('确定'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('结束不能早于开始'), findsOneWidget);
+      final confirm = tester.widget<TextButton>(
+        find.byKey(TaskEditorPage.stageTimeConfirmKey),
+      );
+      expect(confirm.onPressed, isNull, reason: '不合法时不该能确定');
+    });
+  });
+
   group('计划时间段（FR-TASK-01：可选的开始与结束）', () {
     testAppWidgets('开结束开关 → 选日期与时刻 → 一起落库', (tester) async {
       final harness = await _pumpApp(tester);
