@@ -28,6 +28,7 @@ final class TaskCardData {
     this.stageProgress,
     this.isDone = false,
     this.isOverdue = false,
+    this.isRecurring = false,
   });
 
   final String title;
@@ -45,6 +46,13 @@ final class TaskCardData {
 
   final bool isDone;
   final bool isOverdue;
+
+  /// 这条任务会重复（FR-TASK-03）。
+  ///
+  /// **必须有可见标记**：重复任务与单次任务在卡片上本来一模一样，
+  /// 而它们的完成、删除、修改语义完全不同 —— 分不出来的话，
+  /// 用户会以为自己删掉的是一次，实际删的是整条规则。
+  final bool isRecurring;
 }
 
 /// 任务卡片。
@@ -63,6 +71,12 @@ class TaskCard extends StatelessWidget {
   /// widget 测试默认不建语义树，`bySemanticsLabel` 找不到东西，
   /// 而为了量个尺寸就去开语义树是把两件事混在一起。
   static const Key doneButtonKey = ValueKey('task-card-done-button');
+
+  /// 重复标记的图标。
+  ///
+  /// 图标之外**副信息里还有文字**（「每周一、三、五」），
+  /// 不靠图标单独承载（§8.1）。
+  static const IconData recurringIcon = Icons.repeat;
 
   /// 左侧分类色条宽度（§8.1）。
   static const double stripeWidth = 3;
@@ -236,11 +250,26 @@ class _Body extends StatelessWidget {
           ),
         ),
         const SizedBox(height: Spacing.xs),
-        Text(
-          subtitle,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: text.bodySmall,
+        Row(
+          children: [
+            if (data.isRecurring) ...[
+              Icon(
+                TaskCard.recurringIcon,
+                size: TypeScale.captionSize,
+                // 与副信息同一个层级：它是补充说明，不是警示。
+                color: text.bodySmall?.color,
+              ),
+              const SizedBox(width: Spacing.xxs),
+            ],
+            Flexible(
+              child: Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: text.bodySmall,
+              ),
+            ),
+          ],
         ),
       ],
     );

@@ -201,14 +201,36 @@ TaskCardData _toCardData(
 
   return TaskCardData(
     title: task.title,
-    categoryName: category?.name ?? Uncategorized.name,
+    // 重复任务的副信息里带上规则本身 —— 图标是辅助，
+    // 文字才是「颜色/图标不单独承载信息」那条要求的落点（§8.1）。
+    categoryName: task.isRecurring
+        ? '${category?.name ?? Uncategorized.name} · ${_describeRule(task)}'
+        : (category?.name ?? Uncategorized.name),
     categoryColor: category == null
         ? Uncategorized.color
         : Color(category.colorArgb),
     timeLabel: _timeLabelOf(task),
     stageProgress: _progressOf(stages),
+    isRecurring: task.isRecurring,
     isDone: task.status == TaskStatus.done,
   );
+}
+
+/// 把 RRULE 说成人话。
+///
+/// **只认界面自己造得出来的那几种**（`RecurrenceDraft` 覆盖的范围）。
+/// 认不出来时退回一句「重复」——库里可能有导入进来的、更复杂的规则，
+/// 那时说「重复」是对的，而硬猜一个描述会说错。
+String _describeRule(Task task) {
+  final rule = task.recurrence?.canonical ?? '';
+  final freq = switch (true) {
+    _ when rule.contains('FREQ=DAILY') => '每天',
+    _ when rule.contains('FREQ=WEEKLY') => '每周',
+    _ when rule.contains('FREQ=MONTHLY') => '每月',
+    _ when rule.contains('FREQ=YEARLY') => '每年',
+    _ => '重复',
+  };
+  return freq;
 }
 
 /// 阶段进度 = 已完成阶段数 / 总数（FR-TASK-02）。

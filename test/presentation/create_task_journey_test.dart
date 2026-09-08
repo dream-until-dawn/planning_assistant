@@ -17,6 +17,7 @@ import 'package:planning_assistant/design/components/app_chip.dart';
 import 'package:planning_assistant/design/components/empty_state.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/task/application/recurrence_draft.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 
 import '../support/app_harness.dart';
@@ -430,6 +431,98 @@ void main() {
       await tester.pump();
 
       expect(find.byKey(TaskEditorPage.blockedReasonKey), findsNothing);
+
+      await disposeTree(tester);
+    });
+  });
+
+  group('重复任务（FR-TASK-03/04）', () {
+    testWidgets('建一条每周一三五的任务，规则以规范形落库', (tester) async {
+      final harness = await _pumpApp(tester);
+
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
+      await tester.pump();
+
+      await tester.tap(find.byKey(TaskEditorPage.recurrenceSwitchKey));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(TaskEditorPage.frequencyKey(RecurrenceFrequency.weekly)),
+      );
+      await tester.pumpAndSettle();
+      for (final d in [Weekday.monday, Weekday.wednesday, Weekday.friday]) {
+        await tester.tap(find.byKey(TaskEditorPage.weekdayKey(d)));
+        await tester.pumpAndSettle();
+      }
+
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      final task = (await harness.db.select(harness.db.tasks).get()).single;
+      expect(task.recurrenceRule, 'RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR');
+      // 打开重复必须补上日期 —— RRULE 的展开以 DTSTART 为锚点。
+      expect(task.planDate, isNotNull);
+
+      await disposeTree(tester);
+    });
+
+    testWidgets('卡片上看得出这条会重复', (tester) async {
+      // 重复任务与单次任务在卡片上本来一模一样，而它们的完成、删除、
+      // 修改语义完全不同 —— 分不出来的话，用户会以为删的是一次。
+      await _pumpApp(tester);
+
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
+      await tester.pump();
+      await tester.tap(find.byKey(TaskEditorPage.recurrenceSwitchKey));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      // 图标 + 文字都有（§8.1：不靠图标单独承载）。
+      expect(find.byIcon(TaskCard.recurringIcon), findsOneWidget);
+      expect(find.textContaining('每天'), findsOneWidget);
+
+      await disposeTree(tester);
+    });
+
+    testWidgets('对照组：不重复的任务没有那个标记', (tester) async {
+      await _pumpApp(tester);
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '买菜');
+      await tester.pump();
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(TaskCard.recurringIcon), findsNothing);
+
+      await disposeTree(tester);
+    });
+
+    testWidgets('「到某天为止」没选日期时不给存', (tester) async {
+      // 存下去会得到一条永不结束的规则，而用户以为它会停。
+      final harness = await _pumpApp(tester);
+
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
+      await tester.pump();
+      await tester.tap(find.byKey(TaskEditorPage.recurrenceSwitchKey));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(TaskEditorPage.endModeKey(RecurrenceEndMode.until)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(TaskEditorPage.blockedReasonKey), findsOneWidget);
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(TaskEditorPage), findsOneWidget);
+      expect(await harness.db.select(harness.db.tasks).get(), isEmpty);
 
       await disposeTree(tester);
     });

@@ -5,8 +5,13 @@
 /// M2 验收还有一条「从点开 App 到任务落库 ≤ 3 次点击」：
 /// 悬浮加号 → 打字 → 保存，正好三下。
 ///
-/// 阶段与重复两种形态（FR-TASK-02/03）还没做，
-/// 这里也**不放入口占位** —— 点了没反应的开关比没有更糟。
+/// 三种形态都在这里：单项（FR-TASK-01）、阶段（FR-TASK-02）、
+/// 重复（FR-TASK-03/04）。后两者默认收着 —— 大多数任务是单项的，
+/// 一进来摊开全部选项，是把少数情形的成本摊给所有人。
+///
+/// **单次例外与「本次及以后」（FR-TASK-05/06）还没做**：
+/// 那需要写 `OccurrenceOverride`，而重复任务在列表里还没有展开成
+/// 多次发生 —— 没有「某一次」可指的时候，「改某一次」无从谈起。
 library;
 
 import 'package:flutter/material.dart';
@@ -20,6 +25,7 @@ import '../../../design/components/app_chip.dart';
 import '../../../design/theme/app_theme.dart';
 import '../../../design/tokens/dimensions.dart';
 import '../../views/shared/application/category_providers.dart';
+import '../application/recurrence_draft.dart';
 import '../application/task_editor_controller.dart';
 
 class TaskEditorPage extends ConsumerStatefulWidget {
@@ -44,6 +50,16 @@ class TaskEditorPage extends ConsumerStatefulWidget {
 
   /// 「为什么不能存」那句提示。
   static const Key blockedReasonKey = ValueKey('editor-blocked');
+
+  /// 重复区。
+  static const Key recurrenceSwitchKey = ValueKey('editor-repeat');
+  static const Key recurrenceSummaryKey = ValueKey('editor-repeat-summary');
+
+  static Key frequencyKey(RecurrenceFrequency f) =>
+      ValueKey('editor-repeat-freq-${f.name}');
+  static Key weekdayKey(Weekday d) => ValueKey('editor-repeat-day-${d.name}');
+  static Key endModeKey(RecurrenceEndMode m) =>
+      ValueKey('editor-repeat-end-${m.name}');
 
   static Key stageFieldKey(String stageId) => ValueKey('editor-stage-$stageId');
   static Key stageRemoveKey(String stageId) =>
@@ -153,26 +169,47 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
                 onPick: controller.setStartMinute,
               ),
             const SizedBox(height: Spacing.xl),
+            _RecurrenceSection(draft: draft.recurrence, controller: controller),
+            const SizedBox(height: Spacing.xl),
             _StageSection(draft: draft, controller: controller),
-            if (draft.blockedReason != null) ...[
-              const SizedBox(height: Spacing.sm),
-              Text(
-                draft.blockedReason!,
-                key: TaskEditorPage.blockedReasonKey,
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: context.appColors.dangerText),
+            const SizedBox(height: Spacing.xxxl),
+          ],
+        ),
+      ),
+      // **保存固定在底部，不跟着表单滚。**
+      //
+      // 一度放在表单末尾。加上重复与阶段两区之后表单超过一屏，
+      // 按钮被埋进滚动区外 —— `ListView` 甚至不会构建它
+      // （测试里表现为「找不到 editor-save」）。
+      //
+      // 更要紧的是 M2 那条「≤3 次点击落库」：主操作要先滚动才够得着，
+      // 那条验收就不成立了。
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(Spacing.pageHorizontal),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (draft.blockedReason != null) ...[
+                Text(
+                  draft.blockedReason!,
+                  key: TaskEditorPage.blockedReasonKey,
+                  style: Theme.of(context).textTheme.bodySmall
+                      ?.copyWith(color: colors.dangerText),
+                ),
+                const SizedBox(height: Spacing.sm),
+              ],
+              AppButton(
+                key: TaskEditorPage.saveButtonKey,
+                label: _saving ? '保存中…' : '保存',
+                expand: true,
+                // 标题为空时禁用，而不是让用户点了再弹错 ——
+                // 「能不能存」是当场看得见的事，不该等到点下去才说。
+                onPressed: draft.canSave && !_saving ? _save : null,
               ),
             ],
-            const SizedBox(height: Spacing.xxxl),
-            AppButton(
-              key: TaskEditorPage.saveButtonKey,
-              label: _saving ? '保存中…' : '保存',
-              expand: true,
-              // 标题为空时禁用，而不是让用户点了再弹错 ——
-              // 「能不能存」是当场看得见的事，不该等到点下去才说。
-              onPressed: draft.canSave && !_saving ? _save : null,
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -376,4 +413,107 @@ class _StageSection extends StatelessWidget {
       ],
     );
   }
+}
+
+/// 重复区（FR-TASK-03/04）。
+///
+/// 关着的时候只有一个开关 —— 大多数任务不重复，一进来摊开一屏选项
+/// 是把少数情形的成本摊给所有人。
+class _RecurrenceSection extends StatelessWidget {
+  const _RecurrenceSection({required this.draft, required this.controller});
+
+  final RecurrenceDraft draft;
+  final TaskEditorController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile(
+          key: TaskEditorPage.recurrenceSwitchKey,
+          contentPadding: EdgeInsets.zero,
+          title: const Text('重复'),
+          // 关着时也显示一句「不重复」，而不是留空 —— 留空的话
+          // 用户分不清「不重复」与「这个功能还没做」。
+          subtitle: Text(
+            draft.describe(),
+            key: TaskEditorPage.recurrenceSummaryKey,
+            style: text.bodySmall,
+          ),
+          value: draft.enabled,
+          onChanged: (v) =>
+              controller.setRecurrence(draft.copyWith(enabled: v)),
+        ),
+        if (draft.enabled) ...[
+          const SizedBox(height: Spacing.sm),
+          _ChipRow(
+            options: [
+              for (final f in RecurrenceFrequency.values)
+                (
+                  TaskEditorPage.frequencyKey(f),
+                  f.label,
+                  draft.frequency == f,
+                  () => controller.setRecurrence(draft.copyWith(frequency: f)),
+                ),
+            ],
+          ),
+          if (draft.frequency == RecurrenceFrequency.weekly) ...[
+            const SizedBox(height: Spacing.sm),
+            Text('周几（不选＝跟开始日期同一天）', style: text.bodySmall),
+            const SizedBox(height: Spacing.xs),
+            _ChipRow(
+              options: [
+                for (final d in Weekday.values)
+                  (
+                    TaskEditorPage.weekdayKey(d),
+                    d.label,
+                    draft.weekdays.contains(d),
+                    () => controller.setRecurrence(draft.toggleWeekday(d)),
+                  ),
+              ],
+            ),
+          ],
+          const SizedBox(height: Spacing.sm),
+          Text('结束条件', style: text.bodySmall),
+          const SizedBox(height: Spacing.xs),
+          _ChipRow(
+            options: [
+              for (final m in RecurrenceEndMode.values)
+                (
+                  TaskEditorPage.endModeKey(m),
+                  m.label,
+                  draft.endMode == m,
+                  () => controller.setRecurrence(draft.copyWith(endMode: m)),
+                ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// 一排可选中的 Chip。`(key, 文案, 是否选中, 点击)`。
+class _ChipRow extends StatelessWidget {
+  const _ChipRow({required this.options});
+
+  final List<(Key, String, bool, VoidCallback)> options;
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: Spacing.sm,
+    runSpacing: Spacing.xs,
+    children: [
+      for (final (key, label, selected, onTap) in options)
+        SelectableChip(
+          key: key,
+          label: label,
+          selected: selected,
+          onSelected: (_) => onTap(),
+        ),
+    ],
+  );
 }

@@ -16,6 +16,8 @@ import '../../../core/time/minute_of_day.dart';
 import '../../../core/time/plan_date.dart';
 import '../../../domain/commands/task_command.dart';
 import '../../../domain/entities/task.dart';
+import '../../../domain/value_objects/recurrence.dart';
+import 'recurrence_draft.dart';
 
 /// 表单里的一个阶段（FR-TASK-02）。
 ///
@@ -50,6 +52,7 @@ final class TaskDraft {
     this.startMinute,
     this.categoryId,
     this.stages = const [],
+    this.recurrence = const RecurrenceDraft(),
   });
 
   final String title;
@@ -82,6 +85,13 @@ final class TaskDraft {
 
   bool get isStaged => filledStages.length >= 2;
 
+  /// 重复规则（FR-TASK-03/04）。
+  final RecurrenceDraft recurrence;
+
+  /// 重复任务**必须有日期**：RRULE 的展开以 DTSTART 为锚点，
+  /// 没有起点就无从展开。与「非全天必须有日期」是同一类约束。
+  bool get needsDateForRecurrence => recurrence.enabled && planDate == null;
+
   /// 能不能保存。**只要求标题非空**（FR-TASK-01：仅填标题即可保存）。
   ///
   /// 用 `trim()`：一串空格不是标题。不 trim 的话用户能存出一条
@@ -94,6 +104,7 @@ final class TaskDraft {
   bool get canSave {
     if (title.trim().isEmpty) return false;
     // 一个阶段都没添 = 单项任务，随便存。
+    if (!recurrence.isValid) return false;
     if (stages.isEmpty) return true;
     // 添了就得够两个（0 也行，那是把加出来的空行全删了）。
     final filled = filledStages.length;
@@ -106,7 +117,7 @@ final class TaskDraft {
     if (stages.isNotEmpty && filledStages.length == 1) {
       return '阶段事项至少要两个阶段';
     }
-    return null;
+    return recurrence.blockedReason;
   }
 
   TaskDraft copyWith({
@@ -117,6 +128,7 @@ final class TaskDraft {
     Object? startMinute = unset,
     Object? categoryId = unset,
     List<StageDraft>? stages,
+    RecurrenceDraft? recurrence,
   }) => TaskDraft(
     title: title ?? this.title,
     note: note ?? this.note,
@@ -131,6 +143,7 @@ final class TaskDraft {
     startMinute: patch(startMinute, this.startMinute),
     categoryId: patch(categoryId, this.categoryId),
     stages: stages ?? this.stages,
+    recurrence: recurrence ?? this.recurrence,
   );
 }
 
@@ -178,6 +191,17 @@ final class TaskEditorController extends Notifier<TaskDraft> {
           planDate: state.planDate ?? _today(),
         );
 
+  void setRecurrence(RecurrenceDraft value) {
+    // 打开重复时**没有日期就补今天** —— RRULE 的展开以 DTSTART 为锚点，
+    // 没有起点就无从展开。与「关掉全天补今天」是同一条道理，
+    // 而且补得看得见，用户不同意可以当场改。
+    final needsDate = value.enabled && state.planDate == null;
+    state = state.copyWith(
+      recurrence: value,
+      planDate: needsDate ? _today() : state.planDate,
+    );
+  }
+
   /// 加一个空阶段行。
   void addStage() => state = state.copyWith(
     stages: [
@@ -221,6 +245,12 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     state = state.copyWith(stages: list);
   }
 
+  /// 草稿里的重复规则 → 库里存的规范形串。
+  String? _canonicalRule(TaskDraft draft) {
+    final raw = draft.recurrence.toRrule();
+    return raw == null ? null : Recurrence.parse(raw).canonical;
+  }
+
   /// 保存。返回新任务的 ID。
   ///
   /// 调用方应先看 [TaskDraft.canSave]；这里再挡一道，
@@ -256,6 +286,10 @@ final class TaskEditorController extends Notifier<TaskDraft> {
             // null 即「未分类」（settings-spec §3.0）—— 库里没有那一行，
             // 所以这里原样传，不做任何「空则填默认分类」的转换。
             categoryId: draft.categoryId,
+            // 存**规范形**：拼出来的串不保证是规范形，而 data-model
+            // 要求库里存的是规范形（否则同一条规则可能有两种写法，
+            // 往返与同步都会分叉）。
+            recurrenceRule: _canonicalRule(draft),
             isAllDay: draft.isAllDay,
             planDate: planDate,
             startMinute: draft.isAllDay ? null : draft.startMinute,
