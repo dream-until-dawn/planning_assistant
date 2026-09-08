@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
+import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
 import 'package:planning_assistant/design/tokens/dimensions.dart';
 import 'package:planning_assistant/domain/entities/category.dart';
@@ -55,6 +56,9 @@ Widget _withSwitcher(Brightness brightness, double scale) => _wrap(
   ),
 );
 
+/// golden 里的「今天」。2026-09-08 是周二 —— 让「本周」两侧都有东西。
+const _today = PlanDate(2026, 9, 8);
+
 /// golden 用的分类，与 `kDefaultCategories` 的固定 ID 对齐。
 const _categories = [
   Category(
@@ -94,6 +98,7 @@ List<Task> _denseTasks() => [
     // 挂真实分类，否则这张图里色条永远是「未分类」的中性灰 ——
     // 那样 §2.5 那套分类调色板一次都没进过 golden。
     categoryId: 'cat-default-home',
+    planDate: _today,
   ),
   Task(
     id: 't2',
@@ -102,6 +107,7 @@ List<Task> _denseTasks() => [
     timeZoneId: 'Asia/Shanghai',
     categoryId: 'cat-default-briefcase',
     startMinute: MinuteOfDay.of(9, 30),
+    planDate: _today,
   ),
   Task(
     id: 't3',
@@ -110,6 +116,7 @@ List<Task> _denseTasks() => [
     timeZoneId: 'Asia/Shanghai',
     status: TaskStatus.done,
     startMinute: MinuteOfDay.of(10, 0),
+    planDate: _today,
   ),
   Task(
     id: 't4',
@@ -117,6 +124,8 @@ List<Task> _denseTasks() => [
     kind: TaskKind.single,
     timeZoneId: 'Asia/Shanghai',
     startMinute: MinuteOfDay.of(23, 59),
+    // 逾期一条 —— 那个组默认折叠，图里要能看见「折叠 + 计数」长什么样。
+    planDate: const PlanDate(2026, 9, 1),
   ),
   const Task(
     id: 't5',
@@ -125,6 +134,7 @@ List<Task> _denseTasks() => [
     timeZoneId: 'Asia/Shanghai',
     categoryId: 'cat-default-book',
     isAllDay: true,
+    planDate: PlanDate(2026, 9, 9),
   ),
 ];
 
@@ -164,6 +174,9 @@ Widget _wrap(
     // 分类同样直接覆盖 —— 理由同上：这张图要的是一份确定的数据，
     // 仓库怎么排序、怎么过滤墓碑与它无关。
     categoriesProvider.overrideWith((ref) => Stream.value(_categories)),
+    // **「今天」必须钉死。** 不钉的话日期分组的标题会随着跑测试的日子变，
+    // 今天拍的图明天就红 —— 而那种红看不出是代码变了还是日历翻页了。
+    todayProvider.overrideWithValue(_today),
   ],
   child: MaterialApp(
     debugShowCheckedModeBanner: false,
