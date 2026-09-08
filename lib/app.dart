@@ -34,6 +34,7 @@ import 'features/settings/presentation/settings_page.dart';
 import 'features/shell/presentation/app_shell.dart';
 import 'features/task/application/task_editor_controller.dart';
 import 'features/task/presentation/task_editor_page.dart';
+import 'features/trash/presentation/trash_page.dart';
 import 'features/views/calendar/presentation/calendar_page.dart';
 import 'features/views/gantt/presentation/gantt_view.dart';
 import 'features/views/shared/application/view_kind.dart';
@@ -98,6 +99,9 @@ abstract final class AppRoutes {
   /// 返回手势该回到设置，不是回到列表。
   static const String categories = '/settings/categories';
 
+  /// 回收站（FR-TASK-08）。同样是设置页的二级页。
+  static const String trash = '/settings/trash';
+
   /// 编辑一条已有任务。
   ///
   /// [from] 非空时是「本次及以后」的分割点（FR-TASK-06）——
@@ -117,11 +121,16 @@ GoRouter buildAppRouter() => GoRouter(
           path: 'settings',
           builder: (context, state) => SettingsPage(
             onOpenCategories: () => context.go(AppRoutes.categories),
+            onOpenTrash: () => context.go(AppRoutes.trash),
           ),
           routes: [
             GoRoute(
               path: 'categories',
               builder: (context, state) => const CategoryManagerPage(),
+            ),
+            GoRoute(
+              path: 'trash',
+              builder: (context, state) => const TrashPage(),
             ),
           ],
         ),
@@ -146,7 +155,12 @@ GoRouter buildAppRouter() => GoRouter(
                   from == null ? null : OccurrenceKey.parse(from),
                 ),
               ],
-              child: TaskEditorPage(onSaved: (_) => context.pop()),
+              child: TaskEditorPage(
+                onSaved: (_) => context.pop(),
+                // 删完也回上一页。撤销的 Snackbar 由编辑页自己弹 ——
+                // 它拿的是 pop 之前的 messenger，所以弹得出来。
+                onDeleted: context.pop,
+              ),
             );
           },
         ),

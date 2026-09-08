@@ -26,20 +26,32 @@ import '../../../design/components/app_chip.dart';
 import '../../../design/theme/app_theme.dart';
 import '../../../design/tokens/dimensions.dart';
 import '../../../domain/entities/task.dart';
+import '../../trash/application/trash_providers.dart';
 import '../../views/shared/application/category_providers.dart';
 import '../application/recurrence_draft.dart';
 import '../application/stage_time.dart';
 import '../application/task_editor_controller.dart';
 
 class TaskEditorPage extends ConsumerStatefulWidget {
-  const TaskEditorPage({this.onSaved, super.key});
+  const TaskEditorPage({this.onSaved, this.onDeleted, super.key});
 
   /// 保存成功后调用，参数是新任务的 ID。由组合根接上返回上一页。
   final void Function(String taskId)? onSaved;
 
+  /// 删除之后调用。为 null 时不显示删除入口 ——
+  /// 一个点了没反应的删除按钮比没有更糟。
+  final VoidCallback? onDeleted;
+
   static const Key titleFieldKey = ValueKey('editor-title');
   static const Key noteFieldKey = ValueKey('editor-note');
   static const Key saveButtonKey = ValueKey('editor-save');
+
+  /// 删除（FR-TASK-08）。**只在编辑已有任务时出现** ——
+  /// 新建页上删什么都没有。
+  ///
+  /// 这个入口是补出来的：`DeleteTaskCommand` 在领域层一直都在、也测过，
+  /// 而界面上**没有任何地方能删一条任务**。
+  static const Key deleteButtonKey = ValueKey('editor-delete');
   static const Key allDaySwitchKey = ValueKey('editor-all-day');
   static const Key dateFieldKey = ValueKey('editor-date');
   static const Key timeFieldKey = ValueKey('editor-time');
@@ -177,6 +189,30 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
     }
   }
 
+  /// 删掉这条任务（FR-TASK-08）。
+  ///
+  /// **软删除 + 一条撤销** —— 删除是最需要反悔的操作，
+  /// 而「再点一次删除」不是撤销。撤销闭包由动作本身给出
+  /// （同列表那几个滑动动作），界面层不自己算怎么恢复。
+  ///
+  /// 不弹「确定要删吗」的二次确认：有撤销就不需要拦一道，
+  /// 拦一道反而让日常操作多一次点击。
+  Future<void> _delete(TaskDraft draft) async {
+    final id = draft.editingTaskId;
+    if (id == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final undo = await ref.read(trashActionsProvider).delete(id);
+    widget.onDeleted?.call();
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: const Text('已移到回收站'),
+          action: SnackBarAction(label: '撤销', onPressed: undo),
+        ),
+      );
+  }
+
   /// 「今天」经时钟 + 时区换算器拿，**不用 `DateTime.now()`**。
   ///
   /// 分层守卫只扫 domain 与 feature application，presentation 不在射程内，
@@ -204,6 +240,15 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         title: Text(draft.isEditing ? '编辑任务' : '新建任务'),
+        actions: [
+          if (draft.isEditing && widget.onDeleted != null)
+            IconButton(
+              key: TaskEditorPage.deleteButtonKey,
+              icon: const Icon(Icons.delete_outline),
+              tooltip: '删除',
+              onPressed: () => _delete(draft),
+            ),
+        ],
       ),
       body: SafeArea(
         child: ListView(
