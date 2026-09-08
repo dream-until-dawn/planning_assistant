@@ -117,9 +117,31 @@ class GanttPainter extends CustomPainter {
       Paint()..color = barColor.withValues(alpha: 0.20),
     );
 
-    for (final segment in bar.segments) {
-      _paintSegment(canvas, segment, rect);
+    // 排了时间的阶段画成段；没排时间的只画一条进度填充（见
+    // `GanttBar.progress` 那段注释：把没排时间的阶段均分成段
+    // 等于编造「第一阶段在前三分之一结束」）。
+    if (bar.segments.isEmpty) {
+      _paintProgress(canvas, bar, rect);
+    } else {
+      for (final segment in bar.segments) {
+        _paintSegment(canvas, segment, rect);
+      }
     }
+  }
+
+  /// 没排时间的阶段：从上往下填一段，长度 = 已完成的比例。
+  void _paintProgress(Canvas canvas, GanttBar bar, Rect rect) {
+    final ratio = bar.progress;
+    if (ratio == null || ratio <= 0) return;
+    canvas.drawRect(
+      Rect.fromLTRB(
+        rect.left,
+        rect.top,
+        rect.right,
+        rect.top + rect.height * ratio,
+      ),
+      Paint()..color = doneColor.withValues(alpha: 0.7),
+    );
   }
 
   /// 阶段分段（§4.3、G-04）。

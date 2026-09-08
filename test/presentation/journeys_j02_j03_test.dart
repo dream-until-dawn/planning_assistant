@@ -1,0 +1,196 @@
+/// **J-02 与 J-03**（testing-strategy §8、roadmap M3 验收）。
+///
+/// | # | 旅程 |
+/// |---|---|
+/// | J-02 | 新增每周重复任务 → 完成本周这次 → 下周仍为待办 |
+/// | J-03 | 新增 3 阶段事项 → 完成第 2 阶段 → 甘特图分段正确 |
+///
+/// 与 J-01 一样走**真的链路**：真路由、真编辑器、真命令、真仓库、
+/// 真 SQLite（内存）。中间没有一处替身 —— 这两条要验的正是
+/// 「界面上做的事真的落到了库里，而且另一个视图读得出来」，
+/// 用替身等于自证。
+@TestOn('vm')
+library;
+
+import 'package:drift/drift.dart' show Value;
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:planning_assistant/app.dart';
+import 'package:planning_assistant/data/database/app_database.dart';
+import 'package:planning_assistant/design/components/task_card.dart';
+import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/task/application/recurrence_draft.dart';
+import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
+import 'package:planning_assistant/features/views/gantt/presentation/gantt_painter.dart';
+import 'package:planning_assistant/features/views/gantt/presentation/gantt_view.dart';
+import 'package:planning_assistant/features/views/shared/application/view_kind.dart';
+
+import '../support/app_harness.dart';
+
+Future<Harness> _pumpApp(WidgetTester tester) async {
+  await setScreenSize(tester, const Size(390, 844));
+  final harness = appHarness();
+  await tester.pumpWidget(
+    ProviderScope(overrides: harness.overrides, child: PlanningAssistantApp()),
+  );
+  await tester.pumpAndSettle();
+  return harness;
+}
+
+Future<void> _newTask(WidgetTester tester, String title) async {
+  await tester.tap(find.byKey(AppShell.fabKey));
+  await tester.pumpAndSettle();
+  await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), title);
+  await tester.pump();
+}
+
+Future<void> _save(WidgetTester tester) async {
+  await tapVisible(tester, TaskEditorPage.saveButtonKey);
+}
+
+Future<void> _switchTo(WidgetTester tester, ViewKind kind) async {
+  await tester.tap(find.byKey(AppShell.viewTabKey(kind)));
+  await tester.pumpAndSettle();
+}
+
+GanttPainter _painter(WidgetTester tester) =>
+    tester.widget<CustomPaint>(find.byKey(GanttView.canvasKey)).painter!
+        as GanttPainter;
+
+void main() {
+  testAppWidgets('J-02：每周重复 → 完成本周这次 → 下周那次仍是待办', (tester) async {
+    final harness = await _pumpApp(tester);
+
+    // ── 建一条每周重复的任务 ─────────────────────────────────
+    await _newTask(tester, '周报');
+    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+    await tapVisible(
+      tester,
+      TaskEditorPage.frequencyKey(RecurrenceFrequency.weekly),
+    );
+    await _save(tester);
+
+    expect(find.byType(TaskEditorPage), findsNothing, reason: '保存后该回到列表');
+
+    // 库里是**一条**任务加一条规则，不是一堆展开出来的行 ——
+    // 重复任务不预存实例（ADR-0004）。
+    final stored = await harness.db.select(harness.db.tasks).get();
+    expect(stored, hasLength(1));
+    expect(stored.single.recurrenceRule, contains('FREQ=WEEKLY'));
+
+    // ── 列表上只显示「下一次」（§0.2.2），把它勾掉 ──────────
+    expect(find.byType(TaskCard), findsOneWidget);
+    await tester.tap(find.byKey(TaskCard.doneButtonKey));
+    await tester.pumpAndSettle();
+
+    // ── 落库的是**一条例外**，不是把整条任务标完成 ─────────
+    //
+    // 这是 J-02 的要害。`tasks.status` 恒为 pending（data-model §4.3），
+    // 真实状态在 override 里 —— 写错的话「完成本周」会变成
+    // 「这条任务永远完成了」，下周那次再也不出现。
+    final overrides = await harness.db
+        .select(harness.db.occurrenceOverrides)
+        .get();
+    expect(overrides, hasLength(1));
+    expect(overrides.single.status, 'done');
+
+    final after = await harness.db.select(harness.db.tasks).get();
+    expect(after.single.status, 'pending', reason: '整条任务被标完成了 —— 下周那次不会再出现');
+
+    // ── 下周那次仍是待办 ─────────────────────────────────────
+    //
+    // 勾完之后列表上还留着划掉的那张卡（给撤销留时间，§8.1），
+    // 而**下一次**顶上来，所以现在是两张。
+    expect(find.byType(TaskCard), findsNWidgets(2));
+    final cards = tester.widgetList<TaskCard>(find.byType(TaskCard)).toList();
+    expect(
+      cards.where((c) => c.data.isDone),
+      hasLength(1),
+      reason: '划掉的那张不在了 —— 撤销就没机会了',
+    );
+    expect(
+      cards.where((c) => !c.data.isDone),
+      hasLength(1),
+      reason: '下一次没顶上来 —— 完成一次把整条规则做没了',
+    );
+  });
+
+  testAppWidgets('J-03：三阶段事项 → 完成第 2 阶段 → 甘特图分段正确', (tester) async {
+    final harness = await _pumpApp(tester);
+
+    // ── 建一条三阶段的任务 ───────────────────────────────────
+    await _newTask(tester, '搬家');
+    // **先给它一个日期。** 甘特是按时间跨度画的，没有日期的任务
+    // 压根不进甘特（view-specs §4.3 最后一行）——
+    // 第一版没设日期，甘特是空态，报的是「找不到画布」。
+    //
+    // 关掉「全天」会顺手补上今天（`setAllDay` 那段注释说的就是这件事），
+    // 所以这一下同时解决了日期。
+    await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+
+    const names = ['打包', '搬运', '收拾'];
+    for (final name in names) {
+      await tapVisible(tester, TaskEditorPage.addStageKey);
+      // **每个阶段都得起名字。** 空标题的阶段保存时会被丢掉
+      // （`filledStages`），那是对的 —— 用户点了「加一个」又没填，
+      // 不该落一条无名阶段。但这条旅程要的是三个真的阶段，
+      // 所以得填。第一版没填，落库零条，报的是「期望 3 个，实际 []」。
+      final fields = find.descendant(
+        of: find.byKey(TaskEditorPage.stageSectionKey),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(fields.last, name);
+      await tester.pump();
+    }
+    await _save(tester);
+
+    final stages = await harness.db.select(harness.db.stages).get();
+    expect(stages, hasLength(3));
+    expect(
+      (stages.toList()..sort((a, b) => a.orderIndex.compareTo(b.orderIndex)))
+          .map((s) => s.title),
+      names,
+    );
+
+    // ── 完成第 2 阶段 ────────────────────────────────────────
+    //
+    // 走库而不是走界面：阶段的就地勾选还没做（M3 的欠账，
+    // 见 roadmap）。这条旅程要验的是**甘特读得对**，
+    // 而「阶段怎么被勾上」是另一条链路。
+    final second = stages.firstWhere((s) => s.orderIndex == 1);
+    await (harness.db.update(
+      harness.db.stages,
+    )..where((t) => t.id.equals(second.id))).write(
+      StagesCompanion(
+        status: const Value('done'),
+        completedAt: Value(DateTime.utc(2026, 9, 8).millisecondsSinceEpoch),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // ── 甘特图上：进度是三分之一 ────────────────────────────
+    //
+    // **这三个阶段没有各自的时间**（编辑器默认不排，用户也没排）。
+    // 那时甘特不把条按阶段数均分 —— 均分等于告诉用户
+    // 「第一阶段在前三分之一结束」，而他从没这么说过。
+    // 画的是进度：三件里做完了一件。
+    //
+    // 排了时间的阶段会画成真正的分段，那条在
+    // `gantt_layout_test` 的 G-04 里验。
+    await _switchTo(tester, ViewKind.gantt);
+    final bars = _painter(tester).layout.lanes.single.bars;
+    expect(bars, hasLength(1), reason: '一条任务一根条');
+
+    final bar = bars.single;
+    expect(bar.segments, isEmpty, reason: '没排时间就不该凭空切出段来');
+    expect(bar.progress, closeTo(1 / 3, 0.001), reason: '完成第二阶段没反映到进度上');
+
+    // 对照组：没有阶段的任务，进度是 null 而不是 0 ——
+    // 「没有阶段」与「一个都没做」是两回事。
+    expect(
+      _painter(tester).layout.lanes.single.bars.single.row.stages,
+      hasLength(3),
+    );
+  });
+}

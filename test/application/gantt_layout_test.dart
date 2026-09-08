@@ -51,8 +51,8 @@ TaskOccurrence _row(
 
 Stage _stage(
   String id, {
-  required int start,
-  required int duration,
+  required int? start,
+  required int? duration,
   bool done = false,
 }) => Stage(
   id: id,
@@ -179,6 +179,46 @@ void main() {
     ]);
     final segs = layout.lanes.single.bars.single.segments;
     expect(segs.map((s) => s.done), [true, false]);
+  });
+
+  group('没排时间的阶段：给进度，不给编造出来的段', () {
+    // 编辑器默认不给阶段排时间。那时把条按阶段数均分是在编造数据 ——
+    // 等于告诉用户「第一阶段在前三分之一结束」，而他从没这么说过。
+    // 与「不替用户假设时长」（§1.2）同一条原则。
+
+    GanttBar barWith(List<Stage> stages) => _layout([
+      _row(
+        '搬家',
+        from: 0,
+        startMinute: 9 * 60,
+        to: 0,
+        endMinute: 18 * 60,
+        stages: stages,
+      ),
+    ]).lanes.single.bars.single;
+
+    test('三个阶段做完一个 → 进度三分之一，段是空的', () {
+      final bar = barWith([
+        _stage('a', start: null, duration: null, done: true),
+        _stage('b', start: null, duration: null),
+        _stage('c', start: null, duration: null),
+      ]);
+      expect(bar.segments, isEmpty);
+      expect(bar.progress, closeTo(1 / 3, 0.001));
+    });
+
+    test('没有阶段时进度是 null，不是 0', () {
+      // 「没有阶段」与「一个都没做」是两回事，画出来也该不一样。
+      expect(barWith(const []).progress, isNull);
+    });
+
+    test('对照组：排了时间的阶段照常有段', () {
+      final bar = barWith([
+        _stage('a', start: 0, duration: 60),
+        _stage('b', start: 60, duration: 60),
+      ]);
+      expect(bar.segments, hasLength(2));
+    });
   });
 
   test('G-05 阶段偏移超出任务结束 → 跨度用 effectiveEnd', () {

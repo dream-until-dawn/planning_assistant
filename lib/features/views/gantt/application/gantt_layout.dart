@@ -82,6 +82,7 @@ final class GanttBar {
     required this.continuesBefore,
     required this.continuesAfter,
     required this.segments,
+    required this.progress,
   });
 
   final TaskOccurrence row;
@@ -99,8 +100,23 @@ final class GanttBar {
   final bool continuesBefore;
   final bool continuesAfter;
 
-  /// 阶段分段。没有阶段时为空表，渲染成一根整条。
+  /// 阶段分段。**只有排了时间的阶段才有段**（见 [progress]）。
   final List<GanttSegment> segments;
+
+  /// 已完成的阶段占几成。没有阶段时为 null。
+  ///
+  /// ## 为什么需要它，而不是把没排时间的阶段也切成段
+  ///
+  /// 编辑器**默认不给阶段排时间** —— 用户加三个阶段、写个名字就存了。
+  /// 那时 [segments] 是空的，于是「完成了第二阶段」在甘特上完全看不见。
+  ///
+  /// 一个诱人的做法是把条按阶段数**均分**。但那是在编造数据：
+  /// 它等于告诉用户「第一阶段在前三分之一结束」，而用户从没这么说过。
+  /// 与「不替用户假设时长」（§1.2）是同一条原则。
+  ///
+  /// 所以换一个诚实的表达：**进度**。它说的是「三件里做完了一件」，
+  /// 不说「什么时候做的」。排了时间的阶段照常有段，两者不冲突。
+  final double? progress;
 
   int get lengthMinutes => endMinute - startMinute;
 }
@@ -206,6 +222,7 @@ GanttLayout ganttLayout({
             continuesBefore: placed.$1 < 0,
             continuesAfter: placed.$2 > total,
             segments: _segmentsOf(slot.item, placed.$1, total),
+            progress: _progressOf(slot.item),
           ),
         );
       }
@@ -285,6 +302,14 @@ List<GanttSegment> _segmentsOf(TaskOccurrence row, int barStart, int total) {
   }
   out.sort((a, b) => a.startMinute.compareTo(b.startMinute));
   return out;
+}
+
+/// 已完成的阶段占几成。没有阶段时为 null（不是 0 —— 「没有阶段」
+/// 与「一个都没做」是两回事，画出来也该不一样）。
+double? _progressOf(TaskOccurrence row) {
+  if (row.stages.isEmpty) return null;
+  final done = row.stages.where((s) => s.status == TaskStatus.done).length;
+  return done / row.stages.length;
 }
 
 Category? _categoryOf(String? key, List<Category> categories) {
