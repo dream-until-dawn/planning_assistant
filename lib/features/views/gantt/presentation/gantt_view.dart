@@ -30,8 +30,10 @@ import '../../../../design/components/app_chip.dart';
 import '../../../../design/components/empty_state.dart';
 import '../../../../design/theme/app_theme.dart';
 import '../../../../design/tokens/dimensions.dart';
+import '../../shared/application/create_task_at.dart';
 import '../../shared/application/task_occurrence.dart';
 import '../../shared/application/task_providers.dart';
+import '../../shared/application/view_shared_state.dart';
 import '../../task_list/presentation/occurrence_actions_sheet.dart';
 import '../application/gantt_layout.dart';
 import '../application/gantt_providers.dart';
@@ -45,7 +47,7 @@ class GanttView extends ConsumerStatefulWidget {
   const GanttView({this.onCreateTask, this.onEditTask, super.key});
 
   final OpenTask? onEditTask;
-  final VoidCallback? onCreateTask;
+  final CreateTaskAt? onCreateTask;
 
   static const Key canvasKey = ValueKey('gantt-canvas');
   static const Key emptyKey = ValueKey('gantt-empty');
@@ -86,7 +88,13 @@ class _GanttViewState extends ConsumerState<GanttView> {
         illustration: const EmptyIllustration(icon: Icons.view_timeline),
         message: '这段时间还没有安排。\n甘特图要有跨度才画得出来。',
         actionLabel: widget.onCreateTask == null ? null : '新建任务',
-        onAction: widget.onCreateTask,
+        // 甘特也是按日期锚定的视图，空态那句话说的是当前窗口 ——
+        // 同时间轴与日历（FR-VIEW-07）。
+        onAction: widget.onCreateTask == null
+            ? null
+            : () => widget.onCreateTask!(
+                date: ref.read(viewSharedStateProvider).focusedDate,
+              ),
       );
     }
 

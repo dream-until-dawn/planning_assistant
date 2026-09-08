@@ -23,6 +23,7 @@ import 'package:planning_assistant/design/components/empty_state.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/domain/value_objects/recurrence.dart';
+import 'package:planning_assistant/features/views/shared/application/create_task_at.dart';
 import 'package:planning_assistant/features/views/shared/application/view_shared_state.dart';
 import 'package:planning_assistant/features/views/timeline/presentation/timeline_metrics.dart';
 import 'package:planning_assistant/features/views/timeline/presentation/timeline_page.dart';
@@ -70,7 +71,7 @@ Future<void> _pump(
   Map<String, Object?> settings = const {},
   Stream<void>? tick,
   List<Override> extra = const [],
-  VoidCallback? onCreateTask,
+  CreateTaskAt? onCreateTask,
 }) async {
   await setScreenSize(tester, const Size(390, 844));
 
@@ -329,10 +330,122 @@ void main() {
     });
   });
 
+  group('长按空白＝在那一刻新建（FR-VIEW-07）', () {
+    // 验收原话：「在时间轴 14:00 处长按新增，新任务默认时间为 14:00」。
+    // 在这之前四个视图的加号走的是同一个**无参**回调 ——
+    // 新建表单永远是白纸，用户得把刚才正看着的那一天再选一遍。
+
+    testAppWidgets('长按 14:00 那一格，带回 14:00', (tester) async {
+      PlanDate? gotDate;
+      MinuteOfDay? gotMinute;
+      await _pump(
+        tester,
+        // 一天空着时整块画布会被空态替掉，长按无从谈起。
+        // 放一条早上的任务把画布撑出来，14:00 那一带仍是空白。
+        tasks: [_task('晨会', start: 9 * 60, end: 10 * 60)],
+        onCreateTask: ({date, minute}) {
+          gotDate = date;
+          gotMinute = minute;
+        },
+      );
+
+      // 默认刻度 60 分钟，一格 48px。14:00 那一格从 14*48=672 起。
+      // **按在格子中间**：按在边界上，取整方式错了也照样对
+      // （§1.11 那条「只验一侧」的同族）。
+      await tester.longPressAt(
+        tester.getTopLeft(find.byKey(TimelinePage.canvasKey)) +
+            const Offset(120, 14 * 48 + 24),
+      );
+      await tester.pumpAndSettle();
+
+      expect(gotMinute?.value, 14 * 60, reason: '长按 14:00 那一格该带回 14:00');
+      expect(gotDate, _today, reason: '带回的日期必须是时间轴正看着的那天');
+    });
+
+    testAppWidgets('**向下对齐，不是就近对齐**', (tester) async {
+      // 按在 14 点这一格的下缘（14:50 附近）。就近取整会跳到 15:00 ——
+      // 而用户是对着「14:00」那行字按的。
+      MinuteOfDay? got;
+      await _pump(
+        tester,
+        tasks: [_task('晨会', start: 9 * 60, end: 10 * 60)],
+        onCreateTask: ({date, minute}) => got = minute,
+      );
+
+      await tester.longPressAt(
+        tester.getTopLeft(find.byKey(TimelinePage.canvasKey)) +
+            const Offset(120, 14 * 48 + 44),
+      );
+      await tester.pumpAndSettle();
+
+      expect(got?.value, 14 * 60);
+    });
+
+    testAppWidgets('刻度改成 30 分钟，对齐跟着变细', (tester) async {
+      // 写死 60 的实现在这里露馅：同一个位置该落在 07:30 而不是 07:00。
+      MinuteOfDay? got;
+      await _pump(
+        tester,
+        tasks: [_task('晨会', start: 9 * 60, end: 10 * 60)],
+        settings: {'view.timelineTickMinutes': 30},
+        onCreateTask: ({date, minute}) => got = minute,
+      );
+
+      // 30 分钟一格、一格仍是 48px → 一天高 2304px，11:30 那一格
+      // 从 23*48=1104 起。
+      //
+      // **必须挑一个半点**：挑 11:00 的话，写死 60 分钟的实现
+      // 会算出同一个答案，这条测试就白写了（§1.10 那族的另一面 ——
+      // 期望值没问题，是**输入**选得没有区分度）。
+      //
+      // 目标还得在视野之内：首屏滚到 08:00，30 分钟刻度下是 768px。
+      // 按 07:30（720px）的话手指落在视口上方，长按打在空气上，
+      // `got` 是 null —— 而 null 与「算错了」在断言里长得不一样。
+      await tester.longPressAt(
+        tester.getTopLeft(find.byKey(TimelinePage.canvasKey)) +
+            const Offset(120, 23 * 48 + 24),
+      );
+      await tester.pumpAndSettle();
+
+      expect(got?.value, 11 * 60 + 30);
+    });
+
+    testAppWidgets('长按一个块是打开它，不是在它身上新建', (tester) async {
+      // 底下那层是 translucent 的手势层，块自己不接长按的话，
+      // 长按一条已有任务会掉下去变成「在这儿新建」。
+      var created = false;
+      await _pump(
+        tester,
+        tasks: [_task('晨会', start: 9 * 60, end: 10 * 60)],
+        onCreateTask: ({date, minute}) => created = true,
+      );
+      expect(find.text('晨会'), findsOneWidget);
+
+      await tester.longPress(find.text('晨会'));
+      await tester.pumpAndSettle();
+
+      expect(created, isFalse, reason: '长按已有任务却新建了一条');
+    });
+
+    testAppWidgets('没有新建入口时不装那层手势', (tester) async {
+      // `onCreateTask` 为 null 时铺一层吃掉长按的透明层，
+      // 等于让长按变成一个静默的黑洞。
+      //
+      // **必须有任务**：一天空着时画布本来就不在场，
+      // 那样这条测试无论实现对错都绿（§1.11 那族）。
+      await _pump(
+        tester,
+        tasks: [_task('晨会', start: 9 * 60, end: 10 * 60)],
+      );
+      expect(find.byKey(TimelinePage.blockKey('晨会')), findsOneWidget);
+      expect(find.byKey(TimelinePage.canvasKey), findsNothing);
+    });
+  });
+
   group('空态与错误态', () {
     testAppWidgets('这一天什么都没有 → 空态三件套', (tester) async {
       var tapped = false;
-      await _pump(tester, onCreateTask: () => tapped = true);
+      await _pump(tester, onCreateTask: ({date, minute}) => tapped = true);
 
       expect(find.byKey(TimelinePage.emptyKey), findsOneWidget);
       expect(find.byType(EmptyIllustration), findsOneWidget);

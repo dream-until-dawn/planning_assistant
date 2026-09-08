@@ -12,6 +12,7 @@ import '../../../../design/components/empty_state.dart';
 import '../../../../design/components/task_card.dart';
 import '../../../../design/tokens/dimensions.dart';
 import '../../shared/application/category_providers.dart';
+import '../../shared/application/create_task_at.dart';
 import '../../shared/application/task_providers.dart';
 import '../../shared/application/view_shared_state.dart';
 import '../../shared/presentation/occurrence_card_data.dart';
@@ -32,7 +33,7 @@ class TaskListPage extends ConsumerStatefulWidget {
 
   /// 空态里那个行动按钮。为 null 时按钮不出现 ——
   /// §8.2 要求「一个明确行动按钮」，而一个点不动的按钮比没有更糟。
-  final VoidCallback? onCreateTask;
+  final CreateTaskAt? onCreateTask;
 
   static const Key listKey = ValueKey('task-list');
   static const Key errorKey = ValueKey('task-list-error');

@@ -32,6 +32,7 @@ import '../../../settings/application/motion.dart';
 import '../../../settings/application/registry.dart';
 import '../../../settings/application/settings_providers.dart';
 import '../../shared/application/category_providers.dart';
+import '../../shared/application/create_task_at.dart';
 import '../../shared/application/task_occurrence.dart';
 import '../../shared/application/task_providers.dart';
 import '../../shared/application/view_shared_state.dart';
@@ -51,7 +52,7 @@ class CalendarPage extends ConsumerStatefulWidget {
   const CalendarPage({this.onCreateTask, this.onEditTask, super.key});
 
   final OpenTask? onEditTask;
-  final VoidCallback? onCreateTask;
+  final CreateTaskAt? onCreateTask;
 
   static const Key gridKey = ValueKey('calendar-grid');
   static const Key modeToggleKey = ValueKey('calendar-mode-toggle');
@@ -608,7 +609,7 @@ class _SelectedDayList extends ConsumerWidget {
   });
 
   final OpenTask? onEditTask;
-  final VoidCallback? onCreateTask;
+  final CreateTaskAt? onCreateTask;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -619,7 +620,13 @@ class _SelectedDayList extends ConsumerWidget {
         illustration: const EmptyIllustration(icon: Icons.event_available),
         message: '这一天还空着。',
         actionLabel: onCreateTask == null ? null : '新建任务',
-        onAction: onCreateTask,
+        // **带上选中的那一天**（FR-VIEW-07）。这句话说的就是「这一天」——
+        // 点了却建出一条没有日期的任务，是自相矛盾。
+        onAction: onCreateTask == null
+            ? null
+            : () => onCreateTask!(
+                date: ref.read(viewSharedStateProvider).focusedDate,
+              ),
       );
     }
 

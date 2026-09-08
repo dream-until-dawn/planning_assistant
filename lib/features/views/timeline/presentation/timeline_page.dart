@@ -27,6 +27,7 @@ import '../../../../domain/value_objects/task_status.dart';
 import '../../../settings/application/registry.dart';
 import '../../../settings/application/settings_providers.dart';
 import '../../shared/application/category_providers.dart';
+import '../../shared/application/create_task_at.dart';
 import '../../shared/application/overlap_layout.dart';
 import '../../shared/application/task_occurrence.dart';
 import '../../shared/application/task_providers.dart';
@@ -47,7 +48,7 @@ class TimelinePage extends ConsumerStatefulWidget {
   final OpenTask? onEditTask;
 
   /// 空态里那个行动按钮。为 null 时按钮不出现。
-  final VoidCallback? onCreateTask;
+  final CreateTaskAt? onCreateTask;
 
   static const Key scrollKey = ValueKey('timeline-scroll');
   static const Key emptyKey = ValueKey('timeline-empty');
@@ -55,6 +56,9 @@ class TimelinePage extends ConsumerStatefulWidget {
 
   /// 「随时」区。没有无时刻任务时整块不出现。
   static const Key anytimeKey = ValueKey('timeline-anytime');
+
+  /// 空白处长按新建（FR-VIEW-07）。
+  static const Key canvasKey = ValueKey('timeline-canvas');
 
   /// 当前时刻线。**只有「今天」才有**。
   static const Key nowLineKey = ValueKey('timeline-now-line');
@@ -134,7 +138,12 @@ class _TimelinePageState extends ConsumerState<TimelinePage> {
         illustration: const EmptyIllustration(icon: Icons.wb_sunny_outlined),
         message: '这一天还没有安排，\n要加点什么吗？',
         actionLabel: widget.onCreateTask == null ? null : '新建任务',
-        onAction: widget.onCreateTask,
+        // **带上正看着的那一天**（FR-VIEW-07）。空态这一条尤其要紧：
+        // 用户翻到一个空日子、看见「这一天还没有安排」、点了新建 ——
+        // 他说的就是这一天，不带的话建出来的任务落在「随时」区。
+        onAction: widget.onCreateTask == null
+            ? null
+            : () => widget.onCreateTask!(date: ref.read(timelineDateProvider)),
       );
     }
 
@@ -159,6 +168,7 @@ class _TimelinePageState extends ConsumerState<TimelinePage> {
                 tickMinutes: tickMinutes,
                 nowMinute: nowMinute,
                 onEditTask: widget.onEditTask,
+                onCreateTask: widget.onCreateTask,
               ),
             ),
           ),
@@ -174,11 +184,13 @@ class _DayCanvas extends ConsumerWidget {
     required this.tickMinutes,
     required this.nowMinute,
     required this.onEditTask,
+    required this.onCreateTask,
   });
 
   final int tickMinutes;
   final int? nowMinute;
   final OpenTask? onEditTask;
+  final CreateTaskAt? onCreateTask;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -194,6 +206,31 @@ class _DayCanvas extends ConsumerWidget {
 
         return Stack(
           children: [
+            // **压在最底下，这一层的顺序是行为的一部分。**
+            //
+            // `Stack` 的命中测试按**从上到下**走，命中第一个就停 ——
+            // 于是手指落在一个块上时，这一层根本轮不到被问。
+            // 长按已有任务是「打开它」，长按空白才是「在这儿新建」。
+            //
+            // 把它挪到 children 末尾（最上层）就全反了：整块画布
+            // 先被它吃掉，块连点都点不着。变异演练里 V-04 验的就是这个。
+            //
+            // 一度以为要靠给块补一个 `onLongPress` 来「抢」手势，
+            // 那是多余的 —— 变异证明拿掉它行为不变（命中测试压根到不了下面）。
+            if (onCreateTask != null)
+              Positioned.fill(
+                child: GestureDetector(
+                  key: TimelinePage.canvasKey,
+                  behavior: HitTestBehavior.translucent,
+                  onLongPressStart: (details) => onCreateTask!(
+                    date: ref.read(timelineDateProvider),
+                    minute: TimelineMetrics.minuteAt(
+                      details.localPosition.dy,
+                      tickMinutes,
+                    ),
+                  ),
+                ),
+              ),
             _Ruler(tickMinutes: tickMinutes),
             for (final cluster in clusters) ...[
               // 有折叠时先把「+N」那一格的宽度**留出来**，

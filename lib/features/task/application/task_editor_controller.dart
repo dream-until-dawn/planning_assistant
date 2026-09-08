@@ -348,6 +348,17 @@ final editingTaskIdProvider = Provider<String?>((ref) => null);
 /// 同 [editingTaskIdProvider]，由组合根在路由上覆盖注入。
 final editingSplitAtProvider = Provider<OccurrenceKey?>((ref) => null);
 
+/// 新建表单的初值：在哪一天、哪一刻（FR-VIEW-07）。
+///
+/// 同上，由组合根在 `/task/new` 那条路由上按查询参数覆盖。
+/// **走路由而不是构造参数**：视图只喊「在这儿新建」，
+/// 由组合根决定那句话变成什么路由 —— 视图不认识路由表（§7.2）。
+/// 顺带这条路由可以直接被外部唤起（将来的小组件、语音入口）。
+final newTaskSeedProvider = Provider<NewTaskSeed?>((ref) => null);
+
+/// 见 [newTaskSeedProvider]。两个分量都可缺。
+typedef NewTaskSeed = ({PlanDate? date, MinuteOfDay? minute});
+
 /// 表单控制器。
 final class TaskEditorController extends Notifier<TaskDraft> {
   /// 初值。**分类取配置里的默认**（settings-spec §2.4
@@ -364,7 +375,16 @@ final class TaskEditorController extends Notifier<TaskDraft> {
   TaskDraft build() {
     final editingId = ref.read(editingTaskIdProvider);
     if (editingId == null) {
-      return TaskDraft(categoryId: ref.read(defaultCategoryIdProvider));
+      final seed = ref.read(newTaskSeedProvider);
+      return TaskDraft(
+        categoryId: ref.read(defaultCategoryIdProvider),
+        planDate: seed?.date,
+        // 给了时刻就是一条定时任务；只给日期的仍是全天
+        // （默认值 true）—— 从日历翻到某天点加号，用户表达的是
+        // 「这一天」，不是「这一天的 00:00」。
+        isAllDay: seed?.minute == null,
+        startMinute: seed?.minute,
+      );
     }
     // **全程用 read，不用 watch。** watch 的话，库里任何一次推送
     // （别的任务变了、分类流来了一帧）都会重建 Notifier，
@@ -744,8 +764,12 @@ final class TaskEditorController extends Notifier<TaskDraft> {
 /// editingTaskId 永远是 null，于是编辑页打开的是一张新建表单，
 /// 标题写着「新建任务」，改完还会多出一条任务。
 /// 而且它不报错：一切照常运行，只是作用域没生效。
+///
+/// [newTaskSeedProvider] 后来也进了这张表，症状一模一样：
+/// 长按 14:00 新建，表单打开、能保存，日期却是空的 ——
+/// 覆盖写在了子作用域，而这个 provider 还在根作用域解析。
 final taskEditorProvider =
     NotifierProvider.autoDispose<TaskEditorController, TaskDraft>(
       TaskEditorController.new,
-      dependencies: [editingTaskIdProvider],
+      dependencies: [editingTaskIdProvider, newTaskSeedProvider],
     );

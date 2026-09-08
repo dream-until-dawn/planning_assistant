@@ -205,7 +205,9 @@ void main() {
           overrides: viewPipelineOverrides(today: _today),
           child: MaterialApp(
             theme: AppTheme.light(),
-            home: Scaffold(body: GanttView(onCreateTask: () => tapped = true)),
+            home: Scaffold(
+              body: GanttView(onCreateTask: ({date, minute}) => tapped = true),
+            ),
           ),
         ),
       );
