@@ -32,11 +32,12 @@ import 'month_grid.dart';
 /// 日历自己再存一份的话，从甘特切过来时两边会对不上，
 /// 而那正是 FR-VIEW-05/06 要避免的。
 ///
-/// `day` 这一档日历没有对应形态，按周处理：切到「日」再切回日历时，
-/// 给一屏空白比给一个它不认识的档位强。
+/// `day` 这一档日历没有对应形态，**按月处理** —— 月视图是日历的默认
+/// （§3.1 那张表第一行）。按周处理的话，从别的视图切过来时日历默认
+/// 是周视图，与规格相反。
 final calendarIsMonthProvider = Provider<bool>(
   (ref) =>
-      ref.watch(viewSharedStateProvider).granularity == TimeGranularity.month,
+      ref.watch(viewSharedStateProvider).granularity != TimeGranularity.week,
 );
 
 /// 这一屏要画哪些格子。

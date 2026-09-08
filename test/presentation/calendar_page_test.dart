@@ -71,6 +71,21 @@ Future<void> _pump(
   await tester.pumpAndSettle();
 }
 
+/// 不碰 `granularity`，走它自己的默认 —— 验「默认是什么」时不能先设一遍。
+Future<void> _pumpDefault(WidgetTester tester) async {
+  await setScreenSize(tester, const Size(390, 844));
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: viewPipelineOverrides(today: _today),
+      child: MaterialApp(
+        theme: AppTheme.light(),
+        home: const Scaffold(body: CalendarPage()),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
 Rect _cell(WidgetTester tester, PlanDate date) =>
     tester.getRect(find.byKey(CalendarPage.dayKey(date)));
 
@@ -309,7 +324,78 @@ void main() {
     });
   });
 
+  group('月/周切换：这个旋钮界面上够得着', () {
+    // `granularity` 是共享状态里的字段，日历读它、甘特也要读它，
+    // 但**一度没有任何地方写它** —— 用户永远停在默认那一档，
+    // 月视图根本到不了。testing-strategy §1.6 那一族的又一次。
+
+    testAppWidgets('默认是月视图（§3.1 那张表第一行）', (tester) async {
+      // 不设 granularity，走默认的 `day` 档。
+      await _pumpDefault(tester);
+      expect(
+        find.byWidgetPredicate(
+          (w) => w.key.toString().startsWith("[<'calendar-day-"),
+        ),
+        findsNWidgets(42),
+      );
+    });
+
+    testAppWidgets('点「周」变一行，点「月」变回六行', (tester) async {
+      await _pumpDefault(tester);
+
+      await tester.tap(find.byKey(CalendarPage.modeKey('week')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byWidgetPredicate(
+          (w) => w.key.toString().startsWith("[<'calendar-day-"),
+        ),
+        findsNWidgets(7),
+      );
+
+      await tester.tap(find.byKey(CalendarPage.modeKey('month')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byWidgetPredicate(
+          (w) => w.key.toString().startsWith("[<'calendar-day-"),
+        ),
+        findsNWidgets(42),
+      );
+    });
+
+    testAppWidgets('切换写的是共享状态，不是日历自己存一份', (tester) async {
+      // 自己存一份的话，切到甘特再回来就对不上了（FR-VIEW-05/06）。
+      await _pumpDefault(tester);
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(CalendarPage)),
+      );
+
+      await tester.tap(find.byKey(CalendarPage.modeKey('week')));
+      await tester.pumpAndSettle();
+      expect(
+        container.read(viewSharedStateProvider).granularity,
+        TimeGranularity.week,
+      );
+    });
+  });
+
   group('周视图', () {
+    testAppWidgets('一格的高度与月视图一样，不是被拉成六倍', (tester) async {
+      // 比例定的是**行高**，不是格子区的高。直接把整块给一行的话，
+      // 一行日期占掉大半屏，下面的列表挤没了；月↔周来回切时
+      // 格子还会忽大忽小。模拟器上一眼就看见了。
+      await _pump(tester, granularity: TimeGranularity.month);
+      final monthRow = tester
+          .getRect(find.byKey(CalendarPage.dayKey(_today)))
+          .height;
+
+      await _pump(tester, granularity: TimeGranularity.week);
+      final weekRow = tester
+          .getRect(find.byKey(CalendarPage.dayKey(_today)))
+          .height;
+
+      expect(weekRow, closeTo(monthRow, 1));
+    });
+
     testAppWidgets('只有一行七格', (tester) async {
       await _pump(tester, granularity: TimeGranularity.week);
       expect(
@@ -340,6 +426,12 @@ void main() {
           ),
         ),
       );
+      await tester.pumpAndSettle();
+      // **月视图**：比例定的是行高，所以只有六行都在时，拖动的位移
+      // 才与格子区的高度变化 1:1。周视图里拖一像素只动六分之一。
+      ProviderScope.containerOf(tester.element(find.byType(CalendarPage)))
+          .read(viewSharedStateProvider.notifier)
+          .setGranularity(TimeGranularity.month);
       await tester.pumpAndSettle();
     }
 

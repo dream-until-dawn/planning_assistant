@@ -54,6 +54,10 @@ class CalendarPage extends ConsumerStatefulWidget {
   final VoidCallback? onCreateTask;
 
   static const Key gridKey = ValueKey('calendar-grid');
+  static const Key modeToggleKey = ValueKey('calendar-mode-toggle');
+
+  /// 月/周切换里的某一档。
+  static Key modeKey(String mode) => ValueKey('calendar-mode-$mode');
   static const Key headerKey = ValueKey('calendar-header');
   static const Key handleKey = ValueKey('calendar-split-handle');
   static const Key selectedListKey = ValueKey('calendar-selected-list');
@@ -98,10 +102,21 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
             constraints.maxHeight -
             CalendarMetrics.headerHeight -
             CalendarMetrics.handleHeight;
-        final gridHeight = usable * split;
+
+        // **比例定的是「一格多高」，不是「格子区多高」。**
+        //
+        // 直接把 `usable * split` 给格子区的话，周视图那一行会被拉成
+        // 月视图六行那么高 —— 一行日期占掉大半屏，下面的列表挤没了。
+        // 而且月↔周来回切时格子会忽大忽小。
+        //
+        // 按「月视图六行」定出行高，再乘当前行数：月视图仍是
+        // `usable * split`，周视图自然只占六分之一，多出来的归列表。
+        final rowHeight = usable * split / weeksPerMonthView;
+        final gridHeight = rowHeight * ref.watch(calendarWeeksProvider).length;
 
         return Column(
           children: [
+            const _ModeToggle(key: CalendarPage.modeToggleKey),
             const _WeekdayHeader(key: CalendarPage.headerKey),
             SizedBox(
               height: gridHeight,
@@ -113,7 +128,12 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
             _SplitHandle(
               key: CalendarPage.handleKey,
               onDelta: (dy) => setState(() {
-                _dragging = CalendarSplit.clamp((split * usable + dy) / usable);
+                // 拖的是**格子区**的边，而比例定的是行高 —— 所以位移要
+                // 按当前行数折回去，否则周视图里拖一格，屏幕上动六格。
+                final rows = ref.read(calendarWeeksProvider).length;
+                _dragging = CalendarSplit.clamp(
+                  split + dy * weeksPerMonthView / (rows * usable),
+                );
               }),
               onDone: () async {
                 final value = _dragging;
@@ -138,6 +158,47 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
           ],
         );
       },
+    );
+  }
+}
+
+/// 月 / 周切换。
+///
+/// **这个控件是补出来的。** `granularity` 是共享状态里的字段，日历读它、
+/// 甘特也要读它，但**没有任何地方写它** —— 于是用户永远停在默认那一档，
+/// 月视图根本到不了。又是一次「模型有旋钮、界面上够不着」
+/// （testing-strategy §1.6）：这次是在模拟器上一眼看出来的，
+/// 因为屏幕上只有一行日期，而规格说默认是六行。
+class _ModeToggle extends ConsumerWidget {
+  const _ModeToggle({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isMonth = ref.watch(calendarIsMonthProvider);
+    final shared = ref.read(viewSharedStateProvider.notifier);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: Spacing.pageHorizontal,
+        vertical: Spacing.xs,
+      ),
+      child: Row(
+        children: [
+          SelectableChip(
+            key: CalendarPage.modeKey('month'),
+            label: '月',
+            selected: isMonth,
+            onSelected: (_) => shared.setGranularity(TimeGranularity.month),
+          ),
+          const SizedBox(width: Spacing.sm),
+          SelectableChip(
+            key: CalendarPage.modeKey('week'),
+            label: '周',
+            selected: !isMonth,
+            onSelected: (_) => shared.setGranularity(TimeGranularity.week),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -187,6 +248,9 @@ class _GridState extends ConsumerState<_Grid> {
   /// 上一次往哪边翻：+1 往后，-1 往前。决定新页从哪一侧滑进来。
   int _direction = 1;
 
+  /// 上一帧画了几行。**只是个备忘**，不参与触发重建。
+  int? _lastRows;
+
   @override
   Widget build(BuildContext context) {
     final layout = ref.watch(calendarLayoutProvider);
@@ -195,11 +259,37 @@ class _GridState extends ConsumerState<_Grid> {
     final focused = ref.watch(viewSharedStateProvider).focusedDate;
     final reduced = reducedMotionOf(context, ref);
 
+    // 月↔周**不做转场**。两个理由，各自都够：
+    //
+    // 1. 语义上它不是翻页，是换了一种看法。横向滑进来是错的比喻。
+    // 2. 转场期间两页同时在场，而旧页会被塞进新页的高度里 ——
+    //    六行挤进一行的空间，每格只剩十几个像素，RenderFlex 直接报溢出。
+    //    裁剪救不了：那是**布局**时的断言，不是画出界。
+    final rows = layout.weeks.length;
+    final modeChanged = _lastRows != null && _lastRows != rows;
+    _lastRows = rows;
+
     // 同一页内点选别的日子**不该触发转场** —— 所以 key 取的是「哪一页」
     // （月视图取年月，周视图取那一周的头一天），不是聚焦日本身。
     final pageKey = isMonth
         ? '${focused.year}-${focused.month}'
         : '${layout.weeks.first.first.date}';
+
+    final grid = Column(
+      key: ValueKey(pageKey),
+      children: [
+        for (final (i, week) in layout.weeks.indexed)
+          Expanded(
+            child: _WeekRow(
+              week: week,
+              bands: layout.bands[i],
+              dots: layout.dots[i],
+              weekIndex: i,
+              onEditTask: widget.onEditTask,
+            ),
+          ),
+      ],
+    );
 
     return GestureDetector(
       // 只认水平方向 —— 竖直留给下半屏那份列表滚动。
@@ -211,35 +301,31 @@ class _GridState extends ConsumerState<_Grid> {
         setState(() => _direction = step);
         shared.focusDate(_shift(focused, isMonth, step));
       },
-      child: AnimatedSwitcher(
-        duration: Motion.of(Motion.slow, reduced: reduced),
-        switchInCurve: Motion.slowCurve,
-        switchOutCurve: Motion.slowCurve,
-        transitionBuilder: (child, animation) => SlideTransition(
-          position: Tween<Offset>(
-            begin: Offset(_direction.toDouble(), 0),
-            end: Offset.zero,
-          ).animate(animation),
-          child: child,
-        ),
-        // 两页同时在场时按顺序叠，别让旧页盖住新页。
-        layoutBuilder: (current, previous) =>
-            Stack(children: [...previous, ?current]),
-        child: Column(
-          key: ValueKey(pageKey),
-          children: [
-            for (final (i, week) in layout.weeks.indexed)
-              Expanded(
-                child: _WeekRow(
-                  week: week,
-                  bands: layout.bands[i],
-                  dots: layout.dots[i],
-                  weekIndex: i,
-                  onEditTask: widget.onEditTask,
+      child: ClipRect(
+        // 换档那一帧**整个把转场拿掉**，不是把时长设成 0。
+        //
+        // 设成 0 不够：`AnimatedSwitcher` 在那一帧里两个孩子都在场，
+        // 都要过一遍布局，而旧的六行会被塞进新的一行的高度里 ——
+        // 每格只剩十几像素，RenderFlex 报溢出。那是**布局**时的断言，
+        // 外面裹多少层 ClipRect 都拦不住。
+        child: modeChanged || reduced
+            ? grid
+            : AnimatedSwitcher(
+                duration: Motion.slow,
+                switchInCurve: Motion.slowCurve,
+                switchOutCurve: Motion.slowCurve,
+                transitionBuilder: (child, animation) => SlideTransition(
+                  position: Tween<Offset>(
+                    begin: Offset(_direction.toDouble(), 0),
+                    end: Offset.zero,
+                  ).animate(animation),
+                  child: child,
                 ),
+                // 两页同时在场时按顺序叠，别让旧页盖住新页。
+                layoutBuilder: (current, previous) =>
+                    Stack(children: [...previous, ?current]),
+                child: grid,
               ),
-          ],
-        ),
       ),
     );
   }

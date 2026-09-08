@@ -68,12 +68,12 @@ Future<ProviderContainer> _container({
 
 void main() {
   group('档位来自共享状态，日历不自己存一份', () {
-    test('默认（day）按周处理 —— 一行', () async {
-      // 「日」这一档日历没有对应形态。给一屏空白比给一个它不认识的
-      // 档位强，所以按周画。
+    test('默认（day）按**月**处理 —— 月视图是日历的默认（§3.1）', () async {
+      // 「日」这一档日历没有对应形态。按周处理的话，从别的视图切过来时
+      // 日历默认是周视图，与规格第一行相反。
       final c = await _container();
-      expect(c.read(calendarIsMonthProvider), isFalse);
-      expect(c.read(calendarWeeksProvider), hasLength(1));
+      expect(c.read(calendarIsMonthProvider), isTrue);
+      expect(c.read(calendarWeeksProvider), hasLength(6));
     });
 
     test('切到月 → 六行', () async {
@@ -177,9 +177,14 @@ void main() {
         ],
       );
       final layout = c.read(calendarLayoutProvider);
-      final row = layout.weeks.first.indexWhere((c) => c.date == _today);
-      expect(layout.bands.first.bands, hasLength(maxBandsPerWeek));
-      expect(layout.dots.first[row].overflow, 1);
+      // **按内容找行，不写死行号**：默认档位是月视图，今天落在第二行；
+      // 写死 0 的话，改一次默认就红，而红的原因跟被测的东西无关。
+      final week = layout.weeks.indexWhere(
+        (w) => w.any((cell) => cell.date == _today),
+      );
+      final col = layout.weeks[week].indexWhere((cell) => cell.date == _today);
+      expect(layout.bands[week].bands, hasLength(maxBandsPerWeek));
+      expect(layout.dots[week][col].overflow, 1);
     });
   });
 
