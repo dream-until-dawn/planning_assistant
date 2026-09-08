@@ -32,6 +32,7 @@ class AppShell extends ConsumerWidget {
     required this.availableViews,
     required this.viewBuilder,
     required this.onViewSelected,
+    this.header,
     this.onCreateTask,
     this.onOpenSettings,
     super.key,
@@ -47,6 +48,9 @@ class AppShell extends ConsumerWidget {
 
   final Widget Function(BuildContext, ViewKind) viewBuilder;
   final ValueChanged<ViewKind> onViewSelected;
+
+  /// 视图上方的常驻条（筛选条）。由组合根提供，外壳不认识它。
+  final Widget? header;
   final VoidCallback? onCreateTask;
   final VoidCallback? onOpenSettings;
 
@@ -81,7 +85,21 @@ class AppShell extends ConsumerWidget {
           const SizedBox(width: Spacing.xs),
         ],
       ),
-      body: SafeArea(child: viewBuilder(context, currentView)),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // 筛选条在外壳上、在视图**之上** —— view-specs §0.3：
+            // 「顶部筛选条：同一个组件，同一份状态」。
+            // 放进视图的话，四个视图会各挂一份，切过去会重建。
+            //
+            // 但外壳**不认识**它：那个组件属于 views 这个 feature，
+            // 而 module-map §3 禁止跨 feature 引用 presentation。
+            // 所以由组合根传进来 —— 与 viewBuilder 同一个道理。
+            ?header,
+            Expanded(child: viewBuilder(context, currentView)),
+          ],
+        ),
+      ),
       // 没有新建动作时**整个不画** —— 一个点不动的悬浮按钮
       // 比没有按钮更让人困惑。
       floatingActionButton: onCreateTask == null

@@ -11,73 +11,114 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app_providers.dart';
 import '../../../../core/patch/unset.dart';
 import '../../../../core/time/plan_date.dart';
+import '../../../../domain/entities/task.dart';
+import '../../../../domain/value_objects/task_status.dart';
 
 /// 时间粒度。甘特与日历共用（view-specs §0.1）。
 enum TimeGranularity { day, week, month }
 
-/// 筛选条件。
+/// 筛选条件（view-specs §2.3）。
 ///
-/// **空筛选 ≠ null**：`FilterSpec.none` 是一个真实的值，
-/// 表示「不筛」。用 null 表示不筛的话，「清空筛选」与「还没加载」
-/// 会长得一样，而这两件事的正确行为不同。
+/// **空筛选 ≠ null**：`FilterSpec.none` 是一个真实的值，表示「不筛」。
+/// 用 null 表示不筛的话，「清空筛选」与「还没加载」会长得一样，
+/// 而这两件事的正确行为不同。
+///
+/// ## 每个维度里，空集合 = 不筛这个维度
+///
+/// **不是「一个都不匹配」。** 这条不是口味问题：用户把最后一个分类
+/// 取消勾选时，期待的是「回到全部」，不是「列表空掉」。
+/// 反过来实现的话，取消最后一项会让人以为任务丢了。
+///
+/// ## 维度之间取交集，维度之内取并集
+///
+/// 「分类=工作 且 状态∈{待办,进行中}」——这是 §2.3 说的「条件可叠加」。
 @immutable
 final class FilterSpec {
   const FilterSpec({
     this.categoryIds = const {},
-    this.tagIds = const {},
+    this.priorities = const {},
+    this.statuses = const {},
     this.keyword,
-    this.includeCompleted = false,
+    this.dateFrom,
+    this.dateTo,
   });
 
   /// 不筛任何东西。
   static const FilterSpec none = FilterSpec();
 
-  final Set<String> categoryIds;
-  final Set<String> tagIds;
+  /// 分类。**元素可以是 `null`，那表示「未分类」**
+  /// —— 未分类就是 `categoryId IS NULL`，不是某一行（settings-spec §3.0）。
+  /// 用一个单独的 bool 来表达它的话，这个维度就有了两套开关。
+  final Set<String?> categoryIds;
+
+  final Set<TaskPriority> priorities;
+  final Set<TaskStatus> statuses;
+
+  /// 关键词。匹配标题与备注，大小写不敏感。
   final String? keyword;
 
-  /// 是否把已完成的也显示出来。默认不显示。
-  final bool includeCompleted;
+  /// 日期范围，两端都可选（只给一端就是开区间）。
+  final PlanDate? dateFrom;
+  final PlanDate? dateTo;
 
   bool get isEmpty =>
       categoryIds.isEmpty &&
-      tagIds.isEmpty &&
-      (keyword == null || keyword!.isEmpty) &&
-      !includeCompleted;
+      priorities.isEmpty &&
+      statuses.isEmpty &&
+      (keyword == null || keyword!.trim().isEmpty) &&
+      dateFrom == null &&
+      dateTo == null;
 
   FilterSpec copyWith({
-    Set<String>? categoryIds,
-    Set<String>? tagIds,
+    Set<String?>? categoryIds,
+    Set<TaskPriority>? priorities,
+    Set<TaskStatus>? statuses,
     Object? keyword = unset,
-    bool? includeCompleted,
+    Object? dateFrom = unset,
+    Object? dateTo = unset,
   }) => FilterSpec(
     categoryIds: categoryIds ?? this.categoryIds,
-    tagIds: tagIds ?? this.tagIds,
-    // 关键词要能被**清空**，所以不能用 `keyword ?? this.keyword` ——
-    // 那样传 null 表示「不改」，就永远清不掉了。
-    //
-    // 哨兵用 core/patch 里那个专门的 [unset]，**不自己写
-    // `const Object()`** —— Dart 会把 const Object() 规范化成同一个实例，
-    // 两处各写一个会意外互通，而那种「碰巧能用」比不能用更危险。
-    // 那个文件就是为这件事存在的。
+    priorities: priorities ?? this.priorities,
+    statuses: statuses ?? this.statuses,
+    // 这三个都要能被**清空**，所以用 core/patch 的哨兵，
+    // 不用 `?? this.x` —— 后者把 null 解释成「不改」，清不掉。
     keyword: patch(keyword, this.keyword),
-    includeCompleted: includeCompleted ?? this.includeCompleted,
+    dateFrom: patch(dateFrom, this.dateFrom),
+    dateTo: patch(dateTo, this.dateTo),
+  );
+
+  /// 切换某个分类的勾选。`null` 即「未分类」那一项。
+  FilterSpec toggleCategory(String? id) => copyWith(
+    categoryIds: categoryIds.contains(id)
+        ? (categoryIds.toSet()..remove(id))
+        : (categoryIds.toSet()..add(id)),
+  );
+
+  /// 切换某个状态的勾选。
+  FilterSpec toggleStatus(TaskStatus status) => copyWith(
+    statuses: statuses.contains(status)
+        ? (statuses.toSet()..remove(status))
+        : (statuses.toSet()..add(status)),
   );
 
   @override
   bool operator ==(Object other) =>
       other is FilterSpec &&
       setEquals(categoryIds, other.categoryIds) &&
-      setEquals(tagIds, other.tagIds) &&
+      setEquals(priorities, other.priorities) &&
+      setEquals(statuses, other.statuses) &&
       keyword == other.keyword &&
-      includeCompleted == other.includeCompleted;
+      dateFrom == other.dateFrom &&
+      dateTo == other.dateTo;
 
   @override
   int get hashCode => Object.hash(
     Object.hashAllUnordered(categoryIds),
-    Object.hashAllUnordered(tagIds),
+    Object.hashAllUnordered(priorities),
+    Object.hashAllUnordered(statuses),
     keyword,
-    includeCompleted,
+    dateFrom,
+    dateTo,
   );
 }
 
@@ -138,17 +179,8 @@ final class ViewSharedStateNotifier extends Notifier<ViewSharedState> {
   @override
   ViewSharedState build() => ViewSharedState(focusedDate: _today());
 
-  /// 「今天」是**本地墙钟的今天**，不是 UTC 的今天。
-  ///
-  /// 直接把 `clock.nowUtc()` 截成日期，对 UTC 以东以西的用户在午夜
-  /// 前后会差一天 —— 东八区 08:00 之前，UTC 还停在昨天。
-  /// 所以必须经时区换算器（ADR-0005）。
-  PlanDate _today() {
-    final resolver = ref.watch(timeZoneResolverProvider);
-    return resolver
-        .toWallTime(ref.watch(clockProvider).nowUtc(), resolver.currentZoneId())
-        .date;
-  }
+  /// 「今天」由 [todayProvider] 统一给出 —— 全应用只有那一处定义。
+  PlanDate _today() => ref.watch(todayProvider);
 
   /// 聚焦到某一天。
   void focusDate(PlanDate date) => state = state.copyWith(focusedDate: date);

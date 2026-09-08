@@ -16,6 +16,7 @@ import '../../../../domain/entities/category.dart';
 import '../../../../domain/entities/task.dart';
 import '../../../../domain/value_objects/task_status.dart';
 import '../../shared/application/category_providers.dart';
+import '../../shared/application/view_shared_state.dart';
 import '../application/task_grouping.dart';
 import '../application/task_list_actions.dart';
 import '../application/task_list_providers.dart';
@@ -29,6 +30,13 @@ class TaskListPage extends ConsumerStatefulWidget {
 
   static const Key listKey = ValueKey('task-list');
   static const Key errorKey = ValueKey('task-list-error');
+
+  /// 库里一条任务都没有。
+  static const Key emptyKey = ValueKey('task-list-empty');
+
+  /// 有任务，但筛完没剩。**与 [emptyKey] 是两回事**，
+  /// 文案与行动按钮都不同。
+  static const Key noMatchKey = ValueKey('task-list-no-match');
 
   /// 某个分组标题的 Key。
   static Key groupHeaderKey(String groupKey) =>
@@ -61,14 +69,29 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
       // 该去查那个，而不是拿转圈盖住。
       loading: () => const SizedBox.shrink(),
       error: (error, stack) => const _LoadFailed(key: TaskListPage.errorKey),
+      // **两种「空」要分开说。**
+      //
+      // 库里一条都没有 → 引导他新建。
+      // 有任务但筛完没剩 → 引导他清筛选；这时候说「今天还空着」是错的，
+      // 而且会让人以为任务丢了。两种状态长得一样是最容易让人慌的。
       data: (list) => list.isEmpty
           ? EmptyState(
+              key: TaskListPage.emptyKey,
               illustration: const EmptyIllustration(
                 icon: Icons.wb_sunny_outlined,
               ),
               message: '今天还空着，\n要不要添一件想做的事？',
               actionLabel: widget.onCreateTask == null ? null : '新建任务',
               onAction: widget.onCreateTask,
+            )
+          : groups.isEmpty
+          ? EmptyState(
+              key: TaskListPage.noMatchKey,
+              illustration: const EmptyIllustration(icon: Icons.filter_alt_off),
+              message: '这个筛选下没有任务。\n换个条件看看？',
+              actionLabel: '清除筛选',
+              onAction: () =>
+                  ref.read(viewSharedStateProvider.notifier).clearFilter(),
             )
           : ListView(
               key: TaskListPage.listKey,

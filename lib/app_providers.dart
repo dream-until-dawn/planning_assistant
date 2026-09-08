@@ -1,7 +1,8 @@
-/// **应用级 Provider 声明**（module-map §1）。
+/// **应用级 Provider**（module-map §1）。
 ///
-/// 这里只有**声明**，没有实现 —— 每一个都在 `bootstrap.dart` 里被覆盖。
-/// 没覆盖就抛，不给默认值。
+/// 绝大部分是**声明**，没有实现 —— 每一个都在 `bootstrap.dart` 里被覆盖，
+/// 没覆盖就抛，不给默认值。末尾的 [todayProvider] 是个例外：
+/// 它由上面两个派生，放在一起是为了让「今天是哪天」**只有一处定义**。
 ///
 /// ## 为什么单独一个文件，而不是塞进 `core/` 或某个 feature
 ///
@@ -27,6 +28,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/id/id_generator.dart';
 import 'core/time/clock.dart';
+import 'core/time/plan_date.dart';
 import 'core/time/time_zone_bootstrap.dart';
 import 'core/time/time_zone_resolver.dart';
 import 'domain/commands/command_dispatcher.dart';
@@ -85,3 +87,18 @@ final taskCommandDispatcherProvider = Provider<CommandDispatcher>(
 final categoryRepositoryProvider = Provider<CategoryRepository>(
   (ref) => _mustOverride('categoryRepositoryProvider'),
 );
+
+/// 「今天」——**本地墙钟的今天**，不是 UTC 的（ADR-0005）。
+///
+/// 东八区早上八点前 UTC 还停在昨天：直接截 `nowUtc` 的话，
+/// 用户一早打开应用，今天的事全被算成「明天」。
+///
+/// **只此一处。** 一度有三个地方各自算过（列表分组、编辑器补日期、
+/// 共享状态的初始聚焦日），三份各自正确但迟早分叉 —— 而且测试里要
+/// 覆盖三处才能钉住「今天」，漏一处就有测试随日历翻页而变。
+final todayProvider = Provider<PlanDate>((ref) {
+  final resolver = ref.watch(timeZoneResolverProvider);
+  return resolver
+      .toWallTime(ref.watch(clockProvider).nowUtc(), resolver.currentZoneId())
+      .date;
+});

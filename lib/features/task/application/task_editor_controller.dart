@@ -89,13 +89,9 @@ final class TaskEditorController extends Notifier<TaskDraft> {
   void setCategory(String? categoryId) =>
       state = state.copyWith(categoryId: categoryId);
 
-  /// 本地墙钟的今天。**不用 `DateTime.now()`**（cross-cutting §1）。
-  PlanDate _today() {
-    final resolver = ref.read(timeZoneResolverProvider);
-    return resolver
-        .toWallTime(ref.read(clockProvider).nowUtc(), resolver.currentZoneId())
-        .date;
-  }
+  /// 本地墙钟的今天。由 [todayProvider] 统一给出，
+  /// **不用 `DateTime.now()`**（cross-cutting §1）。
+  PlanDate _today() => ref.read(todayProvider);
 
   /// 切全天。
   ///

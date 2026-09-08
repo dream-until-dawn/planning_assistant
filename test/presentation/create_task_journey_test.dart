@@ -189,7 +189,14 @@ void main() {
       final stored = await harness.db.select(harness.db.tasks).get();
       expect(stored.single.categoryId, 'cat-default-briefcase');
       // 卡片上分类名以**文字**出现（design-system §8.1：颜色不是唯一载体）。
-      expect(find.text('工作'), findsOneWidget);
+      //
+      // 限定在卡片里找：筛选条上也有一个「工作」Chip，
+      // 不限定的话 find.text 同时命中两个 —— 而那两个是完全不同的东西，
+      // 一个是「这条任务属于工作」，一个是「按工作筛选」。
+      expect(
+        find.descendant(of: find.byType(TaskCard), matching: find.text('工作')),
+        findsOneWidget,
+      );
 
       await disposeTree(tester);
     });
@@ -240,7 +247,10 @@ void main() {
 
       final stored = await harness.db.select(harness.db.tasks).get();
       expect(stored.single.categoryId, isNull);
-      expect(find.text('未分类'), findsOneWidget);
+      expect(
+        find.descendant(of: find.byType(TaskCard), matching: find.text('未分类')),
+        findsOneWidget,
+      );
 
       await disposeTree(tester);
     });

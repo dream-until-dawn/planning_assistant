@@ -9,12 +9,14 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:planning_assistant/app_providers.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/features/views/shared/application/category_providers.dart';
+import 'package:planning_assistant/features/views/shared/application/view_shared_state.dart';
 import 'package:planning_assistant/features/views/task_list/application/task_list_providers.dart';
 import 'package:planning_assistant/features/views/task_list/presentation/task_list_page.dart';
 
@@ -27,19 +29,25 @@ const _today = PlanDate(2026, 9, 8);
 /// 「标题在不在」和「卡片在不在」这两件事就分不开了。
 const _titlePrefix = '事项·';
 
-Task _task(String id, {PlanDate? date}) => Task(
+Task _task(String id, {PlanDate? date, String? categoryId}) => Task(
   id: id,
   title: id,
   kind: TaskKind.single,
   timeZoneId: 'Asia/Shanghai',
   planDate: date,
+  categoryId: categoryId,
   isAllDay: true,
 );
 
-Future<void> _pump(WidgetTester tester, List<Task> tasks) async {
+Future<void> _pump(
+  WidgetTester tester,
+  List<Task> tasks, {
+  FilterSpec filter = FilterSpec.none,
+}) async {
   await tester.binding.setSurfaceSize(const Size(390, 844));
   addTearDown(() => tester.binding.setSurfaceSize(null));
 
+  late ProviderContainer container;
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
@@ -50,11 +58,23 @@ Future<void> _pump(WidgetTester tester, List<Task> tasks) async {
       ],
       child: MaterialApp(
         theme: AppTheme.light(),
-        home: const Scaffold(body: TaskListPage()),
+        home: Consumer(
+          builder: (context, ref, _) {
+            container = ProviderScope.containerOf(context);
+            return const Scaffold(body: TaskListPage());
+          },
+        ),
       ),
     ),
   );
   await tester.pumpAndSettle();
+
+  if (!filter.isEmpty) {
+    // 通过真的 notifier 设，而不是覆盖 provider —— 这样连
+    // 「设筛选会触发重算」也一起验了。
+    container.read(viewSharedStateProvider.notifier).setFilter(filter);
+    await tester.pumpAndSettle();
+  }
 }
 
 void main() {
@@ -198,6 +218,53 @@ void main() {
         ),
       ]);
       expect(find.text('12:32'), findsOneWidget);
+    });
+  });
+
+  group('两种「空」要分得开（§2.3）', () {
+    testWidgets('库里没有任务：引导新建', (tester) async {
+      await _pump(tester, []);
+      expect(find.byKey(TaskListPage.emptyKey), findsOneWidget);
+      expect(find.byKey(TaskListPage.noMatchKey), findsNothing);
+    });
+
+    testWidgets('有任务但筛完没剩：引导清筛选，不是「今天还空着」', (tester) async {
+      // 两种状态长得一样是最容易让人慌的 —— 用户会以为任务丢了。
+      await _pump(tester, [
+        _task('$_titlePrefix工作的', date: _today),
+      ], filter: const FilterSpec(categoryIds: {'不存在的分类'}));
+
+      expect(find.byKey(TaskListPage.noMatchKey), findsOneWidget);
+      expect(find.byKey(TaskListPage.emptyKey), findsNothing);
+      expect(
+        find.textContaining('今天还空着'),
+        findsNothing,
+        reason: '有任务却说「还空着」，那是在骗人',
+      );
+      expect(find.text('清除筛选'), findsOneWidget);
+    });
+
+    testWidgets('点「清除筛选」能回到列表', (tester) async {
+      // 只显示一句话而按钮没用的话，用户就卡在那一屏了。
+      await _pump(tester, [
+        _task('$_titlePrefix工作的', date: _today),
+      ], filter: const FilterSpec(categoryIds: {'不存在的分类'}));
+      expect(find.byKey(TaskListPage.noMatchKey), findsOneWidget);
+
+      await tester.tap(find.text('清除筛选'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(TaskListPage.listKey), findsOneWidget);
+      expect(find.text('$_titlePrefix工作的'), findsOneWidget);
+    });
+
+    testWidgets('筛选生效时只留匹配的', (tester) async {
+      await _pump(tester, [
+        _task('$_titlePrefix工作的', date: _today, categoryId: 'c-work'),
+        _task('$_titlePrefix生活的', date: _today, categoryId: 'c-life'),
+      ], filter: const FilterSpec(categoryIds: {'c-work'}));
+      expect(find.text('$_titlePrefix工作的'), findsOneWidget);
+      expect(find.text('$_titlePrefix生活的'), findsNothing);
     });
   });
 }

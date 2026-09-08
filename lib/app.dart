@@ -28,6 +28,7 @@ import 'design/theme/app_theme.dart';
 import 'features/shell/presentation/app_shell.dart';
 import 'features/task/presentation/task_editor_page.dart';
 import 'features/views/shared/application/view_kind.dart';
+import 'features/views/shared/presentation/filter_bar.dart';
 import 'features/views/task_list/presentation/task_list_page.dart';
 
 /// **视图注册表**（view-specs §7.3）。
@@ -157,6 +158,9 @@ class _ShellRouteState extends State<_ShellRoute> {
         }
         return builder(context, () => _openEditor(context));
       },
+      // 筛选条由组合根提供 —— 它属于 views feature，外壳不该认识它
+      // （module-map §3）。同 viewBuilder。
+      header: const FilterBar(),
       onCreateTask: () => _openEditor(context),
       // TODO(M2-设置): 接上 /settings
       onOpenSettings: null,

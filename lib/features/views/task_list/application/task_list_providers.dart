@@ -10,19 +10,34 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:meta/meta.dart';
 
 import '../../../../app_providers.dart';
-import '../../../../core/time/plan_date.dart';
 import '../../../../domain/entities/task.dart';
 import '../../shared/application/category_providers.dart';
+import '../../shared/application/task_filter.dart';
+import '../../shared/application/view_shared_state.dart';
 import 'task_grouping.dart';
 
-/// 当前可见的任务。
+/// 库里的活动任务，**未经筛选**。
 ///
-/// M2 只做「未完成的活动任务」这一档。筛选（§2.3）还没做 ——
-/// **这里不预先塞一个假的筛选**：假筛选会让后面真正实现 §2.3 时
-/// 分不清「改对了」还是「本来就那样」。
+/// 拆成两个 provider 是有意的：这一个是数据源，
+/// [filteredTasksProvider] 才是列表看到的东西。合成一个的话，
+/// 「空态」就分不清是「一条任务都没有」还是「筛完之后没有」——
+/// 而这两种的正确文案完全不同。
 final visibleTasksProvider = StreamProvider<List<Task>>(
   (ref) => ref.watch(taskRepositoryProvider).watchTasks(),
 );
+
+/// 筛选后的任务（view-specs §2.3）。
+///
+/// 筛选状态来自 `viewSharedStateProvider` —— 四个视图共用同一份
+/// （FR-VIEW-05），所以它不属于列表这个 feature。
+final filteredTasksProvider = Provider<List<Task>>((ref) {
+  final tasks = ref.watch(visibleTasksProvider);
+  final filter = ref.watch(viewSharedStateProvider).filter;
+  return switch (tasks) {
+    AsyncData(:final value) => applyFilter(value, filter),
+    _ => const [],
+  };
+});
 
 /// 列表的分组与排序偏好（配置项 `view.listGroupBy` / `view.listSortBy`）。
 @immutable
@@ -69,37 +84,17 @@ final listPreferencesProvider =
       ListPreferencesNotifier.new,
     );
 
-/// 「今天」——**本地墙钟的今天**，不是 UTC 的（ADR-0005）。
-///
-/// 分组要靠它区分逾期/今天/明天，而东八区早上八点前 UTC 还停在昨天：
-/// 直接截 `nowUtc` 的话，用户一早打开应用，今天的事全被算成「明天」。
-final todayProvider = Provider<PlanDate>((ref) {
-  final resolver = ref.watch(timeZoneResolverProvider);
-  return resolver
-      .toWallTime(ref.watch(clockProvider).nowUtc(), resolver.currentZoneId())
-      .date;
-});
-
 /// 分好组、排好序的列表。
 ///
 /// 三个输入（任务、分类、偏好）任一变化都会重算 —— 勾完成之后
 /// 任务会自动挪到「已完成」组，不需要谁去手动通知。
 final groupedTasksProvider = Provider<List<TaskGroup>>((ref) {
-  final tasks = ref.watch(visibleTasksProvider);
   final prefs = ref.watch(listPreferencesProvider);
-
-  return switch (tasks) {
-    AsyncData(:final value) => groupTasks(
-      value,
-      groupBy: prefs.groupBy,
-      sortBy: prefs.sortBy,
-      today: ref.watch(todayProvider),
-      categories: ref.watch(categoryListProvider),
-    ),
-    // 还没读出来、或读失败，都交给页面去表达 ——
-    // 这里返回空组，页面靠 `visibleTasksProvider` 自己的状态区分
-    // 「空」与「出错」。**不能在这里把出错也当成空**，
-    // 那会让用户以为任务全没了。
-    _ => const [],
-  };
+  return groupTasks(
+    ref.watch(filteredTasksProvider),
+    groupBy: prefs.groupBy,
+    sortBy: prefs.sortBy,
+    today: ref.watch(todayProvider),
+    categories: ref.watch(categoryListProvider),
+  );
 });

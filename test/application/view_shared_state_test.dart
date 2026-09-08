@@ -8,6 +8,8 @@ import 'package:planning_assistant/app_providers.dart';
 import 'package:planning_assistant/core/time/clock.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/core/time/time_zone_resolver.dart';
+import 'package:planning_assistant/domain/entities/task.dart';
+import 'package:planning_assistant/domain/value_objects/task_status.dart';
 import 'package:planning_assistant/features/views/shared/application/view_shared_state.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 
@@ -81,8 +83,24 @@ void main() {
 
     test('设了筛选之后 isEmpty 为假', () {
       // 对照组：否则 isEmpty 恒真也能让上面那条绿。
+      // 每个维度都要单独试 —— 只试一个的话，别的维度漏进 isEmpty
+      // 不会被发现，表现是「设了筛选却当成没筛」。
       expect(const FilterSpec(categoryIds: {'work'}).isEmpty, isFalse);
-      expect(const FilterSpec(includeCompleted: true).isEmpty, isFalse);
+      expect(const FilterSpec(categoryIds: {null}).isEmpty, isFalse);
+      expect(const FilterSpec(statuses: {TaskStatus.done}).isEmpty, isFalse);
+      expect(
+        const FilterSpec(priorities: {TaskPriority.urgent}).isEmpty,
+        isFalse,
+      );
+      expect(const FilterSpec(keyword: '体检').isEmpty, isFalse);
+      expect(const FilterSpec(dateFrom: PlanDate(2026, 9, 1)).isEmpty, isFalse);
+      expect(const FilterSpec(dateTo: PlanDate(2026, 9, 30)).isEmpty, isFalse);
+    });
+
+    test('只有空白的关键词不算筛选', () {
+      // 输入框里剩个空格就当成「正在筛选」的话，
+      // 用户会看到一个清不掉的「已筛选」状态。
+      expect(const FilterSpec(keyword: '   ').isEmpty, isTrue);
     });
 
     test('关键词可以被清空', () {
@@ -95,7 +113,7 @@ void main() {
     test('对照组：不传关键词时保持原值', () {
       // 否则「一律清空」也能让上面那条绿。
       const withKeyword = FilterSpec(keyword: '体检');
-      expect(withKeyword.copyWith(includeCompleted: true).keyword, '体检');
+      expect(withKeyword.copyWith(statuses: {TaskStatus.done}).keyword, '体检');
     });
 
     test('值相等按内容比，不按引用', () {

@@ -12,6 +12,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:planning_assistant/app_providers.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
@@ -22,6 +23,7 @@ import 'package:planning_assistant/domain/value_objects/task_status.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/views/shared/application/category_providers.dart';
 import 'package:planning_assistant/features/views/shared/application/view_kind.dart';
+import 'package:planning_assistant/features/views/shared/presentation/filter_bar.dart';
 import 'package:planning_assistant/features/views/task_list/application/task_list_providers.dart';
 import 'package:planning_assistant/features/views/task_list/presentation/task_list_page.dart';
 
@@ -35,6 +37,9 @@ Widget _current(Brightness brightness, double scale) => _wrap(
     onViewSelected: (_) {},
     onCreateTask: () {},
     onOpenSettings: () {},
+    // 筛选条是外壳的一部分（组合根传进来的）—— 不传的话，
+    // 拍到的是一个线上不存在的配置。
+    header: const FilterBar(),
     viewBuilder: (context, kind) => TaskListPage(onCreateTask: () {}),
   ),
 );
@@ -52,6 +57,9 @@ Widget _withSwitcher(Brightness brightness, double scale) => _wrap(
     onViewSelected: (_) {},
     onCreateTask: () {},
     onOpenSettings: () {},
+    // 筛选条是外壳的一部分（组合根传进来的）—— 不传的话，
+    // 拍到的是一个线上不存在的配置。
+    header: const FilterBar(),
     viewBuilder: (context, kind) => TaskListPage(onCreateTask: () {}),
   ),
 );
@@ -148,6 +156,9 @@ Widget _dense(Brightness brightness, double scale) => _wrap(
     onViewSelected: (_) {},
     onCreateTask: () {},
     onOpenSettings: () {},
+    // 筛选条是外壳的一部分（组合根传进来的）—— 不传的话，
+    // 拍到的是一个线上不存在的配置。
+    header: const FilterBar(),
     viewBuilder: (context, kind) => TaskListPage(onCreateTask: () {}),
   ),
   tasks: _denseTasks(),
