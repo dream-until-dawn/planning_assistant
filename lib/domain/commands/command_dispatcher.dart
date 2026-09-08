@@ -281,6 +281,7 @@ final class CommandDispatcher {
       scope: TaskScope.all,
     );
     final incoming = {for (final s in c.stages) s.id};
+    final before = {for (final s in existing) s.id: s};
 
     final stages = <Stage>[
       for (final s in c.stages)
@@ -293,7 +294,17 @@ final class CommandDispatcher {
           durationMinutes: s.durationMinutes,
           colorArgb: s.colorArgb,
           status: s.status,
-          completedAt: s.status == TaskStatus.done ? _now() : null,
+          // **本来就完成着的，保留原来的完成时刻。**
+          //
+          // 一律盖成 `_now()` 的话，用户改一下任务标题，所有已完成阶段的
+          // 完成时间都变成「刚刚」—— 而这条整表写回是每次保存都跑的。
+          // 表现是「上周做完的事显示成刚做完」，没人会去查这个字段，
+          // 但它是导出与将来同步时的真实数据。
+          completedAt: s.status == TaskStatus.done
+              ? (before[s.id]?.status == TaskStatus.done
+                    ? before[s.id]!.completedAt
+                    : _now())
+              : null,
         ),
       // 不在新列表里的旧阶段**打墓碑而不是物理删**：
       // 物理删的话，V3 对端只会看到「这条还在」。

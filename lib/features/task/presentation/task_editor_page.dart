@@ -104,6 +104,14 @@ class TaskEditorPage extends ConsumerStatefulWidget {
       ValueKey('editor-stage-remove-$stageId');
   static Key stageUpKey(String stageId) => ValueKey('editor-stage-up-$stageId');
 
+  /// 阶段的完成勾选。
+  ///
+  /// **这个也是补出来的。** `Stage.status` 与 `StageSpec.status` 一直都在，
+  /// 甘特图还按它画进度 —— 而界面上**没有任何地方能勾**。
+  /// 与优先级是同一族（testing-strategy §1.6）。
+  static Key stageDoneKey(String stageId) =>
+      ValueKey('editor-stage-done-$stageId');
+
   /// 某个阶段的时间段按钮（FR-TASK-02：每阶段有独立时间段）。
   static Key stageTimeKey(String stageId) =>
       ValueKey('editor-stage-time-$stageId');
@@ -903,16 +911,29 @@ class _StageSection extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    // 序号跟着**列表位置**走，不是 orderIndex —— 编辑期间
-                    // 后者还没算出来（保存时才转成连续的）。
-                    SizedBox(
-                      width: Spacing.xxl,
-                      child: Text('${i + 1}.', style: text.bodySmall),
+                    // 勾完成。序号让位给它 —— 序号在时间按钮那一行
+                    // 也能看出来（第几个），而「做完没有」没有别处可看。
+                    Semantics(
+                      label: '第 ${i + 1} 个阶段完成',
+                      child: Checkbox(
+                        key: TaskEditorPage.stageDoneKey(stage.id),
+                        value: stage.isDone,
+                        onChanged: (v) =>
+                            controller.setStageDone(stage.id, v ?? false),
+                      ),
                     ),
                     Expanded(
                       child: TextField(
                         key: TaskEditorPage.stageFieldKey(stage.id),
                         decoration: const InputDecoration(hintText: '这一步做什么'),
+                        // 划掉是**辅助**，不是唯一标记 —— 勾选框自己
+                        // 就带着状态（§8.1 那条原则）。
+                        style: stage.isDone
+                            ? TextStyle(
+                                decoration: TextDecoration.lineThrough,
+                                color: context.appColors.disabledText,
+                              )
+                            : null,
                         onChanged: (v) => controller.setStageTitle(stage.id, v),
                       ),
                     ),

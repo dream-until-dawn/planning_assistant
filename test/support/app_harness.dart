@@ -45,6 +45,7 @@ Harness appHarness({
   DateTime? now,
   String zone = 'Asia/Shanghai',
   IdGenerator? idGenerator,
+  bool advancingClock = false,
 }) {
   // 时区数据库是**全局**的，且 TzTimeZoneResolver 没有它会抛
   // UnknownTimeZoneException —— 而那个异常发生在 build 里，
@@ -55,7 +56,16 @@ Harness appHarness({
   final db = AppDatabase(NativeDatabase.memory());
   addTearDown(db.close);
 
-  final clock = FixedClock(now ?? DateTime.utc(2026, 9, 7, 3));
+  // **默认钉死时钟**，于是「今天是哪天」在测试里是确定的。
+  //
+  // 但钉死的时钟量不了「时间有没有往前走」这一类事 —— 比如
+  // 「已完成阶段的完成时刻不该随每次保存漂移」：把 `completedAt` 一律
+  // 盖成 `now()` 的实现，在钉死的时钟下与正确实现**给出同一个值**，
+  // 那条测试于是永远绿。撞见过一次，所以留这个口子。
+  //
+  // 每次读往前走一秒：足够区分两次写入，又不会跨过零点把「今天」改掉。
+  final base = now ?? DateTime.utc(2026, 9, 7, 3);
+  final clock = advancingClock ? _AdvancingClock(base) : FixedClock(base);
   final repository = DriftTaskRepository(
     db,
     const FixedWriterIdentity('test-device'),
@@ -93,6 +103,20 @@ Harness appHarness({
       ),
     ],
   );
+}
+
+/// 每读一次就往前走一秒的时钟。见 [appHarness] 的 `advancingClock`。
+final class _AdvancingClock implements Clock {
+  _AdvancingClock(this._at);
+
+  DateTime _at;
+
+  @override
+  DateTime nowUtc() {
+    final value = _at;
+    _at = _at.add(const Duration(seconds: 1));
+    return value;
+  }
 }
 
 /// 拆掉 widget 树，并把 drift 取消订阅时排的那个零延时 timer 跑掉。

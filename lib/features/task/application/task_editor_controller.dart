@@ -19,6 +19,7 @@ import '../../../domain/entities/stage.dart';
 import '../../../domain/entities/task.dart';
 import '../../../domain/value_objects/occurrence_key.dart';
 import '../../../domain/value_objects/recurrence.dart';
+import '../../../domain/value_objects/task_status.dart';
 import '../../views/shared/application/category_providers.dart';
 import '../../views/shared/application/task_providers.dart';
 import 'recurrence_draft.dart';
@@ -38,6 +39,7 @@ final class StageDraft {
     this.title = '',
     this.startOffsetMinutes,
     this.durationMinutes,
+    this.status = TaskStatus.pending,
   });
 
   final String id;
@@ -55,18 +57,31 @@ final class StageDraft {
   /// 时长。null = 只有一个开始点，没有跨度。
   final int? durationMinutes;
 
+  /// 这个阶段做完了没有。
+  ///
+  /// **草稿必须带上它。** 一度没带 —— 于是编辑一条有已完成阶段的任务、
+  /// 什么都不改直接保存，`ReplaceStagesCommand` 会把整表换成
+  /// 默认的 `pending`，**用户的进度被静默清空**。
+  /// 而界面上看不出任何异常：保存成功，回到列表，卡片上的
+  /// 「阶段 1/3」变成「阶段 0/3」。
+  final TaskStatus status;
+
+  bool get isDone => status == TaskStatus.done;
+
   bool get hasTime => startOffsetMinutes != null;
 
   StageDraft copyWith({
     String? title,
     Object? startOffsetMinutes = unset,
     Object? durationMinutes = unset,
+    TaskStatus? status,
   }) => StageDraft(
     id: id,
     title: title ?? this.title,
     // 两个都要能清掉（「这个阶段其实不用定时间」），所以走哨兵。
     startOffsetMinutes: patch(startOffsetMinutes, this.startOffsetMinutes),
     durationMinutes: patch(durationMinutes, this.durationMinutes),
+    status: status ?? this.status,
   );
 }
 
@@ -312,6 +327,7 @@ TaskDraft draftFromTask(
           title: s.title,
           startOffsetMinutes: s.startOffsetMinutes,
           durationMinutes: s.durationMinutes,
+          status: s.status,
         ),
     ],
     recurrence: restored ?? const RecurrenceDraft(),
@@ -457,6 +473,20 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     ],
   );
 
+  /// 勾/取消勾一个阶段。
+  ///
+  /// **只改草稿，保存时才落库** —— 与标题、时间同一条路径。
+  /// 就地写库的话，用户改了几个阶段又点返回，那几笔已经生效了。
+  void setStageDone(String stageId, bool done) => state = state.copyWith(
+    stages: [
+      for (final s in state.stages)
+        if (s.id == stageId)
+          s.copyWith(status: done ? TaskStatus.done : TaskStatus.pending)
+        else
+          s,
+    ],
+  );
+
   void setStageTitle(String id, String title) => state = state.copyWith(
     stages: [
       for (final s in state.stages)
@@ -574,6 +604,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
         orderIndex: i,
         startOffsetMinutes: s.startOffsetMinutes,
         durationMinutes: s.durationMinutes,
+        status: s.status,
       ),
   ];
 
