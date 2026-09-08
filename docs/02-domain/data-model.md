@@ -360,6 +360,19 @@ effectiveEnd(task) = max(
   但**不静默改写** `endDate`（与 §4.1「不静默缩放」一致）。
 - 对应用例：甘特 G-05 与时间轴的跨度断言必须使用同一个 `effectiveEnd`。
 
+**实现**：`lib/domain/services/effective_span.dart`。三条要点：
+
+1. **存储侧的结束由调用方传进来**，不是在里面读 `task.endDate` ——
+   重复任务的每一次各有各的结束（被例外挪过的那一次尤其）。
+   第一版就是在里面读任务的，时间轴那条「重复任务的某一次」当场变红。
+2. `TaskOccurrence` 带上 `stages`，于是 `effectiveEndDate` /
+   `effectiveEndMinute` 对四个视图是同一个访问器。
+   展开函数（`expandForList` / `expandInWindow`）接收 `stagesByTask`，
+   由各视图的 provider 传 `stagesByTaskProvider`。
+3. 守卫在 `test/application/shared_span_test.dart`：同一条阶段事项，
+   **三个视图读出同一个结束**。它验的不是「算得对」，是「算得一样」——
+   §4.7 防的本来就是后者。
+
 ## 5. 同步信封（每张可同步表都有）
 
 | 列 | 类型 | 语义 |

@@ -38,6 +38,8 @@ final visibleOccurrencesProvider = Provider<List<TaskOccurrence>>((ref) {
         _ => const [],
       },
       today: ref.watch(todayProvider),
+      // 阶段进来算有效跨度（§4.7）—— 四视图共用同一个答案。
+      stagesByTask: ref.watch(stagesByTaskProvider),
       engine: RecurrenceEngine(ref.watch(timeZoneResolverProvider)),
       // 被跳过的那一次默认不出现（FR-TASK-05 验收）。
       // **只有用户显式筛「已跳过」时才让它现身** —— 不留这条路的话，

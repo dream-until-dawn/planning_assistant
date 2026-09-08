@@ -87,6 +87,8 @@ final calendarOccurrencesProvider = Provider<List<TaskOccurrence>>((ref) {
         // **整屏一个窗口**，含补进来的上/下月尾巴 —— 它们也要显示标记，
         // 否则月初那几格看起来是空的，而它们其实有事。
         window: DateRange(weeks.first.first.date, weeks.last.last.date),
+        // 阶段进来算有效跨度（§4.7）—— 四视图共用同一个答案。
+        stagesByTask: ref.watch(stagesByTaskProvider),
         engine: RecurrenceEngine(ref.watch(timeZoneResolverProvider)),
         includeSkipped: filter.statuses.contains(TaskStatus.skipped),
       ),
@@ -164,6 +166,6 @@ final selectedDayRowsProvider = Provider<List<TaskOccurrence>>((ref) {
 bool _coversDay(TaskOccurrence row, PlanDate date) {
   final start = row.planDate;
   if (start == null) return false;
-  final end = row.endDate ?? start;
+  final end = row.effectiveEndDate ?? start;
   return !date.isBefore(start) && !date.isAfter(end);
 }

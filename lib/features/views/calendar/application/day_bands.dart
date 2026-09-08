@@ -93,7 +93,7 @@ bool showsAsBand(TaskOccurrence row) {
   final start = row.planDate;
   if (start == null) return false;
   if (row.isAllDay) return true;
-  final end = row.endDate;
+  final end = row.effectiveEndDate;
   return end != null && end.isAfter(start);
 }
 
@@ -108,7 +108,7 @@ WeekBands weekBands(List<TaskOccurrence> rows, PlanDate weekStart) {
     final start = row.planDate;
     if (start == null) continue;
     if (!showsAsBand(row)) continue;
-    final end = row.endDate ?? start;
+    final end = row.effectiveEndDate ?? start;
     if (end.isBefore(weekStart) || start.isAfter(weekEnd)) continue;
 
     final startIndex = start.isBefore(weekStart)

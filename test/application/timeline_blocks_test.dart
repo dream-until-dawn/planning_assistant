@@ -13,6 +13,7 @@ import 'package:planning_assistant/core/time/local_wall_time.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/domain/entities/occurrence.dart';
+import 'package:planning_assistant/domain/entities/stage.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/domain/value_objects/occurrence_key.dart';
 import 'package:planning_assistant/features/views/shared/application/task_occurrence.dart';
@@ -169,6 +170,84 @@ void main() {
       expect((last.startMinute, last.endMinute), (0, minutesPerDay - 1));
       expect(last.continuesBefore, isTrue);
       expect(last.continuesAfter, isFalse, reason: '结束日之后没有了');
+    });
+  });
+
+  group('阶段能把块撑长（data-model §4.7、甘特 G-05）', () {
+    /// 一条 9:00 开始、存储的结束是 10:00、但阶段排到 12:00 的任务。
+    TaskOccurrence staged() => TaskOccurrence(
+      task: Task(
+        id: '搬家',
+        title: '搬家',
+        kind: TaskKind.staged,
+        timeZoneId: 'Asia/Shanghai',
+        planDate: _today,
+        startMinute: MinuteOfDay.of(9, 0),
+        endDate: _today,
+        endMinute: MinuteOfDay.of(10, 0),
+      ),
+      stages: const [
+        Stage(
+          id: 's1',
+          taskId: '搬家',
+          title: '搬运',
+          orderIndex: 0,
+          startOffsetMinutes: 0,
+          durationMinutes: 180,
+        ),
+      ],
+    );
+
+    test('块画到阶段结束，不是存储的结束', () {
+      // 用 `row.endMinute` 的话这里是 540..600 —— 而甘特会画到 720，
+      // 同一条任务在两个视图里一长一短。§4.7 那条规则防的就是这个。
+      final b = timelineDayFor([staged()], _today).blocks.single;
+      expect((b.startMinute, b.endMinute), (540, 720));
+    });
+
+    test('阶段跨到第二天时，第二天也有它', () {
+      // **这条盯的是「日期」那一侧**。上面那条只跨到当天 12:00，
+      // 有效结束与存储结束**是同一天**，于是把 `effectiveEndDate`
+      // 换回 `endDate` 照样绿 —— 变异演练里它活了下来。
+      // 要区分开，阶段得越过午夜。
+      final row = TaskOccurrence(
+        task: Task(
+          id: '搬家',
+          title: '搬家',
+          kind: TaskKind.staged,
+          timeZoneId: 'Asia/Shanghai',
+          planDate: _today,
+          startMinute: MinuteOfDay.of(9, 0),
+          endDate: _today,
+          endMinute: MinuteOfDay.of(10, 0),
+        ),
+        stages: const [
+          Stage(
+            id: 's1',
+            taskId: '搬家',
+            title: '搬运',
+            orderIndex: 0,
+            startOffsetMinutes: 0,
+            // 9:00 + 29 小时 = 第二天 14:00。
+            durationMinutes: 29 * 60,
+          ),
+        ],
+      );
+
+      final first = timelineDayFor([row], _today).blocks.single;
+      expect(first.continuesAfter, isTrue);
+
+      final second = timelineDayFor([row], _tomorrow).blocks.single;
+      expect((second.startMinute, second.endMinute), (0, 14 * 60));
+      expect(second.continuesBefore, isTrue);
+    });
+
+    test('对照组：没有阶段时还是存储的那一段', () {
+      // 少了这条，一个「一律加两小时」的实现也能让上面绿。
+      final b = timelineDayFor([
+        _row('搬家', start: 9 * 60, endDate: _today, end: 10 * 60),
+      ], _today).blocks.single;
+      expect((b.startMinute, b.endMinute), (540, 600));
     });
   });
 

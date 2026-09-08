@@ -9,6 +9,7 @@ import '../../../../core/time/minute_of_day.dart';
 import '../../../../core/time/plan_date.dart';
 import '../../../../domain/entities/occurrence.dart';
 import '../../../../domain/entities/occurrence_override.dart';
+import '../../../../domain/entities/stage.dart';
 import '../../../../domain/entities/task.dart';
 import '../../../../domain/recurrence/recurrence_engine.dart';
 import 'task_occurrence.dart';
@@ -76,6 +77,11 @@ List<TaskOccurrence> expandForList({
   required RecurrenceEngine engine,
   bool includeSkipped = false,
   bool includeCompleted = false,
+
+  /// 每条任务的阶段，用来算**有效跨度**（data-model §4.7）——
+  /// 末阶段可能排到 `endDate` 之后，那时跨度以阶段为准。
+  /// 不传就是「没有阶段」，跨度退回存储的那一段。
+  Map<String, List<Stage>> stagesByTask = const {},
 }) {
   final byTask = _indexOverrides(overrides);
   final out = <TaskOccurrence>[];
@@ -86,14 +92,18 @@ List<TaskOccurrence> expandForList({
     // 没有日期 → 一行，就是任务本身。「无日期」是合法且常见的状态
     // （FR-TASK-01：仅填标题即可保存），不能从列表里消失。
     if (date == null) {
-      out.add(TaskOccurrence(task: task));
+      out.add(
+        TaskOccurrence(task: task, stages: stagesByTask[task.id] ?? const []),
+      );
       continue;
     }
 
     // 不重复 → 一行。**不看窗口**：它只有一次，不存在展不完的问题，
     // 而「明年的事」从列表里消失会让人以为它丢了。
     if (!task.isRecurring) {
-      out.add(TaskOccurrence(task: task));
+      out.add(
+        TaskOccurrence(task: task, stages: stagesByTask[task.id] ?? const []),
+      );
       continue;
     }
 
@@ -113,18 +123,42 @@ List<TaskOccurrence> expandForList({
       switch (o.status) {
         case OccurrenceStatus.skipped:
           // 走到这里说明 includeSkipped 开着（否则引擎就不产出了）。
-          out.add(TaskOccurrence(task: task, occurrence: o));
+          out.add(
+            TaskOccurrence(
+              task: task,
+              occurrence: o,
+              stages: stagesByTask[task.id] ?? const [],
+            ),
+          );
         case OccurrenceStatus.done:
           if (includeCompleted || !isPast) {
-            out.add(TaskOccurrence(task: task, occurrence: o));
+            out.add(
+              TaskOccurrence(
+                task: task,
+                occurrence: o,
+                stages: stagesByTask[task.id] ?? const [],
+              ),
+            );
           }
         case OccurrenceStatus.pending:
         case OccurrenceStatus.inProgress:
           if (isPast) {
-            out.add(TaskOccurrence(task: task, occurrence: o));
+            out.add(
+              TaskOccurrence(
+                task: task,
+                occurrence: o,
+                stages: stagesByTask[task.id] ?? const [],
+              ),
+            );
           } else if (!hasNext) {
             hasNext = true;
-            out.add(TaskOccurrence(task: task, occurrence: o));
+            out.add(
+              TaskOccurrence(
+                task: task,
+                occurrence: o,
+                stages: stagesByTask[task.id] ?? const [],
+              ),
+            );
           }
       }
     }
@@ -142,7 +176,13 @@ List<TaskOccurrence> expandForList({
             o.status == OccurrenceStatus.skipped) {
           continue;
         }
-        out.add(TaskOccurrence(task: task, occurrence: o));
+        out.add(
+          TaskOccurrence(
+            task: task,
+            occurrence: o,
+            stages: stagesByTask[task.id] ?? const [],
+          ),
+        );
         break;
       }
     }
@@ -175,6 +215,11 @@ List<TaskOccurrence> expandInWindow({
   required DateRange window,
   required RecurrenceEngine engine,
   bool includeSkipped = false,
+
+  /// 每条任务的阶段，用来算**有效跨度**（data-model §4.7）——
+  /// 末阶段可能排到 `endDate` 之后，那时跨度以阶段为准。
+  /// 不传就是「没有阶段」，跨度退回存储的那一段。
+  Map<String, List<Stage>> stagesByTask = const {},
 }) {
   final byTask = _indexOverrides(overrides);
   final out = <TaskOccurrence>[];
@@ -186,7 +231,9 @@ List<TaskOccurrence> expandInWindow({
     if (!task.isRecurring) {
       // 不重复：只有一次，区间碰到窗口就算。
       if (_intersects(date, task.endDate ?? date, window)) {
-        out.add(TaskOccurrence(task: task));
+        out.add(
+          TaskOccurrence(task: task, stages: stagesByTask[task.id] ?? const []),
+        );
       }
       continue;
     }
@@ -206,10 +253,16 @@ List<TaskOccurrence> expandInWindow({
       overrides: byTask[task.id] ?? const [],
       includeSkipped: includeSkipped,
     )) {
-      final row = TaskOccurrence(task: task, occurrence: o);
+      final row = TaskOccurrence(
+        task: task,
+        occurrence: o,
+        stages: stagesByTask[task.id] ?? const [],
+      );
       final start = row.planDate;
       if (start == null) continue;
-      if (_intersects(start, row.endDate ?? start, window)) out.add(row);
+      if (_intersects(start, row.effectiveEndDate ?? start, window)) {
+        out.add(row);
+      }
     }
   }
 
