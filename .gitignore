@@ -110,3 +110,8 @@ app.*.map.json
 
 # golden 失败时的对比图，是临时产物
 test/**/failures/
+
+# Python 工具跑出来的字节码（tool/ 下那几个校验脚本）。
+# 它跟着 Python 版本走，换个版本就是一份新的二进制 diff。
+__pycache__/
+*.pyc
