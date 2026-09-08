@@ -22,9 +22,13 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'design/theme/app_theme.dart';
+import 'features/settings/application/registry.dart';
+import 'features/settings/application/settings_providers.dart';
+import 'features/settings/presentation/settings_page.dart';
 import 'features/shell/presentation/app_shell.dart';
 import 'features/task/presentation/task_editor_page.dart';
 import 'features/views/shared/application/view_kind.dart';
@@ -63,6 +67,7 @@ const Set<ViewKind> unimplementedViews = {
 abstract final class AppRoutes {
   static const String shell = '/';
   static const String newTask = '/task/new';
+  static const String settings = '/settings';
 }
 
 GoRouter buildAppRouter() => GoRouter(
@@ -71,6 +76,10 @@ GoRouter buildAppRouter() => GoRouter(
       path: AppRoutes.shell,
       builder: (context, state) => const _ShellRoute(),
       routes: [
+        GoRoute(
+          path: 'settings',
+          builder: (context, state) => const SettingsPage(),
+        ),
         GoRoute(
           path: 'task/new',
           builder: (context, state) => TaskEditorPage(
@@ -85,7 +94,7 @@ GoRouter buildAppRouter() => GoRouter(
   ],
 );
 
-class PlanningAssistantApp extends StatelessWidget {
+class PlanningAssistantApp extends ConsumerWidget {
   PlanningAssistantApp({super.key, GoRouter? router})
     : _router = router ?? buildAppRouter();
 
@@ -93,7 +102,12 @@ class PlanningAssistantApp extends StatelessWidget {
   final GoRouter _router;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // 明暗与圆角档位都是配置项 —— 根必须监听它们，
+    // 否则在设置页改完要重启才生效。
+    final corners = ref.setting(cornerStyle);
+    final mode = ref.setting(themeMode);
+
     return MaterialApp.router(
       title: '计划助手',
       debugShowCheckedModeBanner: false,
@@ -114,8 +128,13 @@ class PlanningAssistantApp extends StatelessWidget {
       locale: const Locale('zh'),
       // 明暗双主题由 design/theme 装配。刻意不用 ColorScheme.fromSeed ——
       // 它会把低饱和色算成高饱和，破坏「可爱清新」基调（design-system §9）。
-      theme: AppTheme.light(),
-      darkTheme: AppTheme.dark(),
+      theme: AppTheme.light(corners: corners),
+      darkTheme: AppTheme.dark(corners: corners),
+      themeMode: switch (mode) {
+        ThemeModeSetting.system => ThemeMode.system,
+        ThemeModeSetting.light => ThemeMode.light,
+        ThemeModeSetting.dark => ThemeMode.dark,
+      },
       routerConfig: _router,
     );
   }
@@ -126,28 +145,37 @@ class PlanningAssistantApp extends StatelessWidget {
 /// 视图切换**不产生路由**（view-specs §7.2）：当前视图是这里的一个
 /// 局部状态，改它不碰 `GoRouter`。共享的筛选、聚焦日期活在
 /// `viewSharedStateProvider` 里，同样不随路由销毁。
-class _ShellRoute extends StatefulWidget {
+class _ShellRoute extends ConsumerStatefulWidget {
   const _ShellRoute();
 
   @override
-  State<_ShellRoute> createState() => _ShellRouteState();
+  ConsumerState<_ShellRoute> createState() => _ShellRouteState();
 }
 
 void _openEditor(BuildContext context) => context.go(AppRoutes.newTask);
 
-class _ShellRouteState extends State<_ShellRoute> {
-  // TODO(M2-设置): 初值改读配置项 `view.defaultView`
-  //  （ViewKind.fromStorageKey 已经把「认不出的值」处理成回落，见 §7.4）
-  ViewKind _current = ViewKind.fallback;
+class _ShellRouteState extends ConsumerState<_ShellRoute> {
+  /// 用户在本次会话里手动切过的视图。
+  ///
+  /// **null 表示「还没切过」**，此时跟随配置项 `view.defaultView`。
+  /// 一进来就把配置值抄进本地状态的话，用户在设置页改了默认视图，
+  /// 已经开着的这一屏不会跟着变 —— 而他刚改完正等着看效果。
+  ViewKind? _picked;
 
   @override
   Widget build(BuildContext context) {
     final available = viewRegistry.keys.toList();
+    final configured = ref.setting(defaultView);
+    // 配置的默认视图可能还没实装（M3 才有另外三个）——
+    // 那时回落到实装了的第一个，而不是白屏。
+    final current =
+        _picked ??
+        (available.contains(configured) ? configured : ViewKind.fallback);
 
     return AppShell(
-      currentView: _current,
+      currentView: current,
       availableViews: available,
-      onViewSelected: (kind) => setState(() => _current = kind),
+      onViewSelected: (kind) => setState(() => _picked = kind),
       viewBuilder: (context, kind) {
         final builder = viewRegistry[kind];
         // 注册表里没有 = 只可能是新加了枚举却忘了注册。
@@ -162,8 +190,7 @@ class _ShellRouteState extends State<_ShellRoute> {
       // （module-map §3）。同 viewBuilder。
       header: const FilterBar(),
       onCreateTask: () => _openEditor(context),
-      // TODO(M2-设置): 接上 /settings
-      onOpenSettings: null,
+      onOpenSettings: () => context.go(AppRoutes.settings),
     );
   }
 }

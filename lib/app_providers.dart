@@ -33,6 +33,7 @@ import 'core/time/time_zone_bootstrap.dart';
 import 'core/time/time_zone_resolver.dart';
 import 'domain/commands/command_dispatcher.dart';
 import 'domain/repositories/category_repository.dart';
+import 'domain/repositories/settings_repository.dart';
 import 'domain/repositories/task_repository.dart';
 
 Never _mustOverride(String what) =>
@@ -86,6 +87,11 @@ final taskCommandDispatcherProvider = Provider<CommandDispatcher>(
 /// 目前分类还没有编辑界面，暂时没有写入方。
 final categoryRepositoryProvider = Provider<CategoryRepository>(
   (ref) => _mustOverride('categoryRepositoryProvider'),
+);
+
+/// 配置存取（settings-spec §1）。
+final settingsRepositoryProvider = Provider<SettingsRepository>(
+  (ref) => _mustOverride('settingsRepositoryProvider'),
 );
 
 /// 「今天」——**本地墙钟的今天**，不是 UTC 的（ADR-0005）。

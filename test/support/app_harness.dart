@@ -19,6 +19,7 @@ import 'package:planning_assistant/core/time/time_zone_resolver.dart';
 import 'package:planning_assistant/data/database/app_database.dart';
 import 'package:planning_assistant/data/database/dao/synced_dao.dart';
 import 'package:planning_assistant/data/repositories/category_repository_impl.dart';
+import 'package:planning_assistant/data/repositories/settings_repository_impl.dart';
 import 'package:planning_assistant/data/repositories/task_repository_impl.dart';
 import 'package:planning_assistant/domain/commands/command_dispatcher.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
@@ -68,6 +69,13 @@ Harness appHarness({
       ),
       categoryRepositoryProvider.overrideWithValue(
         DriftCategoryRepository(
+          db,
+          const FixedWriterIdentity('test-device'),
+          clock,
+        ),
+      ),
+      settingsRepositoryProvider.overrideWithValue(
+        DriftSettingsRepository(
           db,
           const FixedWriterIdentity('test-device'),
           clock,

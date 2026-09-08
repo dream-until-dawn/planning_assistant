@@ -7,10 +7,11 @@
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:meta/meta.dart';
 
 import '../../../../app_providers.dart';
 import '../../../../domain/entities/task.dart';
+import '../../../settings/application/registry.dart';
+import '../../../settings/application/settings_providers.dart';
 import '../../shared/application/category_providers.dart';
 import '../../shared/application/task_filter.dart';
 import '../../shared/application/view_shared_state.dart';
@@ -39,61 +40,21 @@ final filteredTasksProvider = Provider<List<Task>>((ref) {
   };
 });
 
-/// 列表的分组与排序偏好（配置项 `view.listGroupBy` / `view.listSortBy`）。
-@immutable
-final class ListPreferences {
-  const ListPreferences({
-    this.groupBy = ListGroupBy.fallback,
-    this.sortBy = ListSortBy.fallback,
-  });
-
-  final ListGroupBy groupBy;
-  final ListSortBy sortBy;
-
-  ListPreferences copyWith({ListGroupBy? groupBy, ListSortBy? sortBy}) =>
-      ListPreferences(
-        groupBy: groupBy ?? this.groupBy,
-        sortBy: sortBy ?? this.sortBy,
-      );
-
-  @override
-  bool operator ==(Object other) =>
-      other is ListPreferences &&
-      groupBy == other.groupBy &&
-      sortBy == other.sortBy;
-
-  @override
-  int get hashCode => Object.hash(groupBy, sortBy);
-}
-
-/// 偏好的持有者。
-///
-/// TODO(M2-设置): 初值改读配置项，改动写回配置。
-///   两个枚举的 `fromStorageKey` 已经把「认不出的值」处理成回落。
-final class ListPreferencesNotifier extends Notifier<ListPreferences> {
-  @override
-  ListPreferences build() => const ListPreferences();
-
-  void setGroupBy(ListGroupBy value) => state = state.copyWith(groupBy: value);
-
-  void setSortBy(ListSortBy value) => state = state.copyWith(sortBy: value);
-}
-
-final listPreferencesProvider =
-    NotifierProvider<ListPreferencesNotifier, ListPreferences>(
-      ListPreferencesNotifier.new,
-    );
-
 /// 分好组、排好序的列表。
 ///
 /// 三个输入（任务、分类、偏好）任一变化都会重算 —— 勾完成之后
 /// 任务会自动挪到「已完成」组，不需要谁去手动通知。
 final groupedTasksProvider = Provider<List<TaskGroup>>((ref) {
-  final prefs = ref.watch(listPreferencesProvider);
+  // 分组与排序**直接读配置**（settings-spec §1.1）。
+  //
+  // 一度在这两者之间放过一个自带默认值的 `ListPreferences` Notifier。
+  // 那份默认值与注册表里的 `defaultValue` 是**两处同一个事实**，
+  // 迟早分叉 —— 表现会是「设置页显示按日期，列表却按分类排」。
+  // 去掉那一层，只留注册表这一处定义。
   return groupTasks(
     ref.watch(filteredTasksProvider),
-    groupBy: prefs.groupBy,
-    sortBy: prefs.sortBy,
+    groupBy: settingOf(ref, listGroupBy),
+    sortBy: settingOf(ref, listSortBy),
     today: ref.watch(todayProvider),
     categories: ref.watch(categoryListProvider),
   );

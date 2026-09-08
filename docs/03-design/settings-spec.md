@@ -21,7 +21,12 @@ class SettingSpec<T> {
 }
 ```
 
-全部声明集中在 `lib/features/settings/registry.dart`。
+全部声明集中在 `lib/features/settings/application/registry.dart`。
+
+> 规格初版写的是 `features/settings/registry.dart`（直接放在 feature 根下）。
+> 分层守卫判它「未分类到任何一层」—— 判得对：`lib/` 下不在层目录里的文件，
+> 守卫对它的一切约束都静默失效。挪进 `application/`：
+> 它是**声明数据**，不是界面也不是领域不变量。
 
 **由此得到的性质**：
 
