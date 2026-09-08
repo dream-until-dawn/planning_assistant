@@ -11,6 +11,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
+import 'package:planning_assistant/core/time/clock.dart';
+import 'package:planning_assistant/data/database/dao/synced_dao.dart';
+import 'package:planning_assistant/data/repositories/settings_repository_impl.dart';
 import 'package:planning_assistant/design/tokens/colors.dart';
 import 'package:planning_assistant/features/settings/presentation/category_manager_page.dart';
 import 'package:planning_assistant/features/settings/presentation/settings_page.dart';
@@ -251,6 +254,125 @@ void main() {
 
       expect(await _names(harness), isEmpty);
       expect(find.byKey(CategoryManagerPage.emptyKey), findsOneWidget);
+    });
+  });
+
+  group('设为默认（settings-spec §3、§2.4 behavior.defaultCategoryId）', () {
+    /// 从列表页开编辑器，返回落库的那条任务的 categoryId。
+    Future<String?> createTaskAndReadCategory(
+      WidgetTester tester,
+      Harness harness,
+    ) async {
+      await tester.tap(find.byKey(AppShell.fabKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '随手记');
+      await tester.pump();
+      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
+      await tester.pumpAndSettle();
+      final rows = await harness.db.select(harness.db.tasks).get();
+      return rows.last.categoryId;
+    }
+
+    testAppWidgets('设了之后，新任务默认落在那个分类', (tester) async {
+      final harness = await _pumpApp(tester);
+      await _openManager(tester);
+
+      await tapVisible(
+        tester,
+        CategoryManagerPage.defaultKey('cat-default-briefcase'),
+      );
+      // 文字也要说出来 —— 星标是图标，图标不单独承载信息（§8.1）。
+      expect(find.text('工作（默认）'), findsOneWidget);
+
+      // 回列表，建一条**什么都不选**的任务。
+      for (var i = 0; i < 2; i++) {
+        await tester.tap(find.byType(BackButton).first);
+        await tester.pumpAndSettle();
+      }
+      expect(
+        await createTaskAndReadCategory(tester, harness),
+        'cat-default-briefcase',
+      );
+    });
+
+    testAppWidgets('对照组：没设过默认时，新任务是未分类', (tester) async {
+      // 少了这条，一个「永远写第一个分类」的实现也能让上面绿。
+      final harness = await _pumpApp(tester);
+      expect(await createTaskAndReadCategory(tester, harness), isNull);
+    });
+
+    testAppWidgets('再点一次就取消，回到未分类', (tester) async {
+      // 设错了却没有回头路，是最容易让人恼火的一类交互。
+      final harness = await _pumpApp(tester);
+      await _openManager(tester);
+
+      final key = CategoryManagerPage.defaultKey('cat-default-briefcase');
+      await tapVisible(tester, key);
+      expect(find.text('工作（默认）'), findsOneWidget);
+      await tapVisible(tester, key);
+      expect(find.text('工作（默认）'), findsNothing);
+      expect(find.text('工作'), findsOneWidget);
+
+      for (var i = 0; i < 2; i++) {
+        await tester.tap(find.byType(BackButton).first);
+        await tester.pumpAndSettle();
+      }
+      expect(await createTaskAndReadCategory(tester, harness), isNull);
+    });
+
+    testAppWidgets('删掉默认分类之后，新任务不会挂到一个死 id 上', (tester) async {
+      // 配置里留着被删分类的 id 的话，新建任务的 categoryId 会指向一个
+      // 不存在的分类 —— 卡片回落显示「未分类」，按「未分类」筛却找不到它。
+      // 与删分类那条路上刚修过的缺陷同一个形状，只是入口换成了配置。
+      final harness = await _pumpApp(tester);
+      await _openManager(tester);
+
+      await tapVisible(
+        tester,
+        CategoryManagerPage.defaultKey('cat-default-briefcase'),
+      );
+      await tapVisible(
+        tester,
+        CategoryManagerPage.deleteKey('cat-default-briefcase'),
+      );
+      await tester.tap(find.byKey(CategoryManagerPage.deleteConfirmKey));
+      await tester.pumpAndSettle();
+
+      // 存下来的那个值也得收干净，不能只靠读侧兜底。
+      // 只验「新任务是未分类」的话，读侧那道回落会把这件事**盖住** ——
+      // 变异演练里就是这样：把这里的收尾整段删掉，一条测试都不红。
+      // 而留着死 id 有它自己的后果：导出时带出去一条指向不存在分类的配置，
+      // 而且那个分类若从回收站恢复，它会**悄悄又变回默认**。
+      final stored = await harness.db.select(harness.db.settings).get();
+      final row = stored.firstWhere(
+        (r) => r.key == 'behavior.defaultCategoryId',
+      );
+      expect(row.valueJson, contains('uncategorized'));
+
+      for (var i = 0; i < 2; i++) {
+        await tester.tap(find.byType(BackButton).first);
+        await tester.pumpAndSettle();
+      }
+      expect(await createTaskAndReadCategory(tester, harness), isNull);
+    });
+
+    testAppWidgets('配置里直接躺着一个不存在的 id，也回落成未分类', (tester) async {
+      // 上一条验的是**写侧收尾**（删的时候把配置一并收回）。
+      // 这一条验**读侧兜底**：配置可能来自导入、同步、或降级安装，
+      // 那些路径上没有「删除」这个动作可挂钩。两处都要有。
+      final harness = await _pumpApp(tester);
+      await DriftSettingsRepository(
+        harness.db,
+        const FixedWriterIdentity('test-device'),
+        FixedClock(DateTime.utc(2026, 9, 7, 3)),
+      ).put(
+        'behavior.defaultCategoryId',
+        'cat-does-not-exist',
+        scope: 'global',
+      );
+      await tester.pumpAndSettle();
+
+      expect(await createTaskAndReadCategory(tester, harness), isNull);
     });
   });
 

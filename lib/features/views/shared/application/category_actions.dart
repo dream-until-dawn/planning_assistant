@@ -21,6 +21,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app_providers.dart';
 import '../../../../design/tokens/colors.dart';
 import '../../../../domain/entities/category.dart';
+import '../../../settings/application/registry.dart';
+import '../../../settings/application/settings_providers.dart';
 import 'category_providers.dart';
 
 /// 新建分类时的默认图标。
@@ -77,8 +79,25 @@ final class CategoryActions {
 
   /// 删除。**其下任务变成未分类，任务本身不删**（FR-CFG-03）——
   /// 那一步在仓库里，与打墓碑同一个事务。
-  Future<void> remove(String id) =>
-      _ref.read(categoryRepositoryProvider).deleteCategory(id);
+  ///
+  /// 删的正好是默认分类时，把配置一并收回未分类 —— 留着一个死 id 的话，
+  /// 新建任务会挂到一个不存在的分类上（`defaultCategoryIdProvider` 读的时候
+  /// 会回落，但那是读侧兜底；这里是写侧收尾，两处都做）。
+  Future<void> remove(String id) async {
+    if (_ref.read(defaultCategoryIdProvider) == id) {
+      await setDefault(null);
+    }
+    await _ref.read(categoryRepositoryProvider).deleteCategory(id);
+  }
+
+  /// 设为新任务的默认分类（settings-spec §3「设为默认」）。
+  /// 传 null 表示「默认是未分类」。
+  ///
+  /// 再点一次已经是默认的那个 = 取消，回到未分类。**不做成只能设不能取消**：
+  /// 设错了却没有回头路，是最容易让人恼火的一类交互。
+  Future<void> setDefault(String? categoryId) => _ref
+      .read(settingsWriterProvider)
+      .set(defaultCategoryId, categoryId ?? kUncategorizedSettingValue);
 
   /// 拖拽重排：把第 [from] 项移到第 [to] 位。
   ///

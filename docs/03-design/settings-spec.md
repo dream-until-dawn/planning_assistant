@@ -120,7 +120,7 @@ Stream<T> watchSetting<T>(SettingSpec<T> spec);
 | key | 类型 | 默认值 | 暴露 | 说明 |
 |---|---|---|---|---|
 | `behavior.defaultDurationMinutes` | int | `60` | ✅ | 新任务默认时长 |
-| `behavior.defaultCategoryId` | string | `uncategorized` | ✅ | |
+| `behavior.defaultCategoryId` | string | `uncategorized` | 🔒* | *不在设置页里，入口是[分类管理](#3-分类管理fr-cfg-03)每一行上的星标 —— 它的选项是用户自己的分类（运行时数据），而注册表里的 `select` 只能列静态选项。值为 `uncategorized` 时表示未分类；**这只是这一项配置的取值，不是第三种「未分类」的编码**（§3.0 仍然只认 `categoryId IS NULL`）。读出来时若指向一个已被删除的分类，回落成未分类 |
 | `behavior.defaultPriority` | int | `2` | ✅ | 普通 |
 | `behavior.swipeRight` | enum | `complete` | ✅ | complete / postpone / delete / none |
 | `behavior.swipeLeft` | enum | `postpone` | ✅ | 同上 |
@@ -177,7 +177,7 @@ Stream<T> watchSetting<T>(SettingSpec<T> spec);
 | 编辑 | 名称、颜色、图标 |
 | 排序 | 拖拽，改 `orderIndex` |
 | 删除 | 其下任务 `categoryId` 置 NULL（迁到「未分类」），**不级联删任务** |
-| 设为默认 | 写入 `behavior.defaultCategoryId` |
+| 设为默认 | 写入 `behavior.defaultCategoryId`。再点一次取消（回到未分类）——设错了没有回头路是最容易让人恼火的一类交互。删掉正好是默认的那个分类时，配置一并收回未分类 |
 
 ### 3.0 ⚠️「未分类」是 **NULL**，不是一行
 

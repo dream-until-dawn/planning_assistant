@@ -17,6 +17,7 @@ import '../../../core/time/plan_date.dart';
 import '../../../domain/commands/task_command.dart';
 import '../../../domain/entities/task.dart';
 import '../../../domain/value_objects/recurrence.dart';
+import '../../views/shared/application/category_providers.dart';
 import 'recurrence_draft.dart';
 
 /// 表单里的一个阶段（FR-TASK-02）。
@@ -229,8 +230,19 @@ final class TaskDraft {
 
 /// 表单控制器。
 final class TaskEditorController extends Notifier<TaskDraft> {
+  /// 初值。**分类取配置里的默认**（settings-spec §2.4
+  /// `behavior.defaultCategoryId`、§3「设为默认」）。
+  ///
+  /// 用 `read` 不用 `watch`：watch 的话，用户填到一半时分类表推来一帧
+  /// 新数据，这个 Notifier 会重建 —— 填的东西全没了。
+  /// 初值就该只在开表单那一刻取一次。
+  ///
+  /// `defaultCategoryIdProvider` 已经对着当前分类表校过了：
+  /// 配置里指着一个被删掉的分类时回落成未分类，而不是造出一条
+  /// 指向死分类的任务。
   @override
-  TaskDraft build() => const TaskDraft();
+  TaskDraft build() =>
+      TaskDraft(categoryId: ref.read(defaultCategoryIdProvider));
 
   void setTitle(String value) => state = state.copyWith(title: value);
 

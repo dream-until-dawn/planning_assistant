@@ -76,6 +76,7 @@ final List<SettingSpecBase> settingsRegistry = [
   defaultView,
   listGroupBy,
   listSortBy,
+  defaultCategoryId,
 ];
 
 // ── 外观 ────────────────────────────────────────────────────────
@@ -108,6 +109,38 @@ final SettingSpec<CornerStyle> cornerStyle = _enumSpec(
   group: SettingGroup.appearance,
   label: '圆角',
   description: '影响卡片、按钮等所有圆角',
+);
+
+// ── 行为 ────────────────────────────────────────────────────────
+
+/// 「未分类」在这项配置里的存储值（settings-spec §2.4 的默认值）。
+///
+/// **它只是这一项配置的取值，不是第三种「未分类」的编码。**
+/// 任务那一侧仍然只有一种：`categoryId IS NULL`（§3.0）。
+/// 这里需要一个字符串，是因为配置的值域是字符串 —— 存不了 null 与
+/// 「没设过」的区别。读出来时由 `defaultCategoryIdProvider` 折算回 null。
+const String kUncategorizedSettingValue = 'uncategorized';
+
+/// 新任务默认落在哪个分类（settings-spec §2.4、§3「设为默认」）。
+///
+/// **不在设置页里出现**（`hidden`），入口在分类管理页的每一行上 ——
+/// 它的选项是用户自己的分类，是运行时数据，而注册表里的 `select`
+/// 只能列静态选项。硬塞进设置页要么列不全，要么得再造一种编辑器，
+/// 而那一整套只为这一项服务。
+///
+/// 隐藏不等于没人管：它照常参与读取、导出与导入（FR-CFG-08），
+/// 而**消费者是任务编辑器的初值**（`TaskEditorController.build`）——
+/// 没有消费者的声明会变成一个改了没反应的开关，见本文件开头那段。
+final SettingSpec<String> defaultCategoryId = SettingSpec<String>(
+  key: 'behavior.defaultCategoryId',
+  defaultValue: kUncategorizedSettingValue,
+  group: SettingGroup.behavior,
+  label: '新任务的默认分类',
+  encode: (v) => v,
+  // 不是字符串就当没设过。分类被删之后这里会留着一个死 id ——
+  // 那不在这一层处理：解码只管「读出来的是不是一个 id」，
+  // 「这个 id 还在不在」由 `defaultCategoryIdProvider` 判。
+  decode: (json) => json is String ? json : kUncategorizedSettingValue,
 );
 
 // ── 视图 ────────────────────────────────────────────────────────

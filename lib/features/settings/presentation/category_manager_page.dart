@@ -43,6 +43,7 @@ class CategoryManagerPage extends ConsumerWidget {
   static Key renameKey(String id) => ValueKey('category-rename-$id');
   static Key deleteKey(String id) => ValueKey('category-delete-$id');
   static Key colorKey(String id) => ValueKey('category-color-$id');
+  static Key defaultKey(String id) => ValueKey('category-default-$id');
   static Key colorOptionKey(int argb) =>
       ValueKey('category-color-option-$argb');
 
@@ -190,6 +191,7 @@ class _CategoryRow extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final actions = ref.read(categoryActionsProvider);
     final text = Theme.of(context).textTheme;
+    final isDefault = ref.watch(defaultCategoryIdProvider) == category.id;
 
     return ListTile(
       contentPadding: EdgeInsets.zero,
@@ -216,10 +218,24 @@ class _CategoryRow extends ConsumerWidget {
           ),
         ),
       ),
-      title: Text(category.name, style: text.bodyLarge),
+      // 默认那一条**同时用文字说出来**：星标是图标，而图标不单独承载
+      // 信息（design-system §8.1）。读屏用户只听得到「星形按钮」，
+      // 听不出这一行就是默认的。
+      title: Text(
+        isDefault ? '${category.name}（默认）' : category.name,
+        style: text.bodyLarge,
+      ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // 设为默认（settings-spec §3）。**用一个填实/描边的星标**，
+          // 不是只给默认那一行加个角标 —— 后者没有「怎么改」的入口。
+          IconButton(
+            key: CategoryManagerPage.defaultKey(category.id),
+            tooltip: isDefault ? '取消默认' : '设为新任务的默认分类',
+            icon: Icon(isDefault ? Icons.star : Icons.star_border),
+            onPressed: () => actions.setDefault(isDefault ? null : category.id),
+          ),
           IconButton(
             key: CategoryManagerPage.renameKey(category.id),
             tooltip: '改名',
