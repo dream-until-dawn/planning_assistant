@@ -15,6 +15,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
+import 'package:planning_assistant/features/settings/application/registry.dart';
+import 'package:planning_assistant/features/settings/application/settings_providers.dart';
+import 'package:planning_assistant/features/settings/domain/setting_spec.dart';
 import 'package:planning_assistant/features/settings/presentation/settings_page.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
@@ -30,6 +33,20 @@ Future<Harness> _pumpApp(WidgetTester tester) async {
   );
   await tester.pumpAndSettle();
   return harness;
+}
+
+/// 把某个方向的滑动动作改掉。走**真的写入口**（与设置页同一条路），
+/// 不是塞一份假配置 —— 那样验的就不是「配置改了真的生效」。
+Future<void> _setSwipe(
+  WidgetTester tester,
+  SettingSpec<SwipeAction> spec,
+  SwipeAction action,
+) async {
+  final container = ProviderScope.containerOf(
+    tester.element(find.byType(PlanningAssistantApp)),
+  );
+  await container.read(settingsWriterProvider).set(spec, action);
+  await tester.pumpAndSettle();
 }
 
 Future<void> _create(
@@ -94,6 +111,54 @@ void main() {
       expect(
         (await harness.db.select(harness.db.tasks).get()).single.status,
         'pending',
+      );
+    });
+  });
+
+  group('滑动删除（回收站做出来之后才敢放进手势里）', () {
+    // 这个动作一度**不在可选项里**：滑一下就把整条重复任务删了，
+    // 而当时唯一的退路是一条 Snackbar —— 划走了就找不回来。
+    // 回收站做出来之后理由消失了：软删除，随时能恢复。
+
+    testAppWidgets('滑一下进回收站，库里是墓碑不是真删', (tester) async {
+      final harness = await _pumpApp(tester);
+      await _create(tester, '买菜');
+      await _setSwipe(tester, swipeLeft, SwipeAction.delete);
+
+      await _swipe(tester, -400);
+
+      expect(find.text('已移到回收站'), findsOneWidget);
+      final rows = await harness.db.select(harness.db.tasks).get();
+      expect(rows, hasLength(1), reason: '物理删了 —— 回收站就无从谈起');
+      expect(rows.single.deletedAt, isNotNull);
+    });
+
+    testAppWidgets('撤销把它捞回来 —— 这条退路是这个手势能存在的前提', (tester) async {
+      final harness = await _pumpApp(tester);
+      await _create(tester, '买菜');
+      await _setSwipe(tester, swipeLeft, SwipeAction.delete);
+
+      await _swipe(tester, -400);
+      await tester.tap(find.text('撤销'));
+      await tester.pumpAndSettle();
+
+      expect(
+        (await harness.db.select(harness.db.tasks).get()).single.deletedAt,
+        isNull,
+      );
+      expect(find.text('买菜'), findsOneWidget);
+    });
+
+    testAppWidgets('对照组：默认不是删除 —— 误开这个手势代价太大', (tester) async {
+      final harness = await _pumpApp(tester);
+      await _create(tester, '买菜');
+
+      await _swipe(tester, -400);
+
+      expect(
+        (await harness.db.select(harness.db.tasks).get()).single.deletedAt,
+        isNull,
+        reason: '默认左滑变成删除了',
       );
     });
   });

@@ -143,6 +143,7 @@ final SettingSpec<CornerStyle> cornerStyle = _enumSpec(
 enum SwipeAction {
   complete('complete', '完成'),
   postpone('postpone', '推迟一天'),
+  delete('delete', '删除'),
   none('none', '不做事');
 
   const SwipeAction(this.storageKey, this.label);
@@ -152,10 +153,13 @@ enum SwipeAction {
 
   /// **只列做得出来的那几个。**
   ///
-  /// settings-spec 里还写了 `delete`。没放进来是因为「滑一下就把整条
-  /// 重复任务删了」在误触时代价太大，而撤销目前只是一条 Snackbar ——
-  /// 等回收站的入口做出来（M3）再加。摆一个删不掉的「删除」选项，
-  /// 比没有这个选项更糟。
+  /// `delete` 一度不在这里：「滑一下就把整条重复任务删了」在误触时
+  /// 代价太大，而当时唯一的退路是一条 Snackbar —— 划走了就找不回来。
+  /// 回收站做出来之后这个理由消失了：删除是软删除，进回收站，
+  /// 随时能恢复。所以补上。
+  ///
+  /// 这条注释留着是因为它记的是**判据**，不是当时的结论：
+  /// 一个动作能不能放进滑动手势，看的是「误触之后有没有回头路」。
   static SwipeAction fromStorageKey(String? key) {
     for (final v in values) {
       if (v.storageKey == key) return v;
