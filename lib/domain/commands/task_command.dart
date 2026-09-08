@@ -15,7 +15,9 @@ library;
 import '../../core/patch/unset.dart';
 import '../../core/time/minute_of_day.dart';
 import '../../core/time/plan_date.dart';
+import '../entities/occurrence.dart';
 import '../entities/task.dart';
+import '../value_objects/occurrence_key.dart';
 import '../value_objects/task_status.dart';
 
 /// 命令解析失败。
@@ -57,6 +59,9 @@ sealed class TaskCommand {
       DeleteTaskCommand.kType => DeleteTaskCommand.fromJson(json),
       RestoreTaskCommand.kType => RestoreTaskCommand.fromJson(json),
       ReplaceStagesCommand.kType => ReplaceStagesCommand.fromJson(json),
+      SetOccurrenceStatusCommand.kType => SetOccurrenceStatusCommand.fromJson(
+        json,
+      ),
       CompleteTaskWithStagesCommand.kType =>
         CompleteTaskWithStagesCommand.fromJson(json),
       _ => throw UnknownCommandException(type),
@@ -285,6 +290,61 @@ final class ChangeTaskStatusCommand extends TaskCommand {
       ChangeTaskStatusCommand(
         taskId: json['taskId']! as String,
         status: TaskStatus.fromWireName(json['status']! as String),
+      );
+}
+
+/// 改**某一次发生**的状态（FR-TASK-05）。
+///
+/// ## 为什么不是 [ChangeTaskStatusCommand]
+///
+/// 重复任务的 `tasks.status` **恒为 pending**，真实状态在
+/// `occurrence_overrides`（data-model §4.3，领域不变量强制）。
+/// 拿 `ChangeTaskStatusCommand` 去改一条重复任务，落库前会被不变量
+/// 直接拒掉 —— 那正是补这条命令之前的真实行为：**在列表里勾一条
+/// 重复任务，抛 `DomainInvariantViolation`**。
+///
+/// ## `status` 为 null 的含义
+///
+/// 「回到跟随规则」，实现上是删掉那条例外，而不是写一条
+/// `status = pending` 的例外。后者会让「从没动过」与「动过又撤回」
+/// 在库里长得不一样，而它们对用户是同一件事 —— 于是导出、同步、
+/// 「这一次改过没有」的判断全都要多分一支。
+final class SetOccurrenceStatusCommand extends TaskCommand {
+  const SetOccurrenceStatusCommand({
+    required this.taskId,
+    required this.occurrenceKey,
+    required this.status,
+  });
+
+  static const kType = 'setOccurrenceStatus';
+
+  final String taskId;
+
+  /// **原始**发生时刻的标识（§4.2）——
+  /// 这一次即使被挪到别的日期，它仍然是同一次。
+  final OccurrenceKey occurrenceKey;
+
+  /// null = 清掉例外，回到跟随规则。
+  final OccurrenceStatus? status;
+
+  @override
+  String get type => kType;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'type': kType,
+    'taskId': taskId,
+    'occurrenceKey': occurrenceKey.value,
+    'status': status?.wireName,
+  };
+
+  static SetOccurrenceStatusCommand fromJson(Map<String, Object?> json) =>
+      SetOccurrenceStatusCommand(
+        taskId: json['taskId']! as String,
+        occurrenceKey: OccurrenceKey.parse(json['occurrenceKey']! as String),
+        status: json['status'] == null
+            ? null
+            : OccurrenceStatus.fromWireName(json['status']! as String),
       );
 }
 

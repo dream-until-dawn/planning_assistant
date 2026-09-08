@@ -7,6 +7,8 @@ library;
 
 import '../../core/patch/unset.dart';
 import '../../core/time/clock.dart';
+import '../entities/occurrence.dart';
+import '../entities/occurrence_override.dart';
 import '../entities/stage.dart';
 import '../entities/task.dart';
 import '../policies/task_lifecycle.dart';
@@ -64,9 +66,36 @@ final class CommandDispatcher {
         await _repo.restoreTask(command.taskId);
       case ReplaceStagesCommand():
         await _replaceStages(command);
+      case SetOccurrenceStatusCommand():
+        await _setOccurrenceStatus(command);
       case CompleteTaskWithStagesCommand():
         await _completeWithStages(command);
     }
+  }
+
+  /// 改某一次发生的状态（FR-TASK-05）。
+  ///
+  /// `status == null` 表示回到跟随规则 —— **删掉那条例外**，
+  /// 而不是写一条 `pending` 的例外，理由见命令本身的注释。
+  ///
+  /// `completedAt` 与任务侧同一套语义：转 done 时记下**实际点完成的
+  /// 那一刻**（不是计划时间，data-model §5），转别的状态时清掉。
+  /// 少了这一步，「今天完成的」这类查询会把历史上完成过的也算进来。
+  Future<void> _setOccurrenceStatus(SetOccurrenceStatusCommand c) async {
+    final status = c.status;
+    if (status == null) {
+      await _repo.removeOverride(c.taskId, c.occurrenceKey);
+      return;
+    }
+    await _repo.saveOverride(
+      OccurrenceOverride(
+        taskId: c.taskId,
+        key: c.occurrenceKey,
+        action: OverrideAction.modify,
+        status: status,
+      ),
+      completedAt: status == OccurrenceStatus.done ? _now() : null,
+    );
   }
 
   /// 按顺序执行一串命令。

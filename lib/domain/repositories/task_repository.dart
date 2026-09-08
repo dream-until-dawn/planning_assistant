@@ -6,8 +6,10 @@
 /// 方法签名里**不出现任何 Drift 类型**，架构守卫会检查这一点。
 library;
 
+import '../entities/occurrence_override.dart';
 import '../entities/stage.dart';
 import '../entities/task.dart';
+import '../value_objects/occurrence_key.dart';
 
 /// 查询任务时的可见性范围（task-lifecycle §1.1 的三个谓词）。
 ///
@@ -53,6 +55,30 @@ abstract interface class TaskRepository {
 
   /// 写入任务。**会校验领域不变量**，违反时抛异常而不是写进库。
   Future<void> saveTask(Task task);
+
+  /// 全部单次例外，持续推送。
+  ///
+  /// **一次取全部，不按任务分**：列表要一次展开几十条重复任务，
+  /// 逐条查库就是 N+1；而例外总量很小（只有被交互过的那几次才落行）。
+  Stream<List<OccurrenceOverride>> watchAllOverrides();
+
+  Future<List<OccurrenceOverride>> findOverridesOfTask(String taskId);
+
+  /// 写一条例外。
+  ///
+  /// **按 `(taskId, key)` 覆盖**，不是每次插一行 —— 一次发生只该有一条
+  /// 例外（data-model §4.3.1）。[completedAt] 只在状态转 done 时有意义。
+  Future<void> saveOverride(
+    OccurrenceOverride override, {
+    DateTime? completedAt,
+  });
+
+  /// 清掉一条例外，让那一次回到「跟随规则」。
+  ///
+  /// 取消完成时用它，而不是写一条 `status = pending` 的例外 ——
+  /// 后者会让「从没动过」与「动过又撤回」在库里长得不一样，
+  /// 而它们对用户是同一件事。
+  Future<void> removeOverride(String taskId, OccurrenceKey key);
 
   /// 写入任务及其阶段（同一事务）。
   ///

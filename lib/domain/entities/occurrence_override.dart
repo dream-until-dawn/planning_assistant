@@ -11,7 +11,23 @@ import '../../core/time/plan_date.dart';
 import '../value_objects/occurrence_key.dart';
 import 'occurrence.dart';
 
-enum OverrideAction { skip, modify }
+enum OverrideAction {
+  skip,
+  modify;
+
+  /// 存进数据库与导出格式的串。**不存枚举序号** ——
+  /// 序号随枚举重排而变，会静默改写全部历史数据（同 `TaskStatus`）。
+  String get wireName => name;
+
+  /// 未知值**抛异常而不是回落** —— 静默回落会把「数据坏了」
+  /// 变成「用户跳过的那一次自己回来了」。
+  static OverrideAction fromWireName(String value) {
+    for (final a in OverrideAction.values) {
+      if (a.name == value) return a;
+    }
+    throw FormatException('未知的例外动作', value);
+  }
+}
 
 @immutable
 final class OccurrenceOverride {

@@ -12,7 +12,24 @@ import '../value_objects/occurrence_key.dart';
 ///
 /// 注意与 `TaskStatus` 的区别：重复任务的 `tasks.status` **恒为 pending**，
 /// 真实状态落在这里（data-model §4.3）。
-enum OccurrenceStatus { pending, inProgress, done, skipped }
+enum OccurrenceStatus {
+  pending,
+  inProgress,
+  done,
+  skipped;
+
+  /// 存进数据库与导出格式的串，取值与 `TaskStatus.wireName` 一致 ——
+  /// 同一件事在两处用同一套词，导出格式里也就只有一套状态词。
+  String get wireName => name;
+
+  /// 未知值抛异常，不回落（同 `TaskStatus.fromWireName` 的理由）。
+  static OccurrenceStatus fromWireName(String value) {
+    for (final s in OccurrenceStatus.values) {
+      if (s.name == value) return s;
+    }
+    throw FormatException('未知的发生状态', value);
+  }
+}
 
 @immutable
 final class Occurrence {
