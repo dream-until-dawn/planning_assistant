@@ -146,12 +146,26 @@ abstract final class Spacing {
 
 /// 阴影（§6）。不用锐利深阴影。
 abstract final class Shadows {
+  /// 卡片阴影。**两层**：一层定边，一层给深度。
+  ///
+  /// 页面底改成纯白之后，卡片与页面同色，边界完全由这个阴影承担
+  /// （§2.2、§6）。原来的单层 6% / blur 12 是配奶油底的 ——
+  /// 在纯白上几乎看不见，卡片读起来像一段没有容器的文字。
+  ///
+  /// 分两层而不是把单层调深：
+  /// - **定边那层**贴得近（y=1, blur=3），负责「这里有个边」——
+  ///   它必须紧，散开就成了一团灰雾；
+  /// - **深度那层**散得开（y=4, blur=16, spread=-4），负责「它浮起来」。
+  ///
+  /// 把单层调深到同样可见的话，会得到一圈发灰的硬边 ——
+  /// 正是 §6 第一句「不用锐利深阴影」要避免的。
   static const List<BoxShadow> soft = [
+    BoxShadow(color: Color(0x14504659), offset: Offset(0, 1), blurRadius: 3),
     BoxShadow(
-      color: Color(0x0F504659),
-      offset: Offset(0, 2),
-      blurRadius: 12,
-      spreadRadius: -2,
+      color: Color(0x1A504659),
+      offset: Offset(0, 4),
+      blurRadius: 16,
+      spreadRadius: -4,
     ),
   ];
 
