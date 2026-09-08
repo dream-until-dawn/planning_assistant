@@ -84,6 +84,10 @@ sealed class TaskCommand {
     RestoreTaskCommand.kType,
     ReplaceStagesCommand.kType,
     CompleteTaskWithStagesCommand.kType,
+    SetOccurrenceStatusCommand.kType,
+    SkipOccurrenceCommand.kType,
+    MoveOccurrenceCommand.kType,
+    SplitRecurringTaskCommand.kType,
   ];
 }
 

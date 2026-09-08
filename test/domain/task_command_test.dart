@@ -10,13 +10,16 @@
 library;
 
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/core/patch/unset.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/domain/commands/task_command.dart';
+import 'package:planning_assistant/domain/entities/occurrence.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
+import 'package:planning_assistant/domain/value_objects/occurrence_key.dart';
 import 'package:planning_assistant/domain/value_objects/task_status.dart';
 
 /// 每种命令一个**字段填满**的样本。
@@ -80,18 +83,83 @@ final _samples = <TaskCommand>[
     ],
   ),
   const CompleteTaskWithStagesCommand('task-1'),
+  SetOccurrenceStatusCommand(
+    taskId: 'task-1',
+    occurrenceKey: _key,
+    status: OccurrenceStatus.done,
+  ),
+  SkipOccurrenceCommand(taskId: 'task-1', occurrenceKey: _key),
+  MoveOccurrenceCommand(
+    taskId: 'task-1',
+    occurrenceKey: _key,
+    planDate: const PlanDate(2026, 9, 20),
+    startMinute: MinuteOfDay.of(14, 30),
+  ),
+  SplitRecurringTaskCommand(
+    taskId: 'task-1',
+    splitAt: _key,
+    newTask: const CreateTaskCommand(
+      taskId: 'task-2',
+      title: '分裂出来的那一半',
+      kind: TaskKind.single,
+      timeZoneId: 'Asia/Shanghai',
+      planDate: PlanDate(2026, 9, 20),
+      splitFromTaskId: 'task-1',
+    ),
+    stages: const [StageSpec(id: 's9', title: '第一步', orderIndex: 0)],
+  ),
 ];
+
+/// 样本里用的那一次。带时刻的形态 —— 全天形态是纯日期，
+/// 用它才验得到 `THH:mm` 那一段有没有丢。
+final _key = OccurrenceKey.timed(
+  const PlanDate(2026, 9, 8),
+  MinuteOfDay.of(9, 0),
+);
 
 void main() {
   group('JSON 往返（V4 验收项）', () {
     test('样本覆盖了全部命令类型 —— 少一种就说明漏测了', () {
       // 没有这条的话，新增命令时忘了加样本，下面所有用例照样全绿。
       expect(_samples.map((c) => c.type).toSet(), TaskCommand.allTypes.toSet());
-      expect(TaskCommand.allTypes.length, 9);
       expect(
         TaskCommand.allTypes.toSet().length,
         TaskCommand.allTypes.length,
         reason: '类型串重复会让 fromJson 永远走到先匹配的那个',
+      );
+    });
+
+    test('`allTypes` 与源码里声明的 kType **逐个对得上**', () {
+      // ## 这条是补出来的，因为上面那条曾经形同虚设
+      //
+      // `allTypes` 是**手写**的一张表。M2 后期加了四条命令
+      // （改某次状态、跳过、挪走、本次及以后）都没往里加 ——
+      // 于是上面那条「样本覆盖全部类型」比的是**两张都过时的表**：
+      // 样本少四个、allTypes 也少四个，两边一样，照样全绿。
+      //
+      // 当时还有一条 `expect(allTypes.length, 9)` 看着像兜底，其实不是：
+      // 它只在**有人改了 allTypes** 时才响，而真实的失败模式恰恰是
+      // 「忘了改」。计数式守卫验的是基数，要验的是同一性。
+      //
+      // 所以改成扫源码：`task_command.dart` 里每一个 `kType` 声明都必须
+      // 在 allTypes 里，反之亦然。
+      final source = File('lib/domain/commands/task_command.dart')
+          .readAsStringSync();
+      final declared = RegExp(r"static const kType = '(\w+)';")
+          .allMatches(source)
+          .map((m) => m.group(1)!)
+          .toSet();
+
+      // 自检：扫出来得像回事，不能因为正则失配变成空集合而「通过」。
+      expect(declared, contains(CreateTaskCommand.kType));
+      expect(declared.length, greaterThan(8));
+
+      expect(
+        TaskCommand.allTypes.toSet(),
+        declared,
+        reason:
+            'allTypes 与源码里的 kType 分叉了 —— '
+            '少的那些命令 fromJson 认不出来，回放时会被静默丢弃',
       );
     });
 
