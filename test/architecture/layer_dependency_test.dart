@@ -67,6 +67,11 @@ const _unlayeredAllowList = {
   'main.dart', // 入口，只调 bootstrap
   'app.dart', // MaterialApp 装配
   'bootstrap.dart', // 初始化编排
+  // 组合根的 Provider **声明**（实现全部在 bootstrap 里覆盖）。
+  // 不能塞进 core/：那样 core 就要 import flutter_riverpod，而 domain
+  // 合法地 import core 且禁止 Flutter —— 两条合法的边复合出一条违规，
+  // 且分层守卫只看直接 import，抓不到。同 B6 的形状。
+  'app_providers.dart',
 };
 
 bool _isGeneratedPath(String relToLib) =>
@@ -183,6 +188,14 @@ const Map<String, List<(String, String)>> _forbiddenRaw = {
       '/domain/repositories/',
       'presentation 不得持有 Repository（写路径必须经 TaskCommand，FR-AI-01）',
     ),
+    // 组合根装配页面并**注入**路由跳转（外壳的 onOpenSettings、
+    // 设置页的 onOpenCategories 都是这么接的）。页面反过来 import 它
+    // 就成了环：app.dart → settings_page.dart → app.dart。
+    //
+    // 补这条是因为真写出来过一次：设置页里直接
+    // `context.go(AppRoutes.categories)` —— 编译过、分析过、当时全部守卫
+    // 也绿，因为 `app.dart` 在不分层白名单里，没有任何一条规则管得到它。
+    ('/app.dart', 'presentation 不得依赖组合根 app.dart；路由跳转由组合根注入回调'),
   ],
 };
 
@@ -412,6 +425,17 @@ const _illegalCases = <(String file, String import, String expectContains)>[
     'features/task/presentation/x.dart',
     'package:planning_assistant/domain/repositories.dart',
     '不得持有 Repository',
+  ),
+  (
+    'features/settings/presentation/x.dart',
+    'package:planning_assistant/app.dart',
+    '不得依赖组合根',
+  ),
+  (
+    // 相对路径写法也要判红，否则换个写法就绕过去了。
+    'features/settings/presentation/x.dart',
+    '../../../app.dart',
+    '不得依赖组合根',
   ),
   (
     'features/views/gantt/presentation/x.dart',
@@ -800,13 +824,27 @@ import
       // DAO 基类与各表 DAO 自身。
       'data/database/dao/synced_dao.dart',
       'data/database/dao/table_daos.dart',
-      // Repository 实现是 DAO 的唯一上层调用方。
-      'data/repositories/task_repository_impl.dart',
       // 导入导出与回放走裸 SQL，不经 DAO —— 它们是「恢复」不是「操作」，
       // 不该再写一遍 outbox。见各自文件的头部注释。
       'data/dto/export_bundle.dart',
       'data/outbox/change_log_replayer.dart',
     };
+
+    /// **Repository 实现是 DAO 的唯一上层调用方** —— 这是一条结构规则，
+    /// 按目录判，不按文件名列举。
+    ///
+    /// 初版把 `data/repositories/task_repository_impl.dart` 写进了上面的
+    /// 名单。加第二个仓库（分类）时它当场变红，而那次「违规」是合法的：
+    /// 一个仓库实现调它自己的 DAO，正是这一层该干的事。
+    ///
+    /// 照名单走的话，以后每加一个仓库就机械地补一行 —— 而补一行比想清楚
+    /// 容易，于是名单会一直长下去。上面那句「长白名单等于没有白名单」
+    /// 说的就是这个，所以这里换成按目录判。
+    ///
+    /// 范围没有变松：`data/repositories/` 下本来就只放仓库实现，
+    /// 而**谁能调仓库的写方法**由 `allowedRepoWriters` 另外管着 ——
+    /// FR-AI-01 那条「UI 必须经命令」靠的是那一张表，不是这一张。
+    bool isRepositoryImpl(String rel) => rel.startsWith('data/repositories/');
 
     final violations = <String>[];
     for (final file in _dartFiles('lib')) {
@@ -835,7 +873,11 @@ import
             '$m'
             r'\s*\(',
           ).hasMatch(line);
-          if (!calls || allowedDaoWriters.contains(rel)) continue;
+          if (!calls ||
+              allowedDaoWriters.contains(rel) ||
+              isRepositoryImpl(rel)) {
+            continue;
+          }
           violations.add(
             '  - lib/$rel:${i + 1}\n      $line\n'
             '      违反: DAO 写方法 $m 不得在 data/ 之外直接调用',

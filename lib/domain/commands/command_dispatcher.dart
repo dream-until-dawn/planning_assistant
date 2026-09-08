@@ -7,10 +7,15 @@ library;
 
 import '../../core/patch/unset.dart';
 import '../../core/time/clock.dart';
+import '../../core/time/time_zone_resolver.dart';
+import '../entities/occurrence.dart';
+import '../entities/occurrence_override.dart';
 import '../entities/stage.dart';
 import '../entities/task.dart';
 import '../policies/task_lifecycle.dart';
+import '../recurrence/recurrence_engine.dart';
 import '../repositories/task_repository.dart';
+import '../value_objects/occurrence_key.dart';
 import '../value_objects/recurrence.dart';
 import '../value_objects/task_status.dart';
 import 'task_command.dart';
@@ -30,13 +35,23 @@ final class EntityNotFoundException implements Exception {
 
 /// 执行 [TaskCommand]。
 final class CommandDispatcher {
-  const CommandDispatcher(this._repo, this._clock);
+  /// [engine] 只为「本次及以后」用：截断原规则要算 `UNTIL`，
+  /// 而那要经时区换算（`withEndDate`）。自己拼 UNTIL 串是
+  /// recurrence-engine §2.3 明确禁止的 —— 少个 `Z` 就静默错一次。
+  ///
+  /// 默认给一个用系统时区库的引擎，于是绝大多数调用方不必关心它。
+  const CommandDispatcher(
+    this._repo,
+    this._clock, {
+    this._engine = const RecurrenceEngine(TzTimeZoneResolver()),
+  });
 
   final TaskRepository _repo;
 
   /// 注入时钟。**不读系统时钟** —— 否则命令的效果不可复现，
   /// 回放一致性测试也就无从谈起。
   final Clock _clock;
+  final RecurrenceEngine _engine;
 
   DateTime _now() => _clock.nowUtc();
 
@@ -64,9 +79,114 @@ final class CommandDispatcher {
         await _repo.restoreTask(command.taskId);
       case ReplaceStagesCommand():
         await _replaceStages(command);
+      case SetOccurrenceStatusCommand():
+        await _setOccurrenceStatus(command);
+      case SplitRecurringTaskCommand():
+        await _split(command);
+      case MoveOccurrenceCommand():
+        await _moveOccurrence(command);
+      case SkipOccurrenceCommand():
+        await _repo.saveOverride(
+          OccurrenceOverride.skip(
+            taskId: command.taskId,
+            key: command.occurrenceKey,
+          ),
+        );
       case CompleteTaskWithStagesCommand():
         await _completeWithStages(command);
     }
+  }
+
+  /// 「本次及以后」：把原规则在分割点截断，再建一条从分割点起的新任务
+  /// （FR-TASK-06、data-model §4.4）。
+  ///
+  /// **不改历史** —— 分割点之前的发生与它们的完成记录原样留在原任务上。
+  Future<void> _split(SplitRecurringTaskCommand c) async {
+    final original = await _require(c.taskId);
+    final recurrence = original.recurrence;
+    if (recurrence == null) {
+      throw StateError('任务 ${c.taskId} 不重复，谈不上「本次及以后」');
+    }
+
+    // 分割点正好是第一次 → 截断出来的原任务一次都不发生，留下一条死任务。
+    // 这时「本次及以后」与「改整条」是同一件事，直接改整条。
+    final firstKey = OccurrenceKey.fromWallTime(
+      original.startWallTime!,
+      isAllDay: original.isAllDay,
+    );
+    if (c.splitAt == firstKey) {
+      await _create(c.newTask.copyWithId(c.taskId));
+      await _writeStages(c.taskId, c.stages);
+      return;
+    }
+
+    // 原规则截到**分割点前一天**为止 —— 分割点那一次归新任务。
+    // 截到分割点当天的话，那一次会同时出现在两条任务上。
+    await _repo.saveTask(
+      original.copyWith(
+        recurrence: _engine.withEndDate(
+          recurrence,
+          c.splitAt.date.addDays(-1),
+          original.timeZoneId,
+        ),
+      ),
+    );
+    await _create(c.newTask);
+    await _writeStages(c.newTask.taskId, c.stages);
+  }
+
+  /// 整表写回阶段。空表也要写 —— 那表示「这条任务没有阶段」。
+  Future<void> _writeStages(String taskId, List<StageSpec> specs) =>
+      _replaceStages(ReplaceStagesCommand(taskId: taskId, stages: specs));
+
+  /// 把某一次挪到别的日期（FR-TASK-05）。
+  ///
+  /// **在已有例外之上叠加**，不是覆盖：那一次可能已经被改过标题、
+  /// 或者标成了进行中。整条替换掉的话，左滑推迟一下就把用户之前
+  /// 改的东西抹了。
+  Future<void> _moveOccurrence(MoveOccurrenceCommand c) async {
+    final existing = await _repo.findOverridesOfTask(c.taskId);
+    final prior = existing.where((o) => o.key == c.occurrenceKey).firstOrNull;
+
+    await _repo.saveOverride(
+      OccurrenceOverride(
+        taskId: c.taskId,
+        key: c.occurrenceKey,
+        action: OverrideAction.modify,
+        status: prior?.status,
+        titleOverride: prior?.titleOverride,
+        noteOverride: prior?.noteOverride,
+        planDateOverride: c.planDate,
+        startMinuteOverride: c.startMinute ?? prior?.startMinuteOverride,
+        endDateOverride: prior?.endDateOverride,
+        endMinuteOverride: prior?.endMinuteOverride,
+      ),
+    );
+  }
+
+  /// 改某一次发生的状态（FR-TASK-05）。
+  ///
+  /// `status == null` 表示回到跟随规则 —— **删掉那条例外**，
+  /// 而不是写一条 `pending` 的例外，理由见命令本身的注释。
+  ///
+  /// `completedAt` 与任务侧同一套语义：转 done 时记下**实际点完成的
+  /// 那一刻**（不是计划时间，data-model §5），转别的状态时清掉。
+  /// 少了这一步，「今天完成的」这类查询会把历史上完成过的也算进来。
+  Future<void> _setOccurrenceStatus(SetOccurrenceStatusCommand c) async {
+    final status = c.status;
+    if (status == null) {
+      await _repo.removeOverride(c.taskId, c.occurrenceKey);
+      return;
+    }
+    await _repo.saveOverride(
+      OccurrenceOverride(
+        taskId: c.taskId,
+        key: c.occurrenceKey,
+        action: OverrideAction.modify,
+        status: status,
+      ),
+      completedAt: status == OccurrenceStatus.done ? _now() : null,
+    );
   }
 
   /// 按顺序执行一串命令。
@@ -109,6 +229,7 @@ final class CommandDispatcher {
       colorArgb: c.colorArgb,
       icon: c.icon,
       sortOrder: c.sortOrder,
+      splitFromTaskId: c.splitFromTaskId,
     );
     await _repo.saveTask(task);
   }
@@ -151,6 +272,7 @@ final class CommandDispatcher {
   }
 
   Future<void> _replaceStages(ReplaceStagesCommand c) async {
+    _requireStageCount(c.stages);
     _requireContiguousOrder(c.stages);
 
     final task = await _require(c.taskId);
@@ -181,6 +303,20 @@ final class CommandDispatcher {
     ];
 
     await _repo.saveTaskWithStages(task, stages);
+  }
+
+  /// 阶段数只能是 **0 或 ≥2**（FR-TASK-02：「包含 2..N 个有序阶段」）。
+  ///
+  /// 0 是合法的 —— 那是「把阶段事项改回单项」。
+  /// **1 个不合法**：一个只有一个阶段的阶段事项，进度永远是 0/1 或 1/1，
+  /// 与单项任务没有任何区别，却多担一套阶段的读写路径。
+  ///
+  /// 之所以在这里挡而不是只在界面挡：界面是**当前唯一**的入口，
+  /// 而 V4 的语音/Agent 会构造同一批命令（FR-AI-01）。
+  void _requireStageCount(List<StageSpec> stages) {
+    if (stages.length == 1) {
+      throw const DomainInvariantViolation('阶段事项至少要两个阶段，或者一个都没有（改回单项）');
+    }
   }
 
   /// `orderIndex` 必须从 0 起连续（data-model §3.2）。

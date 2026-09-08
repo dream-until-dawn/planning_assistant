@@ -11,12 +11,15 @@
 @TestOn('vm')
 library;
 
+import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:planning_assistant/app_providers.dart';
 import 'package:planning_assistant/bootstrap.dart';
 import 'package:planning_assistant/core/time/time_zone_bootstrap.dart';
 import 'package:planning_assistant/core/time/time_zone_resolver.dart';
+import 'package:planning_assistant/data/database/app_database.dart';
 import 'package:planning_assistant/platform/timezone/platform_time_zone.dart';
 import 'package:timezone/timezone.dart' as tz;
 
@@ -39,6 +42,10 @@ Future<TimeZoneSetupResult> runBootstrap(
       },
     ),
     timeZoneSource: source,
+    // **必须注入内存库。** 不注入的话 bootstrap 会走 drift_flutter，
+    // 那要经 path_provider 的平台通道取应用目录，而测试环境里没有那一端
+    // —— 表现不是失败而是**永远挂着**，测试跑不完也不报错。
+    database: AppDatabase(NativeDatabase.memory()),
   );
   await tester.pump();
   return captured;

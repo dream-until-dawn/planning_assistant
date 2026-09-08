@@ -59,8 +59,8 @@
 | `isAllDay` | BOOL | NOT NULL DEFAULT 0 | |
 | `planDate` | TEXT | NULL | `yyyy-MM-dd`。重复任务即 DTSTART 的日期 |
 | `startMinute` | INT | NULL | 0..1439，`isAllDay=1` 时为 NULL |
-| `endDate` | TEXT | NULL | 跨天任务的结束日 |
-| `endMinute` | INT | NULL | |
+| `endDate` | TEXT | NULL | 跨天任务的结束日。非空时 `planDate` 必须非空。**有 `endDate` 而 `endMinute` 为空 = 到那天的 23:59**，见下 |
+| `endMinute` | INT | NULL | 0..1439，`isAllDay=1` 时为 NULL；非空时 `endDate` 必须非空。与开始侧同一套规矩，由 `Task.checkInvariants` 强制 |
 | `timeZoneId` | TEXT | NOT NULL | IANA，创建时的时区 |
 | `recurrenceRule` | TEXT | NULL | RFC 5545 `RRULE:` 串。NULL = 不重复。**必须是本应用 `encodeRrule()` 产出的规范形**（含 `UNTIL` 时必带 `Z`），不得直接存外部原串 —— 见[重复引擎 §2.3](recurrence-engine.md#23-编码-rrule-必须显式开启-istimeutc强制) |
 | `recurrenceExDates` | TEXT | NULL | JSON 数组。**V1 不参与展开**，仅作导入 `.ics` 的原始留档，见 §4.5 |
@@ -76,6 +76,30 @@
 
 > 归档与删除都用时间戳列表达（`archivedAt` / `deletedAt`），不占用 `status` 取值。
 > 否则重复任务（`status` 恒为 `pending`）将永远无法被归档。三个可见性谓词见[任务生命周期 §1.1](task-lifecycle.md#11-归档与删除不是状态)。
+
+#### 3.1.1 「有结束日期、没有结束时刻」是什么意思
+
+编辑器允许只选结束日不选结束时刻（「从今天 14:00 忙到后天」）。
+
+**这不是一条新规则**：M1 定 `UNTIL` 时就已经决定了「到某日止 = 该日的
+**日终**」（[重复引擎 §6.1c](recurrence-engine.md#61c-到某日止的日终语义探针场景-4-暴露的产品级坑)，
+`untilForEndDate` 用 `MinuteOfDay.endOfDay`）。这里只是把同一条规则用到
+`endMinute` 上。**两处不要各自表述** —— 同一个语义分两处写，迟早只改一处。
+
+这个形态**必须在三处读成同一件事**：
+
+| 谁 | 怎么读 |
+|---|---|
+| `Task._endsBeforeItStarts` | 判先后时把空的结束时刻当 **1439** |
+| `occurrence_expansion._durationOf()` | 折算重复任务的时长时按 **1439** |
+| `timeline_blocks._endOffset()` | 画块时按 **1439** |
+
+三处不一致的代价**不是差一分钟**。`_endsBeforeItStarts` 是**校验谓词**，
+不是渲染逻辑：它若把空的结束时刻当 0 而 `_durationOf` 当 1439，那么
+「9/7 09:00 → 9/7（无结束时刻）」会被一条路径判成「结束早于开始」而**拒收**，
+另一条路径却算得出正的长度。那是写不进去，不是画歪一点。
+`test/application/expand_in_window_test.dart` 的「两条路径必须读出同一个块」
+把前两条钉在一起。
 
 ### 3.2 `stages`
 
@@ -113,7 +137,7 @@
 
 | 列 | 类型 | 说明 |
 |---|---|---|
-| `id` | TEXT PK | |
+| `id` | TEXT PK | **由 `(taskId, occurrenceKey)` 确定性派生**（`<taskId>#<occurrenceKey>`），不是随机 UUID。理由见 §4.3.1 |
 | `taskId` | TEXT NOT NULL FK CASCADE | |
 | `occurrenceKey` | TEXT NOT NULL | **原始**发生时刻的墙钟串（未被修改前的），唯一标识是哪一次。**格式定义见 §4.6**（全天任务与定时任务形态不同） |
 | `action` | TEXT NOT NULL | `skip` \| `modify` |
@@ -156,10 +180,14 @@
 | `colorArgb` | INT NOT NULL | |
 | `icon` | TEXT NOT NULL | 图标标识串（不存二进制） |
 | `orderIndex` | INT NOT NULL | |
-| `isSystemDefault` | BOOL NOT NULL DEFAULT 0 | 「未分类」这条不可删 |
+| `isSystemDefault` | BOOL NOT NULL DEFAULT 0 | **当前无使用者**，见 settings-spec §3.0 |
 | **同步信封** | | |
 
-首次启动写入的默认分类见[配置中心规格](../03-design/settings-spec.md) §4。
+首次启动写入的默认分类见[配置中心规格](../03-design/settings-spec.md) §3.1
+（初版这里写的是「§4」，而 §4 是设置页的信息架构 —— 指错了）。
+
+⚠️ **「未分类」不是这张表里的一行**，而是 `tasks.categoryId IS NULL`。
+理由与后果见 [settings-spec §3.0](../03-design/settings-spec.md)。
 
 ### 3.7 `tags` / `task_tags`
 
@@ -242,6 +270,32 @@ UI 层始终展示绝对日期，编辑时换算回偏移。「不自动缩放�
 重复任务本身没有「完成」这个状态，只有某一次发生被完成。把状态写在任务行上会导致「完成了今天的，明天的也显示已完成」。
 
 状态一律落在 `occurrence_overrides.status`。**这条是硬约束，由领域层不变量检查强制**，并有专门的回归测试。
+
+### 4.3.1 例外行的 `id` 为什么是派生的，不是随机 UUID
+
+一次发生的身份就是 `(taskId, occurrenceKey)` —— 领域实体
+`OccurrenceOverride` 里**根本没有 id 这个字段**，它的相等性由这两者决定。
+存储层却需要一个主键。两种取法：
+
+| 取法 | 结果 |
+|---|---|
+| 随机 UUID | 同一次发生可以有**两行**例外 |
+| **派生**（采纳） | 同一次发生天然只有一行 |
+
+随机 UUID 会在两条路上出问题，而且都很隐蔽：
+
+1. **重复写不幂等。**「勾完成 → 取消 → 再勾」会插三行例外，
+   而读取时「哪一行说了算」没有定义 —— 表现为完成状态随机跳。
+2. **V3 同步会造出重影。** 两台设备各自把同一次标为完成，带着两个不同的
+   id 同步上去，合并时它们是两条互不相干的记录，于是那一天出现两个
+   「已完成」的同一件事。派生 id 让两边落在同一行，退化成一次普通的
+   字段冲突，由信封的 `revision` / `lastWriterId` 解决。
+
+派生式：`'<taskId>#<occurrenceKey>'`。`occurrenceKey` 的格式见 §4.6，
+其中不含 `#`（日期与 `THH:mm`），所以拼接无歧义。
+
+> 同理适用于 `stage_occurrence_states`（§3.5）：
+> 它的身份是 `(taskId, stageId, occurrenceKey)`。
 
 ### 4.4 「本次及以后」修改怎么实现（FR-TASK-06）
 

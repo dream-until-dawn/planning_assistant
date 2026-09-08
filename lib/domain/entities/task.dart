@@ -141,6 +141,20 @@ final class Task {
     );
   }
 
+  /// 结束早于开始。
+  ///
+  /// 先比日期，同一天才比分钟。**缺失的结束时刻按当天最后一分钟算**，
+  /// 不按 00:00 —— 「9/8 九点开始，9/8 结束」说的是「那天结束前」，
+  /// 按 00:00 理解会把一条完全正常的任务判成违规。
+  bool get _endsBeforeItStarts {
+    final start = planDate;
+    final end = endDate;
+    if (start == null || end == null) return false;
+    if (end.isBefore(start)) return true;
+    if (end != start) return false;
+    return (endMinute?.value ?? 1439) < (startMinute?.value ?? 0);
+  }
+
   /// 校验领域不变量。**显式抛出，不用 `assert`**（task-lifecycle §3.1）——
   /// `assert` 在 AOT release 构建里整条消失，正式包零保护。
   ///
@@ -167,6 +181,26 @@ final class Task {
     if (isAllDay && startMinute != null) {
       throw DomainInvariantViolation(
         '任务 $id 是全天任务却带 startMinute=${startMinute!.value}',
+      );
+    }
+    // 结束侧与开始侧对称。**这四条是补上的** —— 一开始只写了开始侧，
+    // 而那时编辑器还写不出结束时间，于是「没有测试会红」与
+    // 「不会出问题」看起来是一回事。写得出来的那天，坏数据就落库了。
+    if (isAllDay && endMinute != null) {
+      throw DomainInvariantViolation(
+        '任务 $id 是全天任务却带 endMinute=${endMinute!.value}',
+      );
+    }
+    if (endMinute != null && endDate == null) {
+      throw DomainInvariantViolation('任务 $id 有结束时刻却没有结束日期 —— 「几点」落不到哪一天上');
+    }
+    if (endDate != null && planDate == null) {
+      throw DomainInvariantViolation('任务 $id 有结束日期却没有开始日期');
+    }
+    if (_endsBeforeItStarts) {
+      throw DomainInvariantViolation(
+        '任务 $id 的结束（$endDate ${endMinute?.value}）早于开始'
+        '（$planDate ${startMinute?.value}）',
       );
     }
     if (status == TaskStatus.done && completedAt == null) {

@@ -9,7 +9,8 @@ planning_assistant/
 ├── lib/
 │   ├── main.dart              入口：仅做 bootstrap，不写业务
 │   ├── bootstrap.dart         初始化编排（DB、时区、通知、错误捕获）
-│   ├── app.dart               MaterialApp + 路由 + 主题装配
+│   ├── app.dart               **组合根**：MaterialApp + 路由表 + 视图注册表 + 主题装配
+│   ├── app_providers.dart     应用级 Provider **声明**（实现全部在 bootstrap 覆盖）
 │   │
 │   ├── core/                  与业务无关的基础设施（可整包复制到别的项目）
 │   │   ├── result/            Result/Failure 类型
@@ -47,7 +48,7 @@ planning_assistant/
 │   │   └── illustrations/     插画与图标
 │   │
 │   ├── features/              按用户能力切分的功能模块
-│   │   ├── shell/             外壳：导航、路由表、启动页
+│   │   ├── shell/             外壳**外观**：视图切换器、FAB、设置入口（不含路由表，见 §1.1）
 │   │   ├── task/              任务 CRUD 与编辑器
 │   │   ├── views/             四视图
 │   │   │   ├── shared/        共享的可见实例 Provider、筛选状态
@@ -71,6 +72,54 @@ planning_assistant/
 ├── integration_test/          真机端到端
 └── tool/                      开发脚本（codegen、schema dump、发版）
 ```
+
+### 1.1 路由表为什么在组合根，不在 `features/shell/`
+
+初版把「导航、路由表」写在 `features/shell/` 名下。M2 真的去写外壳时
+才发现这与 §3 冲突：
+
+- §3 禁止 `features/*/presentation` 引用**别的 feature 的** `presentation`；
+- 而路由表按定义就要认识各个 feature 的页面。
+
+两条放一起，**路由表不可能待在任何一个 feature 里** —— 放进 `shell`
+就得 import `views/task_list/presentation`，那条守卫当场判红，
+而且它判得对：真让 shell 认识所有页面，「加一个视图」就要改外壳，
+view-specs §7.3 承诺的「枚举加一项 + 注册一行」也就作废了。
+
+解法是把两件事拆开：
+
+| | 在哪 | 认识什么 |
+|---|---|---|
+| 外壳**外观**（切换器 / FAB / 设置入口） | `features/shell/presentation` | 只认识 `ViewKind` 这个名字 |
+| 路由表与**视图注册表** | `lib/app.dart`（组合根） | 认识所有页面 |
+
+组合根不在 `features/` 下，不属于任何 feature，因此可以同时依赖它们 ——
+这正是组合根该干的事。§3 一个字没破，而且外壳因此彻底不知道有哪些视图：
+「只有一个视图」和「有四个视图」对它是同一件事。
+
+### 1.2 `app_providers.dart`：应用级 Provider 的声明
+
+时钟、时区换算器这类**全应用**的依赖，声明放这里，实现全部在
+`bootstrap.dart` 的 `ProviderScope.overrides` 里注入。
+
+**为什么不放 `core/`**：那样 `core/` 就得 import `flutter_riverpod`，
+而 `domain/` 合法地 import `core/` 且**禁止任何 Flutter 依赖**
+（NFR-MAINT-02）。两条边各自合法，复合起来领域层就静默地拖进了
+Flutter —— 而分层守卫只看直接 import，抓不到。与
+[M0 执行记录](../05-engineering/m0-record.md) 里 B6 记的是同一个形状。
+
+**为什么不放某个 feature**：时钟是全应用的，放进哪个 feature
+都会让别的 feature 反向依赖它。
+
+**为什么一律不给默认值**：`Provider((ref) => const SystemClock())`
+看着方便，代价是忘记覆盖时不报错，测试会静默用上真实时钟 ——
+「测试依赖真实时间」这种缺陷要等到某天半夜跑 CI 才暴露。
+声明里一律抛异常，让「忘了注入」在第一次读取时就炸。
+
+> 这个文件在分层守卫的 `_unlayeredAllowList` 里显式列着 ——
+> `lib/` 下每个文件都必须被分类到某一层，否则守卫对它静默失效。
+
+---
 
 ## 2. feature 内部结构（强制统一）
 

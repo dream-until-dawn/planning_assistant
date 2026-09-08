@@ -1,0 +1,1203 @@
+/// 新建任务（FR-TASK-01）。
+///
+/// **仅填标题即可保存** —— 这是验收标准，也是整个界面的组织原则：
+/// 标题输入框自动聚焦，保存按钮就在拇指够得到的地方，其余全是可选的加法。
+/// M2 验收还有一条「从点开 App 到任务落库 ≤ 3 次点击」：
+/// 悬浮加号 → 打字 → 保存，正好三下。
+///
+/// 三种形态都在这里：单项（FR-TASK-01）、阶段（FR-TASK-02）、
+/// 重复（FR-TASK-03/04）。后两者默认收着 —— 大多数任务是单项的，
+/// 一进来摊开全部选项，是把少数情形的成本摊给所有人。
+///
+/// **单次例外与「本次及以后」（FR-TASK-05/06）还没做**：
+/// 那需要写 `OccurrenceOverride`，而重复任务在列表里还没有展开成
+/// 多次发生 —— 没有「某一次」可指的时候，「改某一次」无从谈起。
+library;
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../app_providers.dart';
+import '../../../core/time/minute_of_day.dart';
+import '../../../core/time/plan_date.dart';
+import '../../../design/components/app_button.dart';
+import '../../../design/components/app_chip.dart';
+import '../../../design/theme/app_theme.dart';
+import '../../../design/tokens/dimensions.dart';
+import '../../views/shared/application/category_providers.dart';
+import '../application/recurrence_draft.dart';
+import '../application/stage_time.dart';
+import '../application/task_editor_controller.dart';
+
+class TaskEditorPage extends ConsumerStatefulWidget {
+  const TaskEditorPage({this.onSaved, super.key});
+
+  /// 保存成功后调用，参数是新任务的 ID。由组合根接上返回上一页。
+  final void Function(String taskId)? onSaved;
+
+  static const Key titleFieldKey = ValueKey('editor-title');
+  static const Key noteFieldKey = ValueKey('editor-note');
+  static const Key saveButtonKey = ValueKey('editor-save');
+  static const Key allDaySwitchKey = ValueKey('editor-all-day');
+  static const Key dateFieldKey = ValueKey('editor-date');
+  static const Key timeFieldKey = ValueKey('editor-time');
+
+  /// 结束侧（FR-TASK-01 的「可选计划时间段」）。
+  ///
+  /// 收在一个开关后面：绝大多数任务只有一个「哪天」，没有跨度，
+  /// 默认摊开两行日期两行时刻是把少数情形的成本摊给所有人。
+  static const Key endSwitchKey = ValueKey('editor-has-end');
+  static const Key endDateFieldKey = ValueKey('editor-end-date');
+  static const Key endTimeFieldKey = ValueKey('editor-end-time');
+
+  /// 分类选择区。每个选项的 Key 见 [categoryChipKey]。
+  static const Key categoryPickerKey = ValueKey('editor-category');
+
+  /// 阶段区。
+  static const Key stageSectionKey = ValueKey('editor-stages');
+  static const Key addStageKey = ValueKey('editor-add-stage');
+
+  /// 「为什么不能存」那句提示。
+  static const Key blockedReasonKey = ValueKey('editor-blocked');
+
+  /// 重复区。
+  static const Key recurrenceSwitchKey = ValueKey('editor-repeat');
+
+  /// 规则这个界面表达不了时的那一行只读说明。
+  static const Key unsupportedRecurrenceKey = ValueKey(
+    'editor-repeat-readonly',
+  );
+  static const Key recurrenceSummaryKey = ValueKey('editor-repeat-summary');
+
+  static Key frequencyKey(RecurrenceFrequency f) =>
+      ValueKey('editor-repeat-freq-${f.name}');
+  static Key weekdayKey(Weekday d) => ValueKey('editor-repeat-day-${d.name}');
+  static Key endModeKey(RecurrenceEndMode m) =>
+      ValueKey('editor-repeat-end-${m.name}');
+
+  /// 间隔（每 N 天/周/…）与次数的加减器，以及「到某天为止」的日期。
+  ///
+  /// 这三个一度**只存在于模型里，界面上够不着** —— `interval` 恒为 1、
+  /// `count` 恒为默认值 10，而 `until` 永远是 null，
+  /// 于是选了「到某天为止」就再也存不下去。见 §重复区的注释。
+  static const String intervalStepper = 'editor-repeat-interval';
+  static const String countStepper = 'editor-repeat-count';
+  static const Key untilFieldKey = ValueKey('editor-repeat-until');
+
+  /// 加减器上的三个部件。[name] 取 [intervalStepper] / [countStepper]。
+  static Key stepperValueKey(String name) => ValueKey(name);
+  static Key stepperDecKey(String name) => ValueKey('$name-dec');
+  static Key stepperIncKey(String name) => ValueKey('$name-inc');
+
+  static Key stageFieldKey(String stageId) => ValueKey('editor-stage-$stageId');
+  static Key stageRemoveKey(String stageId) =>
+      ValueKey('editor-stage-remove-$stageId');
+  static Key stageUpKey(String stageId) => ValueKey('editor-stage-up-$stageId');
+
+  /// 某个阶段的时间段按钮（FR-TASK-02：每阶段有独立时间段）。
+  static Key stageTimeKey(String stageId) =>
+      ValueKey('editor-stage-time-$stageId');
+
+  /// 阶段时间对话框里的四个选择器与两个按钮。
+  static const Key stageTimeStartDateKey = ValueKey('stage-time-start-date');
+  static const Key stageTimeStartTimeKey = ValueKey('stage-time-start-time');
+  static const Key stageTimeEndDateKey = ValueKey('stage-time-end-date');
+  static const Key stageTimeEndTimeKey = ValueKey('stage-time-end-time');
+  static const Key stageTimeConfirmKey = ValueKey('stage-time-confirm');
+  static const Key stageTimeClearKey = ValueKey('stage-time-clear');
+
+  /// 某个分类选项的 Key。`null` 是「未分类」那一项。
+  static Key categoryChipKey(String? categoryId) =>
+      ValueKey('editor-category-${categoryId ?? 'none'}');
+
+  @override
+  ConsumerState<TaskEditorPage> createState() => _TaskEditorPageState();
+}
+
+class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
+  /// 保存中。**用它挡住重复提交** —— 连点两下保存会建出两条任务，
+  /// 而命令自带 ID 只保证同一条命令重放幂等，不保证两条不同命令去重。
+  bool _saving = false;
+
+  /// 标题与备注的控制器。
+  ///
+  /// **编辑模式必须有**：`TextField` 不带 controller 时永远从空串开始，
+  /// 于是打开一条已有任务，标题栏是空的 —— 看起来像内容全丢了。
+  ///
+  /// 在 `initState` 里**取一次**草稿来填初值，之后不再跟着草稿走：
+  /// 每帧回填的话，光标会在用户打字时被弹回开头。
+  late final TextEditingController _title;
+  late final TextEditingController _note;
+
+  @override
+  void initState() {
+    super.initState();
+    final draft = ref.read(taskEditorProvider);
+    _title = TextEditingController(text: draft.title);
+    _note = TextEditingController(text: draft.note);
+  }
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _note.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final id = await ref.read(taskEditorProvider.notifier).save();
+      widget.onSaved?.call(id);
+    } finally {
+      // 页面可能已经被 onSaved 弹掉了，setState 会抛。
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  /// 「今天」经时钟 + 时区换算器拿，**不用 `DateTime.now()`**。
+  ///
+  /// 分层守卫只扫 domain 与 feature application，presentation 不在射程内，
+  /// 所以这里写 `DateTime.now()` 不会变红 —— 但 cross-cutting §1 那条
+  /// 禁令针对的是「业务代码」，日期选择器默认落在哪天正是业务。
+  /// 更实际的理由：直接用系统时钟的话，「默认日期是今天」这件事没法测。
+  PlanDate _today() {
+    final resolver = ref.read(timeZoneResolverProvider);
+    return resolver
+        .toWallTime(ref.read(clockProvider).nowUtc(), resolver.currentZoneId())
+        .date;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final draft = ref.watch(taskEditorProvider);
+    final controller = ref.read(taskEditorProvider.notifier);
+    final colors = context.appColors;
+    final text = Theme.of(context).textTheme;
+
+    return Scaffold(
+      backgroundColor: colors.canvas,
+      appBar: AppBar(
+        backgroundColor: colors.canvas,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        title: Text(draft.isEditing ? '编辑任务' : '新建任务'),
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(Spacing.pageHorizontal),
+          children: [
+            TextField(
+              key: TaskEditorPage.titleFieldKey,
+              controller: _title,
+              // 一进来就能打字，省掉一次点击（≤3 次点击那条验收）。
+              autofocus: true,
+              textInputAction: TextInputAction.next,
+              decoration: const InputDecoration(
+                labelText: '要做什么',
+                hintText: '比如：买菜',
+              ),
+              onChanged: controller.setTitle,
+            ),
+            const SizedBox(height: Spacing.xl),
+            TextField(
+              key: TaskEditorPage.noteFieldKey,
+              controller: _note,
+              minLines: 1,
+              maxLines: 4,
+              decoration: const InputDecoration(labelText: '备注（可选）'),
+              onChanged: controller.setNote,
+            ),
+            const SizedBox(height: Spacing.xl),
+            _CategoryPicker(
+              selectedId: draft.categoryId,
+              onSelected: controller.setCategory,
+            ),
+            const SizedBox(height: Spacing.xl),
+            _DateRow(
+              key: TaskEditorPage.dateFieldKey,
+              date: draft.planDate,
+              today: _today(),
+              // 非全天时**不许清空日期**：清了就又回到「有时刻没哪天」。
+              // save() 那道兜底会把它补回来，但表单上不该出现那个瞬间 ——
+              // 用户看到的是「日期空着也能存」，而存下去却有日期。
+              clearable: draft.isAllDay,
+              onPick: controller.setPlanDate,
+            ),
+            SwitchListTile(
+              key: TaskEditorPage.allDaySwitchKey,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('全天'),
+              // **编辑时禁用。** 全天 ⇄ 定时会改变 occurrenceKey 的形态，
+              // 已有的单次例外要在同一事务里迁移 key
+              // （data-model §4.6、R-27），那需要一条专门的命令，
+              // roadmap 排在 M3。在那之前让它能拨却存不下去，
+              // 就是又一个「改了没反应」的开关。
+              subtitle: draft.isEditing
+                  ? Text('建好之后暂时改不了', style: text.bodySmall)
+                  : null,
+              value: draft.isAllDay,
+              onChanged: draft.isEditing ? null : controller.setAllDay,
+            ),
+            if (!draft.isAllDay)
+              _TimeRow(
+                key: TaskEditorPage.timeFieldKey,
+                minute: draft.startMinute,
+                onPick: controller.setStartMinute,
+              ),
+            SwitchListTile(
+              key: TaskEditorPage.endSwitchKey,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('有结束时间'),
+              subtitle: Text(
+                draft.endDate == null ? '不设结束' : '到 ${_endText(draft)}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              value: draft.endDate != null,
+              // 打开时**先给一个看得见的默认**（与开始同一天），
+              // 而不是打开后留一行「选个日期」等着用户再点一次。
+              onChanged: (on) => controller.setEndDate(
+                on ? (draft.planDate ?? _today()) : null,
+              ),
+            ),
+            if (draft.endDate != null) ...[
+              _DateRow(
+                key: TaskEditorPage.endDateFieldKey,
+                date: draft.endDate,
+                today: _today(),
+                // 结束日期不在这里清 —— 关上面那个开关才是「不设结束」。
+                // 留一个清除按钮的话，清完还剩一个「有结束时间」开着的
+                // 空行，那是个没有意义的中间态。
+                clearable: false,
+                label: '结束日期',
+                // 结束不能早于开始。选择器就把下界卡在这儿，
+                // 顺手挡掉一半的错法；另一半（先选结束再改开始）
+                // 由 `TaskDraft.blockedReason` 兜。
+                firstDate: draft.planDate,
+                onPick: controller.setEndDate,
+              ),
+              if (!draft.isAllDay)
+                _TimeRow(
+                  key: TaskEditorPage.endTimeFieldKey,
+                  minute: draft.endMinute,
+                  label: '结束时间',
+                  onPick: controller.setEndMinute,
+                ),
+            ],
+            const SizedBox(height: Spacing.xl),
+            _RecurrenceSection(
+              draft: draft.recurrence,
+              unsupported: draft.unsupportedRecurrence,
+              // 打开重复时控制器会补上日期，所以这里几乎总是非空；
+              // 兜底用今天，与 `setRecurrence` 补的是同一天。
+              anchor: draft.planDate ?? _today(),
+              controller: controller,
+            ),
+            const SizedBox(height: Spacing.xl),
+            _StageSection(
+              draft: draft,
+              today: _today(),
+              controller: controller,
+            ),
+            const SizedBox(height: Spacing.xxxl),
+          ],
+        ),
+      ),
+      // **保存固定在底部，不跟着表单滚。**
+      //
+      // 一度放在表单末尾。加上重复与阶段两区之后表单超过一屏，
+      // 按钮被埋进滚动区外 —— `ListView` 甚至不会构建它
+      // （测试里表现为「找不到 editor-save」）。
+      //
+      // 更要紧的是 M2 那条「≤3 次点击落库」：主操作要先滚动才够得着，
+      // 那条验收就不成立了。
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(Spacing.pageHorizontal),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (draft.blockedReason != null) ...[
+                Text(
+                  draft.blockedReason!,
+                  key: TaskEditorPage.blockedReasonKey,
+                  style: Theme.of(context).textTheme.bodySmall
+                      ?.copyWith(color: colors.dangerText),
+                ),
+                const SizedBox(height: Spacing.sm),
+              ],
+              AppButton(
+                key: TaskEditorPage.saveButtonKey,
+                label: _saving ? '保存中…' : '保存',
+                expand: true,
+                // 标题为空时禁用，而不是让用户点了再弹错 ——
+                // 「能不能存」是当场看得见的事，不该等到点下去才说。
+                onPressed: draft.canSave && !_saving ? _save : null,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 阶段偏移的锚点：任务的开始。
+///
+/// 没有日期时用一个占位日 —— `setStageTime` 会把今天补进草稿，
+/// 所以用户一旦真的设了时间，显示的和存下去的就是同一天。
+DateAndMinute _stageAnchor(TaskDraft draft, PlanDate today) => DateAndMinute(
+  draft.planDate ?? today,
+  draft.startMinute ?? MinuteOfDay.midnight,
+);
+
+/// 「几点」。
+String _hhmm(MinuteOfDay m) =>
+    '${(m.value ~/ 60).toString().padLeft(2, '0')}:'
+    '${(m.value % 60).toString().padLeft(2, '0')}';
+
+/// 「哪天几点」。全天任务只说到哪天。
+String _formatMoment(DateAndMinute m, {required bool withTime}) =>
+    withTime ? '${m.date} ${_hhmm(m.minute)}' : '${m.date}';
+
+/// 一个阶段的时间段按钮（FR-TASK-02：每阶段有独立时间段）。
+///
+/// **显示绝对时刻，存相对偏移**（data-model §4.1）——
+/// 「+90 分钟」谁也读不出是哪天几点；而绝对日期在重复的阶段事项上
+/// 根本写不出来（该写哪一周的？）。换算在 `stage_time.dart`。
+class _StageTimeButton extends StatelessWidget {
+  const _StageTimeButton({
+    required this.stage,
+    required this.anchor,
+    required this.isAllDay,
+    required this.onChanged,
+  });
+
+  final StageDraft stage;
+
+  /// 任务开始 —— 偏移相对它算。
+  final DateAndMinute anchor;
+
+  final bool isAllDay;
+
+  /// `(开始偏移, 时长)`，两个都为 null 即清空。
+  final void Function(int?, int?) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final offset = stage.startOffsetMinutes;
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton.icon(
+        key: TaskEditorPage.stageTimeKey(stage.id),
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: Spacing.xs),
+          // 可点即需 48dp（design-system §5）。
+          minimumSize: const Size(0, Spacing.minTouchTarget),
+        ),
+        icon: const Icon(Icons.schedule_outlined, size: TypeScale.captionSize),
+        label: Text(
+          offset == null ? '加时间' : _rangeLabel(offset, stage.durationMinutes),
+          style: text.bodySmall,
+        ),
+        onPressed: () async {
+          final result = await showDialog<_StageTimeResult>(
+            context: context,
+            builder: (_) => _StageTimeDialog(
+              anchor: anchor,
+              isAllDay: isAllDay,
+              startOffsetMinutes: offset,
+              durationMinutes: stage.durationMinutes,
+            ),
+          );
+          if (result != null) onChanged(result.startOffset, result.duration);
+        },
+      ),
+    );
+  }
+
+  String _rangeLabel(int offset, int? duration) {
+    final start = shiftFrom(anchor, offset);
+    final startText = _formatMoment(start, withTime: !isAllDay);
+    if (duration == null) return startText;
+    final end = shiftFrom(anchor, offset + duration);
+    // 同一天就不重复写日期 ——「2026-09-08 09:00 — 2026-09-08 10:30」
+    // 里有一半是噪声，而按钮只有一行。
+    final endText = (end.date == start.date && !isAllDay)
+        ? _hhmm(end.minute)
+        : _formatMoment(end, withTime: !isAllDay);
+    return '$startText — $endText';
+  }
+}
+
+/// 对话框返回的东西。
+///
+/// `null`（没返回）与 `_StageTimeResult(null, null)` 是两回事：
+/// 前者是「取消」，后者是「清掉这个阶段的时间」。
+/// 用同一个值表示会让「不定时间」变成一个按不动的按钮。
+@immutable
+class _StageTimeResult {
+  const _StageTimeResult(this.startOffset, this.duration);
+  final int? startOffset;
+  final int? duration;
+}
+
+/// 选一个阶段的开始与结束。
+class _StageTimeDialog extends StatefulWidget {
+  const _StageTimeDialog({
+    required this.anchor,
+    required this.isAllDay,
+    required this.startOffsetMinutes,
+    required this.durationMinutes,
+  });
+
+  final DateAndMinute anchor;
+  final bool isAllDay;
+  final int? startOffsetMinutes;
+  final int? durationMinutes;
+
+  @override
+  State<_StageTimeDialog> createState() => _StageTimeDialogState();
+}
+
+class _StageTimeDialogState extends State<_StageTimeDialog> {
+  late DateAndMinute _start;
+  late DateAndMinute _end;
+
+  @override
+  void initState() {
+    super.initState();
+    // 没设过就从任务开始那一刻起、默认一小时 —— 给一个能直接「确定」的
+    // 完整值，而不是让用户对着四个空栏位从头填。
+    final offset = widget.startOffsetMinutes ?? 0;
+    _start = shiftFrom(widget.anchor, offset);
+    _end = shiftFrom(widget.anchor, offset + (widget.durationMinutes ?? 60));
+  }
+
+  /// 结束早于开始、或阶段早于任务开始，都不给确定。
+  ///
+  /// **当场挡住**，而不是让它算出一个负数存下去：负时长在甘特图上
+  /// 是一根往回长的条，负偏移则让阶段跑到任务前面 —— 两者都能落库，
+  /// 而且落库之后没有任何界面会提示不对。
+  String? get _blockedReason {
+    if (offsetFrom(widget.anchor, _start) < 0) return '阶段不能早于任务开始';
+    if (offsetFrom(_start, _end) < 0) return '结束不能早于开始';
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final blocked = _blockedReason;
+
+    return AlertDialog(
+      title: const Text('这个阶段的时间'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '任务从 '
+            '${_formatMoment(widget.anchor, withTime: !widget.isAllDay)} 开始',
+            style: text.bodySmall,
+          ),
+          const SizedBox(height: Spacing.sm),
+          _MomentRow(
+            dateKey: TaskEditorPage.stageTimeStartDateKey,
+            timeKey: TaskEditorPage.stageTimeStartTimeKey,
+            label: '开始',
+            moment: _start,
+            withTime: !widget.isAllDay,
+            onChanged: (m) => setState(() => _start = m),
+          ),
+          _MomentRow(
+            dateKey: TaskEditorPage.stageTimeEndDateKey,
+            timeKey: TaskEditorPage.stageTimeEndTimeKey,
+            label: '结束',
+            moment: _end,
+            withTime: !widget.isAllDay,
+            onChanged: (m) => setState(() => _end = m),
+          ),
+          if (blocked != null)
+            Padding(
+              padding: const EdgeInsets.only(top: Spacing.xs),
+              child: Text(
+                blocked,
+                style: text.bodySmall?.copyWith(
+                  color: context.appColors.dangerText,
+                ),
+              ),
+            ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          key: TaskEditorPage.stageTimeClearKey,
+          onPressed: () =>
+              Navigator.of(context).pop(const _StageTimeResult(null, null)),
+          child: const Text('不定时间'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          key: TaskEditorPage.stageTimeConfirmKey,
+          onPressed: blocked != null
+              ? null
+              : () => Navigator.of(context).pop(
+                  _StageTimeResult(
+                    offsetFrom(widget.anchor, _start),
+                    offsetFrom(_start, _end),
+                  ),
+                ),
+          child: const Text('确定'),
+        ),
+      ],
+    );
+  }
+}
+
+/// 对话框里的一行：日期 +（非全天时）时刻。
+class _MomentRow extends StatelessWidget {
+  const _MomentRow({
+    required this.dateKey,
+    required this.timeKey,
+    required this.label,
+    required this.moment,
+    required this.withTime,
+    required this.onChanged,
+  });
+
+  final Key dateKey;
+  final Key timeKey;
+  final String label;
+  final DateAndMinute moment;
+  final bool withTime;
+  final ValueChanged<DateAndMinute> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final d = moment.date;
+    return Row(
+      children: [
+        SizedBox(
+          width: Spacing.xxxl,
+          child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+        ),
+        TextButton(
+          key: dateKey,
+          onPressed: () async {
+            final picked = await showDatePicker(
+              context: context,
+              initialDate: DateTime(d.year, d.month, d.day),
+              firstDate: DateTime(d.year - 5),
+              lastDate: DateTime(d.year + 10),
+            );
+            if (picked != null) {
+              onChanged(
+                DateAndMinute(
+                  PlanDate(picked.year, picked.month, picked.day),
+                  moment.minute,
+                ),
+              );
+            }
+          },
+          child: Text('$d'),
+        ),
+        if (withTime)
+          TextButton(
+            key: timeKey,
+            onPressed: () async {
+              final picked = await showTimePicker(
+                context: context,
+                initialTime: TimeOfDay(
+                  hour: moment.minute.value ~/ 60,
+                  minute: moment.minute.value % 60,
+                ),
+              );
+              if (picked != null) {
+                onChanged(
+                  DateAndMinute(
+                    moment.date,
+                    MinuteOfDay.of(picked.hour, picked.minute),
+                  ),
+                );
+              }
+            },
+            child: Text(_hhmm(moment.minute)),
+          ),
+      ],
+    );
+  }
+}
+
+/// 结束那一截给人看的说法：「9-10」或「9-10 18:00」。
+String _endText(TaskDraft draft) {
+  final date = draft.endDate;
+  if (date == null) return '';
+  final m = draft.endMinute;
+  if (m == null || draft.isAllDay) return '$date';
+  return '$date '
+      '${m.hour.toString().padLeft(2, '0')}:'
+      '${m.minute.toString().padLeft(2, '0')}';
+}
+
+class _DateRow extends StatelessWidget {
+  const _DateRow({
+    required this.date,
+    required this.today,
+    required this.clearable,
+    required this.onPick,
+    this.label,
+    this.firstDate,
+    super.key,
+  });
+
+  final PlanDate? date;
+
+  /// 行首的说明。开始那一行不写（它就是「日期」），
+  /// 结束那一行必须写 —— 两行长得一模一样时分不出哪行是哪个。
+  final String? label;
+
+  /// 可选范围的下界。null 时用 [today] 往前五年（见下）。
+  final PlanDate? firstDate;
+
+  /// 本地墙钟的今天。选择器的默认与可选范围都以它为基准。
+  final PlanDate today;
+
+  /// 能不能清空。非全天任务必须有日期，所以那时不给清。
+  final bool clearable;
+
+  final ValueChanged<PlanDate?> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      // **不在这里带 key**：key 由调用方给到 widget 上。
+      // 两处都带的话同一个 key 会被 find 到两个（widget 一个、
+      // ListTile 一个），报错是「is too many」，离原因隔着一层。
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.event_outlined),
+      title: Text(
+        date == null ? '选个日期（可选）' : '${label == null ? '' : '$label '}$date',
+      ),
+      trailing: (date == null || !clearable)
+          ? null
+          : IconButton(
+              onPressed: () => onPick(null),
+              icon: const Icon(Icons.close),
+              tooltip: '清除日期',
+            ),
+      onTap: () async {
+        // 没选过时停在下界（结束行 = 开始那天），否则停在今天。
+        final anchor = date ?? firstDate ?? today;
+        final picked = await showDatePicker(
+          context: context,
+          initialDate: DateTime(anchor.year, anchor.month, anchor.day),
+          // 往前留五年（补记旧事），往后十年。范围以**今天**为基准，
+          // 不以已选日期为基准 —— 否则选了一个很远的日期之后，
+          // 可选范围会跟着漂走。
+          // 结束日期传了下界就用它（结束不能早于开始）；
+          // 开始日期往前留五年（补记旧事）。
+          firstDate: firstDate == null
+              ? DateTime(today.year - 5)
+              : DateTime(firstDate!.year, firstDate!.month, firstDate!.day),
+          lastDate: DateTime(today.year + 10),
+        );
+        if (picked != null) {
+          onPick(PlanDate(picked.year, picked.month, picked.day));
+        }
+      },
+    );
+  }
+}
+
+class _TimeRow extends StatelessWidget {
+  const _TimeRow({
+    required this.minute,
+    required this.onPick,
+    this.label,
+    super.key,
+  });
+
+  final MinuteOfDay? minute;
+
+  /// 见 [_DateRow.label]。
+  final String? label;
+
+  final ValueChanged<MinuteOfDay?> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = minute;
+    return ListTile(
+      // 见 [_DateRow]：key 由调用方给到 widget 上。
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.schedule_outlined),
+      title: Text(
+        m == null
+            ? (label == null ? '选个时间' : '选个$label')
+            : '${label == null ? '' : '$label '}'
+                  '${m.hour.toString().padLeft(2, '0')}:'
+                  '${m.minute.toString().padLeft(2, '0')}',
+      ),
+      onTap: () async {
+        final picked = await showTimePicker(
+          context: context,
+          initialTime: m == null
+              ? const TimeOfDay(hour: 9, minute: 0)
+              : TimeOfDay(hour: m.hour, minute: m.minute),
+        );
+        if (picked != null) {
+          onPick(MinuteOfDay.of(picked.hour, picked.minute));
+        }
+      },
+    );
+  }
+}
+
+/// 分类选择（FR-TASK-01：分类是可选字段）。
+///
+/// 「未分类」**永远是第一项**，而且它不是从仓库来的 ——
+/// 库里没有那一行，`categoryId IS NULL` 就是它（settings-spec §3.0）。
+///
+/// 用一排 Chip 而不是下拉：分类通常只有四五个，摊开一眼看全，
+/// 少一次「点开-再点」的往返（M2 那条 ≤3 次点击也吃这个便宜）。
+class _CategoryPicker extends ConsumerWidget {
+  const _CategoryPicker({required this.selectedId, required this.onSelected});
+
+  final String? selectedId;
+  final ValueChanged<String?> onSelected;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final categories = ref.watch(categoryListProvider);
+    final text = Theme.of(context).textTheme;
+
+    return Column(
+      key: TaskEditorPage.categoryPickerKey,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('分类', style: text.bodySmall),
+        const SizedBox(height: Spacing.xs),
+        Wrap(
+          spacing: Spacing.sm,
+          runSpacing: Spacing.xs,
+          children: [
+            _chip(null, Uncategorized.name),
+            for (final c in categories) _chip(c.id, c.name),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _chip(String? id, String label) => SelectableChip(
+    key: TaskEditorPage.categoryChipKey(id),
+    label: label,
+    selected: id == selectedId,
+    onSelected: (_) => onSelected(id),
+  );
+}
+
+/// 阶段区（FR-TASK-02）。
+///
+/// **默认不出现任何阶段行** —— 大多数任务是单项的（FR-TASK-01 的基调），
+/// 一进来就摆两个空行会把「填得越少越好」变成「先删两行」。
+///
+/// 拖拽重排（§FR-TASK-02 的验收里提到）先用上下箭头代替：
+/// 拖拽在两三个阶段时收益很小，而它要处理滚动冲突与无障碍替代操作。
+/// TODO(M3): 换成 ReorderableListView，并保留箭头作为读屏用户的替代路径。
+class _StageSection extends StatelessWidget {
+  const _StageSection({
+    required this.draft,
+    required this.today,
+    required this.controller,
+  });
+
+  final TaskDraft draft;
+
+  /// 本地墙钟的今天。任务还没定日期时，阶段时间以它为锚 ——
+  /// 与 `setStageTime` 补进草稿的是同一天。
+  final PlanDate today;
+
+  final TaskEditorController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+
+    return Column(
+      key: TaskEditorPage.stageSectionKey,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('阶段（可选）', style: text.bodySmall),
+        const SizedBox(height: Spacing.xs),
+        for (final (i, stage) in draft.stages.indexed)
+          Padding(
+            padding: const EdgeInsets.only(bottom: Spacing.xs),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    // 序号跟着**列表位置**走，不是 orderIndex —— 编辑期间
+                    // 后者还没算出来（保存时才转成连续的）。
+                    SizedBox(
+                      width: Spacing.xxl,
+                      child: Text('${i + 1}.', style: text.bodySmall),
+                    ),
+                    Expanded(
+                      child: TextField(
+                        key: TaskEditorPage.stageFieldKey(stage.id),
+                        decoration: const InputDecoration(hintText: '这一步做什么'),
+                        onChanged: (v) => controller.setStageTitle(stage.id, v),
+                      ),
+                    ),
+                    IconButton(
+                      key: TaskEditorPage.stageUpKey(stage.id),
+                      onPressed: i == 0
+                          ? null
+                          : () => controller.moveStageUp(stage.id),
+                      icon: const Icon(Icons.arrow_upward),
+                      tooltip: '上移',
+                    ),
+                    IconButton(
+                      key: TaskEditorPage.stageRemoveKey(stage.id),
+                      onPressed: () => controller.removeStage(stage.id),
+                      icon: const Icon(Icons.close),
+                      tooltip: '删除这个阶段',
+                    ),
+                  ],
+                ),
+                // 时间收在标题下面一行的小按钮里：大多数阶段只是
+                // 「先做这个、再做那个」，没有具体时刻。
+                Padding(
+                  padding: const EdgeInsets.only(left: Spacing.xxl),
+                  child: _StageTimeButton(
+                    stage: stage,
+                    anchor: _stageAnchor(draft, today),
+                    isAllDay: draft.isAllDay,
+                    onChanged: (start, duration) => controller.setStageTime(
+                      stage.id,
+                      startOffsetMinutes: start,
+                      durationMinutes: duration,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        AppButton(
+          key: TaskEditorPage.addStageKey,
+          label: draft.stages.isEmpty ? '分成几个阶段' : '再加一个阶段',
+          variant: AppButtonVariant.secondary,
+          onPressed: controller.addStage,
+        ),
+      ],
+    );
+  }
+}
+
+/// 重复区（FR-TASK-03/04）。
+///
+/// 关着的时候只有一个开关 —— 大多数任务不重复，一进来摊开一屏选项
+/// 是把少数情形的成本摊给所有人。
+/// 重复区（FR-TASK-03/04）。
+///
+/// **每个能改 RRULE 的字段都要在这里有一个控件。** 第一版漏了三个 ——
+/// 间隔、次数、结束日期 —— 而单元测试把这三个都测透了：
+/// 测的是 `RecurrenceDraft`，不是「用户能不能造出那个 draft」。
+/// 最难看的是「到某天为止」：选了它就必然非法，页面上却没有任何地方
+/// 能选那个日期，保存按钮永久灰着 —— **一条走进去出不来的路**。
+/// 而当时那条测试恰好断言了「拦住了」，就停在那儿，没有往下问
+/// 「拦住之后有没有路走」。守卫见 `recurrence_reachability_test.dart`。
+class _RecurrenceSection extends StatelessWidget {
+  const _RecurrenceSection({
+    required this.draft,
+    required this.anchor,
+    required this.unsupported,
+    required this.controller,
+  });
+
+  /// 这条任务的规则这个界面表达不了时，是那条原串（否则 null）。
+  /// 见 [TaskDraft.unsupportedRecurrence]。
+  final String? unsupported;
+
+  final RecurrenceDraft draft;
+
+  /// 这条规则从哪天开始算 —— 任务的计划日期，没有就用今天。
+  /// 「到某天为止」的可选范围以它为下界：结束早于开始的规则一次都展不出来。
+  final PlanDate anchor;
+
+  final TaskEditorController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+
+    // 界面表达不了的规则：**只读一行，不给动**。
+    //
+    // 显示成「不重复」再让用户一按保存把规则抹掉，是最糟的一种
+    // 「什么都没做却坏了东西」。说清楚它还在、只是这里改不了。
+    if (unsupported != null) {
+      return Column(
+        key: TaskEditorPage.unsupportedRecurrenceKey,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('重复', style: text.bodyLarge),
+          const SizedBox(height: Spacing.xxs),
+          Text('这条规则这里改不了，保存不会动它。', style: text.bodySmall),
+          const SizedBox(height: Spacing.xxs),
+          Text(unsupported!, style: text.bodySmall),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile(
+          key: TaskEditorPage.recurrenceSwitchKey,
+          contentPadding: EdgeInsets.zero,
+          title: const Text('重复'),
+          // 关着时也显示一句「不重复」，而不是留空 —— 留空的话
+          // 用户分不清「不重复」与「这个功能还没做」。
+          subtitle: Text(
+            draft.describe(),
+            key: TaskEditorPage.recurrenceSummaryKey,
+            style: text.bodySmall,
+          ),
+          value: draft.enabled,
+          onChanged: (v) =>
+              controller.setRecurrence(draft.copyWith(enabled: v)),
+        ),
+        if (draft.enabled) ...[
+          const SizedBox(height: Spacing.sm),
+          _ChipRow(
+            options: [
+              for (final f in RecurrenceFrequency.values)
+                (
+                  TaskEditorPage.frequencyKey(f),
+                  f.label,
+                  draft.frequency == f,
+                  () => controller.setRecurrence(draft.copyWith(frequency: f)),
+                ),
+            ],
+          ),
+          const SizedBox(height: Spacing.sm),
+          _Stepper(
+            name: TaskEditorPage.intervalStepper,
+            label: '间隔',
+            // 「每 2 周」而不是干巴巴一个 2 —— 单位跟着频率变，
+            // 否则用户得自己把上面那排 Chip 和这个数字对起来读。
+            display: '每 ${draft.interval} ${draft.frequency.unitLabel}',
+            value: draft.interval,
+            onChanged: (v) =>
+                controller.setRecurrence(draft.copyWith(interval: v)),
+          ),
+          if (draft.frequency == RecurrenceFrequency.weekly) ...[
+            const SizedBox(height: Spacing.sm),
+            Text('周几（不选＝跟开始日期同一天）', style: text.bodySmall),
+            const SizedBox(height: Spacing.xs),
+            _ChipRow(
+              options: [
+                for (final d in Weekday.values)
+                  (
+                    TaskEditorPage.weekdayKey(d),
+                    d.label,
+                    draft.weekdays.contains(d),
+                    () => controller.setRecurrence(draft.toggleWeekday(d)),
+                  ),
+              ],
+            ),
+          ],
+          const SizedBox(height: Spacing.sm),
+          Text('结束条件', style: text.bodySmall),
+          const SizedBox(height: Spacing.xs),
+          _ChipRow(
+            options: [
+              for (final m in RecurrenceEndMode.values)
+                (
+                  TaskEditorPage.endModeKey(m),
+                  m.label,
+                  draft.endMode == m,
+                  () => controller.setRecurrence(draft.copyWith(endMode: m)),
+                ),
+            ],
+          ),
+          // 选中哪种结束条件，就只给哪种的输入 ——
+          // 三个都摆出来的话，用户改的那个未必是生效的那个。
+          if (draft.endMode == RecurrenceEndMode.count)
+            _Stepper(
+              name: TaskEditorPage.countStepper,
+              label: '次数（含第一次）',
+              display: '${draft.count} 次',
+              value: draft.count,
+              onChanged: (v) =>
+                  controller.setRecurrence(draft.copyWith(count: v)),
+            ),
+          if (draft.endMode == RecurrenceEndMode.until)
+            _UntilRow(
+              until: draft.until,
+              anchor: anchor,
+              onPick: (d) => controller.setRecurrence(draft.copyWith(until: d)),
+            ),
+        ],
+      ],
+    );
+  }
+}
+
+/// 「到某天为止」的日期（FR-TASK-04）。
+///
+/// **不给清空。** 清了就回到那条走不出去的路上：结束条件还是「到某天为止」，
+/// 却没有那一天，保存永久灰着。要取消就去上面改结束条件。
+class _UntilRow extends StatelessWidget {
+  const _UntilRow({
+    required this.until,
+    required this.anchor,
+    required this.onPick,
+  });
+
+  final PlanDate? until;
+  final PlanDate anchor;
+  final ValueChanged<PlanDate> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      key: TaskEditorPage.untilFieldKey,
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.event_available_outlined),
+      title: Text(until == null ? '选一个结束日期' : '到 $until 为止'),
+      onTap: () async {
+        final current = until;
+        // 没选过时默认一个月后 —— 拿开始那天当默认值的话，
+        // 用户一路点「确定」会得到一条只发生一次的重复规则。
+        //
+        // **已选的日期还得夹一道**：选完之后把任务日期往后改，
+        // 已选的结束日期就跑到下界前面去了，那时 `showDatePicker`
+        // 会直接断言失败崩掉 —— 一条改日期顺序不同就触发的路。
+        final initial = (current == null || current.isBefore(anchor))
+            ? anchor.addDays(30)
+            : current;
+        final picked = await showDatePicker(
+          context: context,
+          initialDate: DateTime(initial.year, initial.month, initial.day),
+          // **下界是开始日期**：结束早于开始的规则一次都展不出来，
+          // 而它长得和一条正常规则一模一样。
+          firstDate: DateTime(anchor.year, anchor.month, anchor.day),
+          lastDate: DateTime(anchor.year + 10),
+        );
+        if (picked != null) {
+          onPick(PlanDate(picked.year, picked.month, picked.day));
+        }
+      },
+    );
+  }
+}
+
+/// 一个数字加减器。
+///
+/// 用加减而不是输入框：这两个数几乎总是个位数，而输入框要处理空串、
+/// 非数字、粘进来的负号 —— 那些 [RecurrenceDraft.blockedReason] 里都有兜底，
+/// 但让用户先打错再看红字，不如根本打不错。
+///
+/// 上界 [_max] 是**控件的**限制，不是模型的：RRULE 的 COUNT 可以很大，
+/// 同步下来一条 `COUNT=500` 照样正常展开。真要重复很多次的场景
+/// （「今年每天」），「到某天为止」才是顺手的控件。
+class _Stepper extends StatelessWidget {
+  const _Stepper({
+    required this.name,
+    required this.label,
+    required this.display,
+    required this.value,
+    required this.onChanged,
+  });
+
+  static const int _min = 1;
+  static const int _max = 99;
+
+  /// Key 前缀，见 [TaskEditorPage.stepperValueKey]。
+  final String name;
+
+  final String label;
+
+  /// 数字旁边那句话，如「每 2 周」。
+  final String display;
+
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    // 到头了就禁用按钮，而不是点了没反应 —— 后者与「界面卡住了」
+    // 在用户看来一模一样。
+    final canDec = value > _min;
+    final canInc = value < _max;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: Spacing.sm),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: text.bodySmall),
+          Row(
+            children: [
+              IconButton(
+                key: TaskEditorPage.stepperDecKey(name),
+                onPressed: canDec ? () => onChanged(value - 1) : null,
+                icon: const Icon(Icons.remove),
+                tooltip: '减少',
+              ),
+              // 固定宽度，免得数字从个位变两位时两个按钮跟着抖。
+              SizedBox(
+                width: 96,
+                child: Text(
+                  display,
+                  key: TaskEditorPage.stepperValueKey(name),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              IconButton(
+                key: TaskEditorPage.stepperIncKey(name),
+                onPressed: canInc ? () => onChanged(value + 1) : null,
+                icon: const Icon(Icons.add),
+                tooltip: '增加',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 一排可选中的 Chip。`(key, 文案, 是否选中, 点击)`。
+class _ChipRow extends StatelessWidget {
+  const _ChipRow({required this.options});
+
+  final List<(Key, String, bool, VoidCallback)> options;
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: Spacing.sm,
+    runSpacing: Spacing.xs,
+    children: [
+      for (final (key, label, selected, onTap) in options)
+        SelectableChip(
+          key: key,
+          label: label,
+          selected: selected,
+          onSelected: (_) => onTap(),
+        ),
+    ],
+  );
+}

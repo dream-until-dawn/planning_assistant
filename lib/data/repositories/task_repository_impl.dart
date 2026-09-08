@@ -12,24 +12,29 @@ library;
 import 'package:drift/drift.dart';
 
 import '../../core/time/clock.dart';
+import '../../domain/entities/occurrence_override.dart';
 import '../../domain/entities/stage.dart';
 import '../../domain/entities/task.dart';
 import '../../domain/policies/task_lifecycle.dart';
 import '../../domain/repositories/task_repository.dart';
+import '../../domain/value_objects/occurrence_key.dart';
 import '../database/app_database.dart';
 import '../database/dao/synced_dao.dart';
 import '../database/dao/table_daos.dart';
+import '../mappers/occurrence_override_mapper.dart';
 import '../mappers/task_mapper.dart';
 
 final class DriftTaskRepository implements TaskRepository {
   DriftTaskRepository(this._db, WriterIdentity writer, Clock clock)
     : _tasks = TaskDao(_db, writer, clock),
       _stages = StageDao(_db, writer, clock),
+      _overrides = OccurrenceOverrideDao(_db, writer, clock),
       _clock = clock;
 
   final AppDatabase _db;
   final TaskDao _tasks;
   final StageDao _stages;
+  final OccurrenceOverrideDao _overrides;
   final Clock _clock;
 
   /// 三个可见性谓词翻译成 SQL 的**唯一出处**。
@@ -73,6 +78,10 @@ final class DriftTaskRepository implements TaskRepository {
   }
 
   @override
+  Stream<List<Stage>> watchAllStages() =>
+      _stages.watchAll().map((rows) => [for (final r in rows) r.toEntity()]);
+
+  @override
   Future<List<Stage>> findStagesOfTask(
     String taskId, {
     TaskScope scope = TaskScope.active,
@@ -108,6 +117,39 @@ final class DriftTaskRepository implements TaskRepository {
           (rows) => [for (final r in rows) _db.tasks.map(r.data).toEntity()],
         );
   }
+
+  @override
+  Stream<List<OccurrenceOverride>> watchAllOverrides() => _overrides
+      .watchAll()
+      .map((rows) => [for (final r in rows) occurrenceOverrideFromRow(r)]);
+
+  @override
+  Future<List<OccurrenceOverride>> findOverridesOfTask(String taskId) async {
+    final rows = await _db
+        .customSelect(
+          'SELECT * FROM occurrence_overrides '
+          'WHERE task_id = ? AND deleted_at IS NULL',
+          variables: [Variable<String>(taskId)],
+          readsFrom: {_db.occurrenceOverrides},
+        )
+        .get();
+    return [
+      for (final r in rows)
+        occurrenceOverrideFromRow(_db.occurrenceOverrides.map(r.data)),
+    ];
+  }
+
+  @override
+  Future<void> saveOverride(
+    OccurrenceOverride override, {
+    DateTime? completedAt,
+  }) => _overrides.upsert(
+    occurrenceOverrideToCompanion(override, completedAt: completedAt),
+  );
+
+  @override
+  Future<void> removeOverride(String taskId, OccurrenceKey key) =>
+      _overrides.softDelete(overrideRowId(taskId, key));
 
   @override
   Future<void> saveTask(Task task) async {

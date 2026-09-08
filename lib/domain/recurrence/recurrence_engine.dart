@@ -19,6 +19,9 @@ import '../entities/occurrence_override.dart';
 import '../value_objects/occurrence_key.dart';
 import '../value_objects/recurrence.dart';
 
+/// 一天有多少分钟。全天任务的时长必须是它的整数倍才算数（见 `_materialize`）。
+const int _minutesPerDay = 1440;
+
 /// 可见时间窗，按**墙钟日期**闭区间。
 @immutable
 final class DateRange {
@@ -73,10 +76,20 @@ final class RecurrenceEngine {
   /// [overrides] 应包含**两类**：原始时刻落在窗口内的，以及原始时刻在窗口外
   /// 但被挪进了窗口的。调用方（Repository）负责按这两个条件查询；
   /// 引擎这一侧只负责正确合并，不做 IO。
+  /// 展开一段窗口内的发生。
+  ///
+  /// [includeSkipped] 默认 **false**：被跳过的那一次不出现在任何视图
+  /// （FR-TASK-05 的验收原话）。
+  ///
+  /// 但「不出现」不能等于「没法反悔」—— 跳错了却找不回来，
+  /// 与 M2 里那条「到某天为止」的死路是同一种毛病。所以留这个开关：
+  /// 用户显式筛「已跳过」时打开它，那些次以 [OccurrenceStatus.skipped]
+  /// 的身份现身，可以撤回。
   List<Occurrence> expand({
     required RecurrenceContext context,
     required DateRange window,
     List<OccurrenceOverride> overrides = const [],
+    bool includeSkipped = false,
   }) {
     final byKey = <OccurrenceKey, OccurrenceOverride>{
       for (final o in overrides)
@@ -95,7 +108,7 @@ final class RecurrenceEngine {
       final override = byKey[key];
       if (override != null) {
         consumed.add(key);
-        if (override.isSkip) continue;
+        if (override.isSkip && !includeSkipped) continue;
       }
       final occ = _materialize(context, key, raw, override);
       // 被挪出窗口的实例必须消失，不能在原位留残影（R-23）。
@@ -223,7 +236,19 @@ final class RecurrenceEngine {
         minuteOfDay: o.endMinuteOverride ?? start.minuteOfDay,
         timeZoneId: c.timeZoneId,
       );
-    } else if (c.durationMinutes != null && !c.isAllDay) {
+    } else if (c.durationMinutes != null &&
+        (!c.isAllDay || c.durationMinutes! % _minutesPerDay == 0)) {
+      // **全天任务的结束只能是「整天」。**
+      //
+      // 「全天」与「几点结束」是矛盾的，所以半天的时长在全天任务上
+      // 被无声忽略（下面那条 `% 1440` 就是这个意思）。但**跨几天的
+      // 全天任务是有结束的** —— 一次三天的休假，结束在第三天。
+      // 一律不给 end 的话，它在日历与甘特上只剩第一天，
+      // 而那看起来像「数据只存了一天」，不像「刻意不表示时刻」。
+      //
+      // 整天数的 end 落在午夜，与全天 `start` 用的是同一个占位午夜
+      // （`LocalWallTime.allDay` 的注释）—— 它表示的是**哪一天**，
+      // 不是「零点」这个时刻。
       end = start.addMinutes(c.durationMinutes!);
     }
 
@@ -248,7 +273,13 @@ final class RecurrenceEngine {
       start: start,
       end: end,
       isAllDay: c.isAllDay,
-      status: o?.status ?? OccurrenceStatus.pending,
+      // **被跳过的那一次的状态就是 skipped**，不看 `o.status`。
+      // 跳过是 `action`，不是 `status` —— 跳过时那一栏本来就是空的
+      // （`OccurrenceOverride.skip` 把它置 null），照读会得到 pending，
+      // 于是「显示已跳过的」筛出来一堆看着像待办的行。
+      status: o != null && o.isSkip
+          ? OccurrenceStatus.skipped
+          : (o?.status ?? OccurrenceStatus.pending),
       titleOverride: o?.titleOverride,
       noteOverride: o?.noteOverride,
       isModified: o != null,

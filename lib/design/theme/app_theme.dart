@@ -1,0 +1,360 @@
+/// 主题装配（design-system §9）。
+///
+/// **所有颜色显式指定，不用 `ColorScheme.fromSeed`** —— 它会把低饱和色
+/// 算成高饱和，破坏「可爱清新」的基调。这条由
+/// `test/design/theme_test.dart` 守着，不只是注释。
+library;
+
+import 'package:flutter/material.dart';
+
+import '../tokens/colors.dart';
+import '../tokens/dimensions.dart';
+
+/// 主题里那些 Material 没有对应字段、但组件要用的值。
+///
+/// 放 `ThemeExtension` 而不是全局常量，是因为它们**随主题变**
+/// （图形色明暗两套、阴影暗色下为空）。组件从 context 取，
+/// 于是切主题时自动跟着变，不需要每个组件自己判明暗。
+@immutable
+final class AppSemanticColors extends ThemeExtension<AppSemanticColors> {
+  const AppSemanticColors({
+    required this.brandFill,
+    required this.brandGraphic,
+    required this.brandText,
+    required this.onBrand,
+    required this.disabledText,
+    required this.canvas,
+    required this.card,
+    required this.sunken,
+    required this.borderSubtle,
+    required this.doneFill,
+    required this.doneText,
+    required this.soonFill,
+    required this.soonText,
+    required this.overdueFill,
+    required this.overdueText,
+    required this.infoFill,
+    required this.infoText,
+    required this.dangerFill,
+    required this.dangerText,
+    required this.cardShadow,
+  });
+
+  /// 填充：按钮底、选中态背景。**不作唯一信息载体。**
+  final Color brandFill;
+
+  /// 图形：进度条、选中指示。与表面 ≥3:1。**其上不得放文字。**
+  final Color brandGraphic;
+
+  /// 品牌色**作文字**。亮色下不等于 [brandGraphic]（那个只到图形级）。
+  final Color brandText;
+
+  final Color onBrand;
+
+  /// 禁用态文字。**唯一豁免对比度门槛的文字色**（§2.3、WCAG 1.4.3
+  /// 对失效控件不作要求），所以只许出现在禁用态，别处一律不用。
+  final Color disabledText;
+  final Color canvas;
+  final Color card;
+  final Color sunken;
+  final Color borderSubtle;
+
+  final Color doneFill;
+  final Color doneText;
+  final Color soonFill;
+  final Color soonText;
+  final Color overdueFill;
+  final Color overdueText;
+  final Color infoFill;
+  final Color infoText;
+  final Color dangerFill;
+  final Color dangerText;
+
+  /// 暗色主题下为空列表 —— 暗色里阴影几乎不可见（§6）。
+  final List<BoxShadow> cardShadow;
+
+  @override
+  AppSemanticColors copyWith({
+    Color? brandFill,
+    Color? brandGraphic,
+    Color? brandText,
+    Color? onBrand,
+    Color? disabledText,
+    Color? canvas,
+    Color? card,
+    Color? sunken,
+    Color? borderSubtle,
+    Color? doneFill,
+    Color? doneText,
+    Color? soonFill,
+    Color? soonText,
+    Color? overdueFill,
+    Color? overdueText,
+    Color? infoFill,
+    Color? infoText,
+    Color? dangerFill,
+    Color? dangerText,
+    List<BoxShadow>? cardShadow,
+  }) => AppSemanticColors(
+    brandFill: brandFill ?? this.brandFill,
+    brandGraphic: brandGraphic ?? this.brandGraphic,
+    brandText: brandText ?? this.brandText,
+    onBrand: onBrand ?? this.onBrand,
+    disabledText: disabledText ?? this.disabledText,
+    canvas: canvas ?? this.canvas,
+    card: card ?? this.card,
+    sunken: sunken ?? this.sunken,
+    borderSubtle: borderSubtle ?? this.borderSubtle,
+    doneFill: doneFill ?? this.doneFill,
+    doneText: doneText ?? this.doneText,
+    soonFill: soonFill ?? this.soonFill,
+    soonText: soonText ?? this.soonText,
+    overdueFill: overdueFill ?? this.overdueFill,
+    overdueText: overdueText ?? this.overdueText,
+    infoFill: infoFill ?? this.infoFill,
+    infoText: infoText ?? this.infoText,
+    dangerFill: dangerFill ?? this.dangerFill,
+    dangerText: dangerText ?? this.dangerText,
+    cardShadow: cardShadow ?? this.cardShadow,
+  );
+
+  @override
+  AppSemanticColors lerp(ThemeExtension<AppSemanticColors>? other, double t) {
+    if (other is! AppSemanticColors) return this;
+    Color c(Color a, Color b) => Color.lerp(a, b, t)!;
+    return AppSemanticColors(
+      brandFill: c(brandFill, other.brandFill),
+      brandGraphic: c(brandGraphic, other.brandGraphic),
+      brandText: c(brandText, other.brandText),
+      onBrand: c(onBrand, other.onBrand),
+      disabledText: c(disabledText, other.disabledText),
+      canvas: c(canvas, other.canvas),
+      card: c(card, other.card),
+      sunken: c(sunken, other.sunken),
+      borderSubtle: c(borderSubtle, other.borderSubtle),
+      doneFill: c(doneFill, other.doneFill),
+      doneText: c(doneText, other.doneText),
+      soonFill: c(soonFill, other.soonFill),
+      soonText: c(soonText, other.soonText),
+      overdueFill: c(overdueFill, other.overdueFill),
+      overdueText: c(overdueText, other.overdueText),
+      infoFill: c(infoFill, other.infoFill),
+      infoText: c(infoText, other.infoText),
+      dangerFill: c(dangerFill, other.dangerFill),
+      dangerText: c(dangerText, other.dangerText),
+      // 阴影不插值：明暗之间是「有」与「无」，中间态没有意义。
+      cardShadow: t < 0.5 ? cardShadow : other.cardShadow,
+    );
+  }
+}
+
+/// 圆角档位（FR-CFG-02）。**组件必须从这里取圆角，不许直接写 [Radii]。**
+///
+/// 这条不是洁癖。圆角档位是用户可配的三档，而 `AppTheme` 起初只把它
+/// 装进了 `cardTheme` —— 任务卡片自己画 `DecoratedBox`，压根不读
+/// `cardTheme`，于是那个配置项对最重要的组件**完全无效**。
+/// 而当时的测试查的是 `cardTheme.shape`：值确实被装进主题了，
+/// 没有任何一条验过它被画了出来。
+@immutable
+final class AppShape extends ThemeExtension<AppShape> {
+  const AppShape({required this.corners});
+
+  final CornerStyle corners;
+
+  /// 把档位倍率应用到某个基准圆角上。
+  double radius(double base) => corners.apply(base);
+
+  @override
+  AppShape copyWith({CornerStyle? corners}) =>
+      AppShape(corners: corners ?? this.corners);
+
+  /// 档位是**离散**的，中间态没有意义 —— 半档圆角不是任何一个设置值。
+  /// 所以取最近的一端，不插值。
+  @override
+  AppShape lerp(ThemeExtension<AppShape>? other, double t) =>
+      other is! AppShape ? this : (t < 0.5 ? this : other);
+}
+
+/// 从 context 取语义色与形状。
+extension AppThemeContext on BuildContext {
+  AppSemanticColors get appColors =>
+      Theme.of(this).extension<AppSemanticColors>()!;
+
+  AppShape get appShape => Theme.of(this).extension<AppShape>()!;
+}
+
+abstract final class AppTheme {
+  static ThemeData light({CornerStyle corners = CornerStyle.standard}) =>
+      _build(brightness: Brightness.light, corners: corners);
+
+  static ThemeData dark({CornerStyle corners = CornerStyle.standard}) =>
+      _build(brightness: Brightness.dark, corners: corners);
+
+  static ThemeData _build({
+    required Brightness brightness,
+    required CornerStyle corners,
+  }) {
+    final isLight = brightness == Brightness.light;
+
+    final semantic = isLight
+        ? AppSemanticColors(
+            brandFill: BrandColors.primaryFill.toColor(),
+            brandGraphic: BrandColors.primaryGraphic.toColor(),
+            brandText: BrandColors.primaryText.toColor(),
+            onBrand: TextColors.onBrand.toColor(),
+            disabledText: TextColors.disabled.toColor(),
+            canvas: SurfaceColors.canvas.toColor(),
+            card: SurfaceColors.card.toColor(),
+            sunken: SurfaceColors.sunken.toColor(),
+            borderSubtle: SurfaceColors.borderSubtle.toColor(),
+            doneFill: SemanticColors.doneFill.toColor(),
+            doneText: SemanticColors.doneText.toColor(),
+            soonFill: SemanticColors.soonFill.toColor(),
+            soonText: SemanticColors.soonText.toColor(),
+            overdueFill: SemanticColors.overdueFill.toColor(),
+            overdueText: SemanticColors.overdueText.toColor(),
+            infoFill: SemanticColors.infoFill.toColor(),
+            infoText: SemanticColors.infoText.toColor(),
+            dangerFill: SemanticColors.dangerFill.toColor(),
+            dangerText: SemanticColors.dangerText.toColor(),
+            cardShadow: Shadows.soft,
+          )
+        : AppSemanticColors(
+            // 暗色主题填充与图形共用一个值：`#5FB3A3` 对三个暗表面
+            // 本就 ≥3:1（6.97 / 6.17 / 7.46），不需要第二个 token。
+            brandFill: BrandColors.primaryDark.toColor(),
+            brandGraphic: BrandColors.primaryDark.toColor(),
+            brandText: BrandColors.primaryDark.toColor(),
+            onBrand: TextColors.onBrand.toColor(),
+            disabledText: TextColors.disabledDark.toColor(),
+            canvas: SurfaceColors.canvasDark.toColor(),
+            card: SurfaceColors.cardDark.toColor(),
+            sunken: SurfaceColors.sunkenDark.toColor(),
+            borderSubtle: SurfaceColors.borderSubtleDark.toColor(),
+            // 暗色下 .fill 系列在深底上实测 7.0–11.4:1，可直接兼作文字色，
+            // 无需第二套（§2.4）。
+            doneFill: SemanticColors.doneFill.toColor(),
+            doneText: SemanticColors.doneFill.toColor(),
+            soonFill: SemanticColors.soonFill.toColor(),
+            soonText: SemanticColors.soonFill.toColor(),
+            overdueFill: SemanticColors.overdueFill.toColor(),
+            overdueText: SemanticColors.overdueFill.toColor(),
+            infoFill: SemanticColors.infoFill.toColor(),
+            infoText: SemanticColors.infoFill.toColor(),
+            dangerFill: SemanticColors.dangerFill.toColor(),
+            dangerText: SemanticColors.dangerFill.toColor(),
+            cardShadow: Shadows.none,
+          );
+
+    final scheme = ColorScheme(
+      brightness: brightness,
+      primary: semantic.brandFill,
+      onPrimary: semantic.onBrand,
+      secondary:
+          (isLight ? BrandColors.secondaryFill : BrandColors.secondaryDark)
+              .toColor(),
+      onSecondary: semantic.onBrand,
+      tertiary: (isLight ? BrandColors.tertiaryFill : BrandColors.tertiaryDark)
+          .toColor(),
+      onTertiary: semantic.onBrand,
+      error: semantic.dangerText,
+      onError: isLight ? semantic.card : semantic.canvas,
+      surface: semantic.card,
+      onSurface: (isLight ? TextColors.primary : TextColors.primaryDark)
+          .toColor(),
+      onSurfaceVariant:
+          (isLight ? TextColors.secondary : TextColors.secondaryDark).toColor(),
+      outline: semantic.borderSubtle,
+    );
+
+    return ThemeData(
+      useMaterial3: true,
+      brightness: brightness,
+      colorScheme: scheme,
+      scaffoldBackgroundColor: semantic.canvas,
+      textTheme: _textTheme(scheme.onSurface, scheme.onSurfaceVariant),
+      cardTheme: CardThemeData(
+        color: semantic.card,
+        elevation: 0, // 阴影由 token 画，不用 Material 的 elevation
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(corners.apply(Radii.lg)),
+        ),
+      ),
+      extensions: [
+        semantic,
+        AppShape(corners: corners),
+      ],
+    );
+  }
+
+  /// 打包进 APK 的拉丁圆体（§3.1、§3.2）。
+  ///
+  /// **中文不在这个字体里**，Skia 会自动回落到系统中文字体 ——
+  /// 那是 §3.2 的决定（圆体中文字库 5-10MB，V1 不打包），不是遗漏。
+  /// 于是数字与时间刻度是圆体，中文是系统黑体，这正是想要的分工。
+  static const String fontFamily = 'Quicksand';
+
+  /// 可变字体的字重要走 `fontVariations` 的 wght 轴。
+  ///
+  /// 光给 `fontWeight` 在部分引擎上对可变字体不生效 —— 会一律按默认
+  /// 字重渲染，而「标题 600 / 正文 400」的层次就没了，且不报错。
+  /// 两个都给：`fontVariations` 驱动可变轴，`fontWeight` 供回落字体用。
+  static TextStyle _style({
+    required double size,
+    required double height,
+    required FontWeight weight,
+    required Color color,
+  }) => TextStyle(
+    fontFamily: fontFamily,
+    fontSize: size,
+    height: height,
+    fontWeight: weight,
+    fontVariations: [FontVariation('wght', weight.value.toDouble())],
+    color: color,
+  );
+
+  static TextTheme _textTheme(Color primary, Color secondary) => TextTheme(
+    displaySmall: _style(
+      size: TypeScale.displaySize,
+      height: TypeScale.displayHeight,
+      weight: TypeScale.displayWeight,
+      color: primary,
+    ),
+    titleLarge: _style(
+      size: TypeScale.titleLgSize,
+      height: TypeScale.titleLgHeight,
+      weight: TypeScale.titleLgWeight,
+      color: primary,
+    ),
+    titleMedium: _style(
+      size: TypeScale.titleMdSize,
+      height: TypeScale.titleMdHeight,
+      weight: TypeScale.titleMdWeight,
+      color: primary,
+    ),
+    bodyLarge: _style(
+      size: TypeScale.bodyLgSize,
+      height: TypeScale.bodyLgHeight,
+      weight: TypeScale.bodyLgWeight,
+      color: primary,
+    ),
+    bodyMedium: _style(
+      size: TypeScale.bodyMdSize,
+      height: TypeScale.bodyMdHeight,
+      weight: TypeScale.bodyMdWeight,
+      color: primary,
+    ),
+    labelLarge: _style(
+      size: TypeScale.labelSize,
+      height: TypeScale.labelHeight,
+      weight: TypeScale.labelWeight,
+      color: primary,
+    ),
+    bodySmall: _style(
+      size: TypeScale.captionSize,
+      height: TypeScale.captionHeight,
+      weight: TypeScale.captionWeight,
+      color: secondary,
+    ),
+  );
+}

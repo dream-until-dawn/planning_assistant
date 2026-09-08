@@ -21,7 +21,12 @@ class SettingSpec<T> {
 }
 ```
 
-全部声明集中在 `lib/features/settings/registry.dart`。
+全部声明集中在 `lib/features/settings/application/registry.dart`。
+
+> 规格初版写的是 `features/settings/registry.dart`（直接放在 feature 根下）。
+> 分层守卫判它「未分类到任何一层」—— 判得对：`lib/` 下不在层目录里的文件，
+> 守卫对它的一切约束都静默失效。挪进 `application/`：
+> 它是**声明数据**，不是界面也不是领域不变量。
 
 **由此得到的性质**：
 
@@ -64,7 +69,7 @@ Stream<T> watchSetting<T>(SettingSpec<T> spec);
 | `theme.mode` | enum | `system` | ✅ | 跟随系统 / 亮 / 暗 |
 | `theme.primaryColor` | color | `#7FD1C1` | ✅ | 主色，选择后自动校验对比度 |
 | `theme.cornerStyle` | enum | `standard` | ✅ | soft / standard / sharp |
-| `theme.fontScale` | double | `1.0` | ✅ | 0.85–1.4，与系统缩放叠加 |
+| `theme.fontScale` | double | `1.0` | ✅ | 0.85–1.4，与系统缩放**相乘**。最坏有效缩放 1.4×2.0=**2.8**，golden 必须覆盖，见[设计系统 §3.4](design-system.md#34-缩放是两层相乘golden-必须覆盖到实际最坏值) |
 | `theme.reduceMotion` | bool | `false` | ✅ | 同时响应系统设置，取「或」 |
 | `theme.showCompletedStrikethrough` | bool | `true` | ✅ | 已完成任务是否加删除线 |
 | `theme.cardDensity` | enum | `comfortable` | ✅ | compact / comfortable |
@@ -115,7 +120,7 @@ Stream<T> watchSetting<T>(SettingSpec<T> spec);
 | key | 类型 | 默认值 | 暴露 | 说明 |
 |---|---|---|---|---|
 | `behavior.defaultDurationMinutes` | int | `60` | ✅ | 新任务默认时长 |
-| `behavior.defaultCategoryId` | string | `uncategorized` | ✅ | |
+| `behavior.defaultCategoryId` | string | `uncategorized` | 🔒* | *不在设置页里，入口是[分类管理](#3-分类管理fr-cfg-03)每一行上的星标 —— 它的选项是用户自己的分类（运行时数据），而注册表里的 `select` 只能列静态选项。值为 `uncategorized` 时表示未分类；**这只是这一项配置的取值，不是第三种「未分类」的编码**（§3.0 仍然只认 `categoryId IS NULL`）。读出来时若指向一个已被删除的分类，回落成未分类 |
 | `behavior.defaultPriority` | int | `2` | ✅ | 普通 |
 | `behavior.swipeRight` | enum | `complete` | ✅ | complete / postpone / delete / none |
 | `behavior.swipeLeft` | enum | `postpone` | ✅ | 同上 |
@@ -172,21 +177,48 @@ Stream<T> watchSetting<T>(SettingSpec<T> spec);
 | 编辑 | 名称、颜色、图标 |
 | 排序 | 拖拽，改 `orderIndex` |
 | 删除 | 其下任务 `categoryId` 置 NULL（迁到「未分类」），**不级联删任务** |
-| 设为默认 | 写入 `behavior.defaultCategoryId` |
+| 设为默认 | 写入 `behavior.defaultCategoryId`。再点一次取消（回到未分类）——设错了没有回头路是最容易让人恼火的一类交互。删掉正好是默认的那个分类时，配置一并收回未分类 |
 
-**「未分类」不可删**（`isSystemDefault = 1`），删除按钮对它禁用。
+### 3.0 ⚠️「未分类」是 **NULL**，不是一行
+
+初版这里有个歧义：§3.1 把「未分类」列为一条种子数据
+（`isSystemDefault = 1`、不可删），而 §3 的删除规则又是
+「其下任务 `categoryId` 置 NULL（迁到「未分类」）」。
+
+两条放一起，**同一个用户可见状态就有两种编码**：
+
+| 编码 | 怎么产生的 |
+|---|---|
+| `categoryId = NULL` | 删掉某个分类，FK 的 `ON DELETE SET NULL` 自动产生 |
+| `categoryId = 未分类那一行` | 用户在编辑器里主动选了「未分类」 |
+
+而且第一种**躲不掉** —— 外键约束就是那么定义的。于是每个查询、
+每次分组与筛选都要把两种当同一种处理，漏一处就出现「有两个未分类」
+或者「删完分类的任务从列表里消失了」。
+
+**决定：`categoryId == null` ⇔ 未分类，且不建那一行。**
+
+- 种子数据只有真正的四个分类（见 §3.1）。
+- 「未分类」在界面上照常出现、照常可选，选中即写 NULL。
+- 它不可删不是因为有保护逻辑，而是因为**它不是一行**，没有可删的东西。
+- `categories.isSystemDefault` 这一列因此当前**没有使用者**。留着不动
+  （删列要迁移，且 V3 同步的老数据里可能有它），但**不得**拿它来表达
+  「未分类」—— 那会把刚去掉的第二种编码又请回来。
 
 ### 3.1 首次启动的默认分类
 
 | 名称 | 颜色 | 图标 |
 |---|---|---|
-| 未分类 | `#A9A5B0` | `inbox` |
 | 工作 | `#7FD1C1` | `briefcase` |
 | 学习 | `#A8C8F0` | `book` |
 | 生活 | `#FFB7C5` | `home` |
 | 健康 | `#A8D8B9` | `heart` |
 
-用户可全部删除（除「未分类」）或改名，不做保护。
+用户可全部删除或改名，不做保护 —— 全删光也没关系，
+那时所有任务都是「未分类」，而那是个合法状态（§3.0）。
+
+「未分类」的显示样式：名称`未分类`、色 `#A9A5B0`、图标 `inbox`。
+**它是渲染时的常量，不是数据。**
 
 ---
 

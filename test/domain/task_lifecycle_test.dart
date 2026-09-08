@@ -8,6 +8,8 @@ library;
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:planning_assistant/core/time/minute_of_day.dart';
+import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/domain/entities/stage.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/domain/policies/task_lifecycle.dart';
@@ -507,6 +509,94 @@ void main() {
         completedAt: null,
       ).copyWith(completedAt: null);
       expect(bad.checkInvariants, throwsA(isA<DomainInvariantViolation>()));
+    });
+  });
+
+  group('开始与结束的不变量（结束侧与开始侧对称）', () {
+    // 这五条是补上的。一开始只写了开始侧的 `isAllDay && startMinute`，
+    // 而那时编辑器还写不出结束时间 —— 于是「没有测试会红」与
+    // 「不会出问题」看起来是一回事。写得出来的那天，坏数据就落库了。
+    Task withTimes({
+      bool isAllDay = false,
+      PlanDate? planDate,
+      MinuteOfDay? startMinute,
+      PlanDate? endDate,
+      MinuteOfDay? endMinute,
+    }) => Task(
+      id: 't1',
+      title: '任务',
+      kind: TaskKind.single,
+      timeZoneId: 'Asia/Shanghai',
+      isAllDay: isAllDay,
+      planDate: planDate,
+      startMinute: startMinute,
+      endDate: endDate,
+      endMinute: endMinute,
+    );
+
+    final bad = <String, Task>{
+      '全天却带结束时刻': withTimes(
+        isAllDay: true,
+        planDate: const PlanDate(2026, 9, 8),
+        endDate: const PlanDate(2026, 9, 8),
+        endMinute: MinuteOfDay.of(18, 0),
+      ),
+      '有结束时刻却没有结束日期': withTimes(
+        planDate: const PlanDate(2026, 9, 8),
+        endMinute: MinuteOfDay.of(18, 0),
+      ),
+      '有结束日期却没有开始日期': withTimes(endDate: const PlanDate(2026, 9, 8)),
+      '结束日期早于开始日期': withTimes(
+        planDate: const PlanDate(2026, 9, 8),
+        endDate: const PlanDate(2026, 9, 7),
+      ),
+      '同一天里结束时刻早于开始时刻': withTimes(
+        planDate: const PlanDate(2026, 9, 8),
+        startMinute: MinuteOfDay.of(14, 0),
+        endDate: const PlanDate(2026, 9, 8),
+        endMinute: MinuteOfDay.of(9, 0),
+      ),
+    };
+
+    bad.forEach((name, t) {
+      test('$name → 抛 DomainInvariantViolation', () {
+        expect(t.checkInvariants, throwsA(isA<DomainInvariantViolation>()));
+      });
+    });
+
+    // ── 对照组：这些是**合法**的，不许被上面的规则误伤 ──────────
+    final good = <String, Task>{
+      '只有开始，没有结束': withTimes(planDate: const PlanDate(2026, 9, 8)),
+      '同一天开始结束，结束时刻在后': withTimes(
+        planDate: const PlanDate(2026, 9, 8),
+        startMinute: MinuteOfDay.of(9, 0),
+        endDate: const PlanDate(2026, 9, 8),
+        endMinute: MinuteOfDay.of(10, 30),
+      ),
+      // 「九点开始，当天结束」—— 缺失的结束时刻按当天最后一分钟算。
+      // 按 00:00 理解的话这条会被误判成违规，而它完全正常。
+      '同一天开始结束，不写结束时刻': withTimes(
+        planDate: const PlanDate(2026, 9, 8),
+        startMinute: MinuteOfDay.of(9, 0),
+        endDate: const PlanDate(2026, 9, 8),
+      ),
+      '跨天：结束时刻比开始时刻早也没关系': withTimes(
+        planDate: const PlanDate(2026, 9, 8),
+        startMinute: MinuteOfDay.of(22, 0),
+        endDate: const PlanDate(2026, 9, 9),
+        endMinute: MinuteOfDay.of(2, 0),
+      ),
+      '全天跨天': withTimes(
+        isAllDay: true,
+        planDate: const PlanDate(2026, 9, 8),
+        endDate: const PlanDate(2026, 9, 10),
+      ),
+    };
+
+    good.forEach((name, t) {
+      test('对照组：$name → 不抛', () {
+        expect(t.checkInvariants, returnsNormally);
+      });
     });
   });
 
