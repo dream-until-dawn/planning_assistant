@@ -20,6 +20,7 @@ import 'package:planning_assistant/design/theme/app_theme.dart';
 import 'package:planning_assistant/design/tokens/dimensions.dart';
 import 'package:planning_assistant/domain/entities/category.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
+import 'package:planning_assistant/domain/value_objects/recurrence.dart';
 import 'package:planning_assistant/domain/value_objects/task_status.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/views/shared/application/category_providers.dart';
@@ -27,6 +28,7 @@ import 'package:planning_assistant/features/views/shared/application/task_provid
 import 'package:planning_assistant/features/views/shared/application/view_kind.dart';
 import 'package:planning_assistant/features/views/shared/presentation/filter_bar.dart';
 import 'package:planning_assistant/features/views/task_list/presentation/task_list_page.dart';
+import 'package:timezone/data/latest.dart' as tzdata;
 
 /// M2 的真实形态：只有列表一个视图，切换器因此不出现。
 Widget _current(Brightness brightness, double scale) => _wrap(
@@ -147,6 +149,81 @@ List<Task> _denseTasks() => [
   ),
 ];
 
+/// **每一个字段都长**的一屏（roadmap M2 验收的「超长文本」那一档）。
+///
+/// 密集那张图里只有标题是长的，其余照常 —— 而按 §1.5 的教训，
+/// 参数化一个维度、钉死另一个维度证明不了什么：卡片会不会挤爆，
+/// 取决于标题、分类名、重复说明、时间标签**同时**变长。
+///
+/// 这里让它们一起长：
+///
+///  · 标题：两行都装不下，要看省略号截在哪；
+///  · 分类名：副信息那一行只有一行且会截断；
+///  · 重复说明：分类名后面还要接「每 3 周的一、二、…」；
+///  · 时间标签：长到必须下沉（`_timeCrowdsTitle`）。
+List<Task> _longTextTasks() => [
+  Task(
+    id: 'l1',
+    title:
+        '把这个季度所有还没有归档的项目文档整理一遍并且逐个确认负责人'
+        '与截止日期然后同步给团队里的每一个人确保没有遗漏',
+    kind: TaskKind.single,
+    timeZoneId: 'Asia/Shanghai',
+    categoryId: 'cat-long',
+    startMinute: MinuteOfDay.of(23, 59),
+    planDate: _today,
+    recurrence: Recurrence.parse(
+      'RRULE:FREQ=WEEKLY;INTERVAL=3;BYDAY=MO,TU,WE,TH,FR,SA,SU',
+    ),
+  ),
+  Task(
+    id: 'l2',
+    title: '一个很长很长很长很长很长很长很长很长很长很长很长的已完成任务标题',
+    kind: TaskKind.single,
+    timeZoneId: 'Asia/Shanghai',
+    categoryId: 'cat-long',
+    status: TaskStatus.done,
+    completedAt: DateTime.utc(2026, 9, 8),
+    startMinute: MinuteOfDay.of(9, 0),
+    planDate: _today,
+  ),
+  const Task(
+    id: 'l3',
+    title: 'ThisIsOneVeryLongUnbrokenLatinWordThatCannotWrapAnywhereAtAll',
+    kind: TaskKind.single,
+    timeZoneId: 'Asia/Shanghai',
+    categoryId: 'cat-long',
+    isAllDay: true,
+    // 逾期一条：那一组默认折叠，图里要能看见「折叠 + 计数」。
+    planDate: PlanDate(2026, 9, 1),
+  ),
+];
+
+/// 分类名也长 —— 副信息那一行是「分类 · 重复说明 · 阶段」拼出来的。
+const _longCategory = Category(
+  id: 'cat-long',
+  name: '一个名字特别长的分类比如说家里那些琐碎的事情',
+  colorArgb: 0xFFC3B5F0,
+  icon: 'home',
+  orderIndex: 9,
+);
+
+Widget _longText(Brightness brightness, double scale) => _wrap(
+  brightness,
+  scale,
+  AppShell(
+    currentView: ViewKind.list,
+    availableViews: const [ViewKind.list],
+    onViewSelected: (_) {},
+    onCreateTask: () {},
+    onOpenSettings: () {},
+    header: const FilterBar(),
+    viewBuilder: (context, kind) => TaskListPage(onCreateTask: () {}),
+  ),
+  tasks: _longTextTasks(),
+  categories: [..._categories, _longCategory],
+);
+
 /// 有任务的列表。
 Widget _dense(Brightness brightness, double scale) => _wrap(
   brightness,
@@ -170,6 +247,7 @@ Widget _wrap(
   double scale,
   Widget child, {
   List<Task> tasks = const [],
+  List<Category> categories = _categories,
 }) => ProviderScope(
   // **直接覆盖列表数据源，不接真库。**
   //
@@ -185,7 +263,7 @@ Widget _wrap(
     visibleTasksProvider.overrideWith((ref) => Stream.value(tasks)),
     // 分类同样直接覆盖 —— 理由同上：这张图要的是一份确定的数据，
     // 仓库怎么排序、怎么过滤墓碑与它无关。
-    categoriesProvider.overrideWith((ref) => Stream.value(_categories)),
+    categoriesProvider.overrideWith((ref) => Stream.value(categories)),
     // 展开重复任务要用到时区换算器；这些夹具都不重复，但那一步照读。
     timeZoneResolverProvider.overrideWithValue(
       const TzTimeZoneResolver(fixedCurrentZoneId: 'Asia/Shanghai'),
@@ -206,10 +284,16 @@ Widget _wrap(
 );
 
 void main() {
+  // 长文本那一屏里有条重复任务（副信息要长，得靠规则说明撑）——
+  // 展开它要按墙钟算，没有时区库会抛 UnknownTimeZoneException，
+  // 而那个异常发生在 build 里，表现是「读库失败」那一屏被拍下来。
+  setUpAll(tzdata.initializeTimeZones);
+
   final cases = <String, Widget Function(Brightness, double)>{
     'shell': _current,
     'shell_switcher': _withSwitcher,
     'shell_dense': _dense,
+    'shell_longtext': _longText,
   };
 
   for (final entry in cases.entries) {
