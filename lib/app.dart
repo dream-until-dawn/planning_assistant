@@ -26,6 +26,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'design/theme/app_theme.dart';
+import 'domain/value_objects/occurrence_key.dart';
 import 'features/settings/application/registry.dart';
 import 'features/settings/application/settings_providers.dart';
 import 'features/settings/presentation/category_manager_page.dart';
@@ -50,7 +51,8 @@ final Map<ViewKind, Widget Function(BuildContext, VoidCallback?)> viewRegistry =
       ViewKind.list: (context, onCreateTask) => TaskListPage(
         onCreateTask: onCreateTask,
         // 路由由组合根接上 —— 视图自己不认识路由表。
-        onEditTask: (id) => context.go(AppRoutes.editTask(id)),
+        onEditTask: (id, {from}) =>
+            context.go(AppRoutes.editTask(id, from: from)),
       ),
     };
 
@@ -79,7 +81,12 @@ abstract final class AppRoutes {
   static const String categories = '/settings/categories';
 
   /// 编辑一条已有任务。
-  static String editTask(String id) => '/task/$id/edit';
+  ///
+  /// [from] 非空时是「本次及以后」的分割点（FR-TASK-06）——
+  /// 用查询参数而不是再开一条路由：它改的是**同一个页面的语义**，
+  /// 不是另一个页面。
+  static String editTask(String id, {String? from}) =>
+      from == null ? '/task/$id/edit' : '/task/$id/edit?from=$from';
 }
 
 GoRouter buildAppRouter() => GoRouter(
@@ -110,14 +117,20 @@ GoRouter buildAppRouter() => GoRouter(
           //
           // 覆盖它是组合根的活：页面自己不认识路由（同外壳的
           // onOpenSettings、设置页的 onOpenCategories）。
-          builder: (context, state) => ProviderScope(
-            overrides: [
-              editingTaskIdProvider.overrideWithValue(
-                state.pathParameters['id'],
-              ),
-            ],
-            child: TaskEditorPage(onSaved: (_) => context.pop()),
-          ),
+          builder: (context, state) {
+            final from = state.uri.queryParameters['from'];
+            return ProviderScope(
+              overrides: [
+                editingTaskIdProvider.overrideWithValue(
+                  state.pathParameters['id'],
+                ),
+                editingSplitAtProvider.overrideWithValue(
+                  from == null ? null : OccurrenceKey.parse(from),
+                ),
+              ],
+              child: TaskEditorPage(onSaved: (_) => context.pop()),
+            );
+          },
         ),
         GoRoute(
           path: 'task/new',

@@ -31,6 +31,7 @@ abstract final class OccurrenceSheetKeys {
   static const Key unskip = ValueKey('occurrence-unskip');
   static const Key hint = ValueKey('occurrence-skip-hint');
   static const Key editSeries = ValueKey('occurrence-edit-series');
+  static const Key editFromHere = ValueKey('occurrence-edit-from-here');
 }
 
 /// 打开某一行的动作弹层。
@@ -40,7 +41,7 @@ abstract final class OccurrenceSheetKeys {
 Future<void> showOccurrenceActions(
   BuildContext context,
   TaskOccurrence row, {
-  void Function(String taskId)? onEditSeries,
+  void Function(String taskId, {String? from})? onEditSeries,
 }) {
   if (!row.isOccurrence) return Future<void>.value();
   return showModalBottomSheet<void>(
@@ -54,7 +55,7 @@ class _OccurrenceActionsSheet extends ConsumerWidget {
   const _OccurrenceActionsSheet({required this.row, this.onEditSeries});
 
   final TaskOccurrence row;
-  final void Function(String taskId)? onEditSeries;
+  final void Function(String taskId, {String? from})? onEditSeries;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -96,6 +97,19 @@ class _OccurrenceActionsSheet extends ConsumerWidget {
               onTap: () {
                 Navigator.of(context).pop();
                 onEditSeries!(row.taskId);
+              },
+            ),
+          if (onEditSeries != null && !isSkipped)
+            ListTile(
+              key: OccurrenceSheetKeys.editFromHere,
+              leading: const Icon(Icons.call_split),
+              title: const Text('本次及以后'),
+              // 说清它做了什么：**不改历史**。不说的话，用户会担心
+              // 之前做过的记录被一起改掉 —— 而那正是这个做法要保住的东西。
+              subtitle: const Text('这一次之前的不受影响'),
+              onTap: () {
+                Navigator.of(context).pop();
+                onEditSeries!(row.taskId, from: row.key!.value);
               },
             ),
           if (isSkipped)

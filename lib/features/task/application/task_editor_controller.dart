@@ -17,6 +17,7 @@ import '../../../core/time/plan_date.dart';
 import '../../../domain/commands/task_command.dart';
 import '../../../domain/entities/stage.dart';
 import '../../../domain/entities/task.dart';
+import '../../../domain/value_objects/occurrence_key.dart';
 import '../../../domain/value_objects/recurrence.dart';
 import '../../views/shared/application/category_providers.dart';
 import '../../views/shared/application/task_providers.dart';
@@ -77,6 +78,7 @@ final class StageDraft {
 final class TaskDraft {
   const TaskDraft({
     this.editingTaskId,
+    this.splitAt,
     this.unsupportedRecurrence,
     this.title = '',
     this.note = '',
@@ -108,6 +110,14 @@ final class TaskDraft {
   final String? unsupportedRecurrence;
 
   bool get isEditing => editingTaskId != null;
+
+  /// 「本次及以后」：从这一次起用新内容（FR-TASK-06）。
+  ///
+  /// 非 null 时保存走 `SplitRecurringTaskCommand`：原规则截断在这一次之前，
+  /// 新内容变成一条从这一次起的新任务。
+  final OccurrenceKey? splitAt;
+
+  bool get isSplitting => splitAt != null;
 
   final String title;
   final String note;
@@ -233,6 +243,7 @@ final class TaskDraft {
     RecurrenceDraft? recurrence,
   }) => TaskDraft(
     editingTaskId: editingTaskId,
+    splitAt: splitAt,
     unsupportedRecurrence: unsupportedRecurrence,
     title: title ?? this.title,
     note: note ?? this.note,
@@ -259,7 +270,11 @@ final class TaskDraft {
 /// 造得出来的那几种。认不出时把原串塞进 [TaskDraft.unsupportedRecurrence]
 /// 原样带着 —— 显示成「不重复」再让用户一按保存把规则抹掉，
 /// 是最糟的一种「什么都没做却坏了东西」。
-TaskDraft draftFromTask(Task task, List<Stage> stages) {
+TaskDraft draftFromTask(
+  Task task,
+  List<Stage> stages, {
+  OccurrenceKey? splitAt,
+}) {
   final recurrence = task.recurrence;
   final restored = recurrence == null
       ? null
@@ -267,13 +282,16 @@ TaskDraft draftFromTask(Task task, List<Stage> stages) {
 
   return TaskDraft(
     editingTaskId: task.id,
+    splitAt: splitAt,
     unsupportedRecurrence: recurrence != null && restored == null
         ? recurrence.canonical
         : null,
     title: task.title,
     note: task.note ?? '',
     isAllDay: task.isAllDay,
-    planDate: task.planDate,
+    // 「本次及以后」时，新任务从**分割点那天**开始 —— 不是原任务的
+    // 开始日期。写成后者的话，新规则会从很久以前重新展开一遍。
+    planDate: splitAt?.date ?? task.planDate,
     startMinute: task.startMinute,
     endDate: task.endDate,
     endMinute: task.endMinute,
@@ -300,6 +318,10 @@ TaskDraft draftFromTask(Task task, List<Stage> stages) {
 /// 是个带 `$` 前缀的内部 API。覆盖一个普通 Provider 只用公开接口，
 /// 而且「作用域内这一份是哪条任务」读起来就是那个意思。
 final editingTaskIdProvider = Provider<String?>((ref) => null);
+
+/// 「本次及以后」的分割点；null = 改整条（FR-TASK-06）。
+/// 同 [editingTaskIdProvider]，由组合根在路由上覆盖注入。
+final editingSplitAtProvider = Provider<OccurrenceKey?>((ref) => null);
 
 /// 表单控制器。
 final class TaskEditorController extends Notifier<TaskDraft> {
@@ -332,6 +354,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     return draftFromTask(
       task,
       ref.read(stagesByTaskProvider)[task.id] ?? const [],
+      splitAt: ref.read(editingSplitAtProvider),
     );
   }
 
@@ -490,35 +513,70 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     state = state.copyWith(stages: list);
   }
 
+  /// 建任务命令的载荷。新建与「本次及以后」的新任务共用一份 ——
+  /// 抄两遍的话，加一个字段总有一处会漏，而漏的那一半只在分裂时出现。
+  CreateTaskCommand _createCommandFor(
+    String id,
+    TaskDraft draft,
+    PlanDate? planDate,
+    String timeZoneId, {
+    String? splitFromTaskId,
+  }) => CreateTaskCommand(
+    taskId: id,
+    title: draft.title.trim(),
+    // 有两个及以上阶段就是阶段事项（FR-TASK-02）。
+    kind: draft.isStaged ? TaskKind.staged : TaskKind.single,
+    // 记**用户所在的时区**，不是 UTC（ADR-0005）：
+    // 「每天 07:00 起床」飞到伦敦后仍应是当地 07:00。
+    timeZoneId: timeZoneId,
+    note: draft.note.trim().isEmpty ? null : draft.note.trim(),
+    // null 即「未分类」（settings-spec §3.0）—— 库里没有那一行，
+    // 所以这里原样传，不做任何「空则填默认分类」的转换。
+    categoryId: draft.categoryId,
+    // 存**规范形**：拼出来的串不保证是规范形，而 data-model
+    // 要求库里存的是规范形（否则同一条规则可能有两种写法，
+    // 往返与同步都会分叉）。
+    recurrenceRule: _canonicalRule(draft),
+    isAllDay: draft.isAllDay,
+    planDate: planDate,
+    startMinute: draft.isAllDay ? null : draft.startMinute,
+    // **兜底同样要做到结束侧**：全天不带时刻，没有结束日期
+    // 就连结束时刻一起丢掉。少任何一条都会造出一个
+    // 领域层直接拒绝的命令 —— 那时用户看到的只是保存炸了。
+    endDate: draft.endDate,
+    endMinute: draft.endDate == null || draft.isAllDay ? null : draft.endMinute,
+    splitFromTaskId: splitFromTaskId,
+  );
+
+  /// 草稿里的阶段 → 命令载荷。
+  ///
+  /// **这里才把列表位置转成连续的 orderIndex。** 编辑期间用户增删拖拽，
+  /// 序号一直是乱的；领域层要求从 0 起连续，所以在边界上一次转好。
+  List<StageSpec> _stageSpecs(TaskDraft draft) => [
+    for (final (i, s)
+        in (draft.isStaged ? draft.filledStages : const <StageDraft>[]).indexed)
+      StageSpec(
+        id: s.id,
+        title: s.title.trim(),
+        orderIndex: i,
+        startOffsetMinutes: s.startOffsetMinutes,
+        durationMinutes: s.durationMinutes,
+      ),
+  ];
+
   /// 把阶段整表写回。
   ///
   /// **编辑时也要发**，而且草稿里没有阶段时要发一条空的 —— 用户把阶段
   /// 全删了，不发这条的话库里那些阶段原地不动，界面显示没有、库里还有。
   Future<void> _replaceStages(String taskId, TaskDraft draft) {
-    final filled = draft.isStaged ? draft.filledStages : const <StageDraft>[];
-    if (!draft.isEditing && filled.isEmpty) {
+    if (!draft.isEditing && !draft.isStaged) {
       // 新建且没有阶段：连发都不用发。
       return Future<void>.value();
     }
     return ref
         .read(taskCommandDispatcherProvider)
         .dispatch(
-          ReplaceStagesCommand(
-            taskId: taskId,
-            stages: [
-              // **这里才把列表位置转成连续的 orderIndex。**
-              // 编辑期间用户增删拖拽，序号一直是乱的；
-              // 领域层要求从 0 起连续，所以在边界上一次转好。
-              for (final (i, s) in filled.indexed)
-                StageSpec(
-                  id: s.id,
-                  title: s.title.trim(),
-                  orderIndex: i,
-                  startOffsetMinutes: s.startOffsetMinutes,
-                  durationMinutes: s.durationMinutes,
-                ),
-            ],
-          ),
+          ReplaceStagesCommand(taskId: taskId, stages: _stageSpecs(draft)),
         );
   }
 
@@ -564,6 +622,33 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     // `ConvertTaskAllDayMode` 命令，roadmap 排在 M3。
     // 在那之前编辑模式里那个开关是禁用的 —— 让它能拨却存不下去，
     // 就是又一个「改了没反应」的开关。
+    // 「本次及以后」：分裂（FR-TASK-06、data-model §4.4）。
+    // **一条命令**，不是「改原任务」+「建新任务」两条 —— 回放时只应用
+    // 前一条的话，用户的重复任务会在分割点静默终止。
+    final splitAt = draft.splitAt;
+    if (splitAt != null) {
+      final newId = ref.read(idGeneratorProvider).newId();
+      await ref
+          .read(taskCommandDispatcherProvider)
+          .dispatch(
+            SplitRecurringTaskCommand(
+              taskId: draft.editingTaskId!,
+              splitAt: splitAt,
+              newTask: _createCommandFor(
+                newId,
+                draft,
+                planDate,
+                resolver.currentZoneId(),
+                splitFromTaskId: draft.editingTaskId,
+              ),
+              // 阶段随命令一起去 —— 「落到哪条任务上」由 dispatcher 判
+              // （分割点是第一次时不分裂），这里不重复那个判断。
+              stages: _stageSpecs(draft),
+            ),
+          );
+      return newId;
+    }
+
     if (draft.isEditing) {
       await ref
           .read(taskCommandDispatcherProvider)
@@ -589,33 +674,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     await ref
         .read(taskCommandDispatcherProvider)
         .dispatch(
-          CreateTaskCommand(
-            taskId: id,
-            title: draft.title.trim(),
-            // 有两个及以上阶段就是阶段事项（FR-TASK-02）。
-            kind: draft.isStaged ? TaskKind.staged : TaskKind.single,
-            // 记**用户所在的时区**，不是 UTC（ADR-0005）：
-            // 「每天 07:00 起床」飞到伦敦后仍应是当地 07:00。
-            timeZoneId: resolver.currentZoneId(),
-            note: draft.note.trim().isEmpty ? null : draft.note.trim(),
-            // null 即「未分类」（settings-spec §3.0）—— 库里没有那一行，
-            // 所以这里原样传，不做任何「空则填默认分类」的转换。
-            categoryId: draft.categoryId,
-            // 存**规范形**：拼出来的串不保证是规范形，而 data-model
-            // 要求库里存的是规范形（否则同一条规则可能有两种写法，
-            // 往返与同步都会分叉）。
-            recurrenceRule: _canonicalRule(draft),
-            isAllDay: draft.isAllDay,
-            planDate: planDate,
-            startMinute: draft.isAllDay ? null : draft.startMinute,
-            // **兜底同样要做到结束侧**：全天不带时刻，没有结束日期
-            // 就连结束时刻一起丢掉。少任何一条都会造出一个
-            // 领域层直接拒绝的命令 —— 那时用户看到的只是保存炸了。
-            endDate: draft.endDate,
-            endMinute: draft.endDate == null || draft.isAllDay
-                ? null
-                : draft.endMinute,
-          ),
+          _createCommandFor(id, draft, planDate, resolver.currentZoneId()),
         );
     // 阶段是**第二条命令** —— 任务得先存在才能给它挂阶段。
     //

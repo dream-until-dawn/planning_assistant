@@ -63,6 +63,9 @@ sealed class TaskCommand {
         json,
       ),
       SkipOccurrenceCommand.kType => SkipOccurrenceCommand.fromJson(json),
+      SplitRecurringTaskCommand.kType => SplitRecurringTaskCommand.fromJson(
+        json,
+      ),
       CompleteTaskWithStagesCommand.kType =>
         CompleteTaskWithStagesCommand.fromJson(json),
       _ => throw UnknownCommandException(type),
@@ -102,6 +105,7 @@ final class CreateTaskCommand extends TaskCommand {
     this.colorArgb,
     this.icon,
     this.sortOrder = 0,
+    this.splitFromTaskId,
   });
 
   static const kType = 'createTask';
@@ -127,6 +131,10 @@ final class CreateTaskCommand extends TaskCommand {
   final String? icon;
   final double sortOrder;
 
+  /// 「本次及以后」分裂出来的新任务，指回原任务（data-model §4.4）。
+  /// 用于将来「合并回去」与同步溯源。
+  final String? splitFromTaskId;
+
   @override
   String get type => kType;
 
@@ -149,7 +157,32 @@ final class CreateTaskCommand extends TaskCommand {
     'colorArgb': colorArgb,
     'icon': icon,
     'sortOrder': sortOrder,
+    'splitFromTaskId': splitFromTaskId,
   };
+
+  /// 换一个 taskId 的同一份内容。
+  ///
+  /// 「本次及以后」在分割点正好是第一次时用它：那时不分裂，
+  /// 把新内容直接落到**原任务**上。
+  CreateTaskCommand copyWithId(String id) => CreateTaskCommand(
+    taskId: id,
+    title: title,
+    kind: kind,
+    timeZoneId: timeZoneId,
+    note: note,
+    categoryId: categoryId,
+    priority: priority,
+    isAllDay: isAllDay,
+    planDate: planDate,
+    startMinute: startMinute,
+    endDate: endDate,
+    endMinute: endMinute,
+    recurrenceRule: recurrenceRule,
+    colorArgb: colorArgb,
+    icon: icon,
+    sortOrder: sortOrder,
+    splitFromTaskId: splitFromTaskId,
+  );
 
   static CreateTaskCommand fromJson(Map<String, Object?> json) =>
       CreateTaskCommand(
@@ -169,6 +202,7 @@ final class CreateTaskCommand extends TaskCommand {
         colorArgb: json['colorArgb'] as int?,
         icon: json['icon'] as String?,
         sortOrder: (json['sortOrder']! as num).toDouble(),
+        splitFromTaskId: json['splitFromTaskId'] as String?,
       );
 }
 
@@ -388,6 +422,82 @@ final class SkipOccurrenceCommand extends TaskCommand {
       SkipOccurrenceCommand(
         taskId: json['taskId']! as String,
         occurrenceKey: OccurrenceKey.parse(json['occurrenceKey']! as String),
+      );
+}
+
+/// 「本次及以后」修改（FR-TASK-06）。
+///
+/// ## 不改历史，而是分裂（data-model §4.4）
+///
+/// 1. 原任务的 RRULE 追加 `UNTIL=<分割点前一天>`；
+/// 2. 新建一条任务，规则从分割点起生效，`planDate` 就是分割点；
+/// 3. 新任务记 [CreateTaskCommand.splitFromTaskId] 溯源。
+///
+/// 好处是**历史发生的完成记录原样保留**，而且云端合并时不需要理解
+/// 「部分修改」这种复杂语义 —— 它看到的只是「一条任务改了 UNTIL」
+/// 加「新建了一条任务」。
+///
+/// ## 为什么是一条命令，不是两条
+///
+/// 拆成「改原任务」+「建新任务」两条的话，回放时可以只应用前一条 ——
+/// 结果是用户的重复任务**在分割点静默终止**，后面那半截凭空消失。
+/// 一条命令才谈得上原子。
+///
+/// ## 分割点正好是第一次时
+///
+/// 那样截断出来的原任务一次都不发生，留下一条死任务。这时正确的
+/// realization 是**直接改整条**，不分裂 —— 由 dispatcher 判，
+/// 而不是让调用方各自记得。
+final class SplitRecurringTaskCommand extends TaskCommand {
+  const SplitRecurringTaskCommand({
+    required this.taskId,
+    required this.splitAt,
+    required this.newTask,
+    this.stages = const [],
+  });
+
+  static const kType = 'splitRecurringTask';
+
+  /// 被分裂的原任务。
+  final String taskId;
+
+  /// 从**这一次**起（含）用新规则。
+  final OccurrenceKey splitAt;
+
+  /// 分割点之后那一半长什么样。它自带新任务的 ID。
+  final CreateTaskCommand newTask;
+
+  /// 新那一半的阶段。
+  ///
+  /// **跟着一起来，不是另发一条 `ReplaceStagesCommand`。**
+  /// 分割点正好是第一次时不分裂（见上），那时阶段该落到**原任务**上 ——
+  /// 而「落到哪条」这个判断在 dispatcher 里。让调用方另发一条的话，
+  /// 它得把同一个判断再写一遍，两处迟早分叉。
+  final List<StageSpec> stages;
+
+  @override
+  String get type => kType;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'type': kType,
+    'taskId': taskId,
+    'splitAt': splitAt.value,
+    'newTask': newTask.toJson(),
+    'stages': [for (final s in stages) s.toJson()],
+  };
+
+  static SplitRecurringTaskCommand fromJson(Map<String, Object?> json) =>
+      SplitRecurringTaskCommand(
+        taskId: json['taskId']! as String,
+        splitAt: OccurrenceKey.parse(json['splitAt']! as String),
+        newTask: CreateTaskCommand.fromJson(
+          json['newTask']! as Map<String, Object?>,
+        ),
+        stages: [
+          for (final s in (json['stages'] as List? ?? const []))
+            StageSpec.fromJson(s as Map<String, Object?>),
+        ],
       );
 }
 

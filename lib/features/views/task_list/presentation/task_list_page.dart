@@ -31,7 +31,9 @@ class TaskListPage extends ConsumerStatefulWidget {
 
   /// 打开某条任务的编辑页。**由组合根接上路由**（同外壳的
   /// `onOpenSettings`）—— 视图自己不认识路由表。
-  final void Function(String taskId)? onEditTask;
+  ///
+  /// [from] 非空表示「本次及以后」的分割点（FR-TASK-06）。
+  final void Function(String taskId, {String? from})? onEditTask;
 
   /// 空态里那个行动按钮。为 null 时按钮不出现 ——
   /// §8.2 要求「一个明确行动按钮」，而一个点不动的按钮比没有更糟。

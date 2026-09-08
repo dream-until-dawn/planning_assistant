@@ -211,6 +211,15 @@ final List<_Entry> _taskFields = [
     check: null,
   ),
   (
+    field: 'splitFromTaskId',
+    kind: _Kind.system,
+    why:
+        '「本次及以后」分裂出新任务时由 SplitRecurringTaskCommand 填的溯源，'
+        '不是用户输入（data-model §4.4）',
+    drive: null,
+    check: null,
+  ),
+  (
     field: 'sortOrder',
     kind: _Kind.deferred,
     why: '手动排序。要等列表的拖拽重排（view-specs §2.4，M3）',
