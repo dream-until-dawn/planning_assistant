@@ -62,6 +62,11 @@ class TaskEditorPage extends ConsumerStatefulWidget {
 
   /// 重复区。
   static const Key recurrenceSwitchKey = ValueKey('editor-repeat');
+
+  /// 规则这个界面表达不了时的那一行只读说明。
+  static const Key unsupportedRecurrenceKey = ValueKey(
+    'editor-repeat-readonly',
+  );
   static const Key recurrenceSummaryKey = ValueKey('editor-repeat-summary');
 
   static Key frequencyKey(RecurrenceFrequency f) =>
@@ -114,6 +119,31 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
   /// 而命令自带 ID 只保证同一条命令重放幂等，不保证两条不同命令去重。
   bool _saving = false;
 
+  /// 标题与备注的控制器。
+  ///
+  /// **编辑模式必须有**：`TextField` 不带 controller 时永远从空串开始，
+  /// 于是打开一条已有任务，标题栏是空的 —— 看起来像内容全丢了。
+  ///
+  /// 在 `initState` 里**取一次**草稿来填初值，之后不再跟着草稿走：
+  /// 每帧回填的话，光标会在用户打字时被弹回开头。
+  late final TextEditingController _title;
+  late final TextEditingController _note;
+
+  @override
+  void initState() {
+    super.initState();
+    final draft = ref.read(taskEditorProvider);
+    _title = TextEditingController(text: draft.title);
+    _note = TextEditingController(text: draft.note);
+  }
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _note.dispose();
+    super.dispose();
+  }
+
   Future<void> _save() async {
     if (_saving) return;
     setState(() => _saving = true);
@@ -144,6 +174,7 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
     final draft = ref.watch(taskEditorProvider);
     final controller = ref.read(taskEditorProvider.notifier);
     final colors = context.appColors;
+    final text = Theme.of(context).textTheme;
 
     return Scaffold(
       backgroundColor: colors.canvas,
@@ -151,7 +182,7 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
         backgroundColor: colors.canvas,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
-        title: const Text('新建任务'),
+        title: Text(draft.isEditing ? '编辑任务' : '新建任务'),
       ),
       body: SafeArea(
         child: ListView(
@@ -159,6 +190,7 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
           children: [
             TextField(
               key: TaskEditorPage.titleFieldKey,
+              controller: _title,
               // 一进来就能打字，省掉一次点击（≤3 次点击那条验收）。
               autofocus: true,
               textInputAction: TextInputAction.next,
@@ -171,6 +203,7 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
             const SizedBox(height: Spacing.xl),
             TextField(
               key: TaskEditorPage.noteFieldKey,
+              controller: _note,
               minLines: 1,
               maxLines: 4,
               decoration: const InputDecoration(labelText: '备注（可选）'),
@@ -196,8 +229,16 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
               key: TaskEditorPage.allDaySwitchKey,
               contentPadding: EdgeInsets.zero,
               title: const Text('全天'),
+              // **编辑时禁用。** 全天 ⇄ 定时会改变 occurrenceKey 的形态，
+              // 已有的单次例外要在同一事务里迁移 key
+              // （data-model §4.6、R-27），那需要一条专门的命令，
+              // roadmap 排在 M3。在那之前让它能拨却存不下去，
+              // 就是又一个「改了没反应」的开关。
+              subtitle: draft.isEditing
+                  ? Text('建好之后暂时改不了', style: text.bodySmall)
+                  : null,
               value: draft.isAllDay,
-              onChanged: controller.setAllDay,
+              onChanged: draft.isEditing ? null : controller.setAllDay,
             ),
             if (!draft.isAllDay)
               _TimeRow(
@@ -247,6 +288,7 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
             const SizedBox(height: Spacing.xl),
             _RecurrenceSection(
               draft: draft.recurrence,
+              unsupported: draft.unsupportedRecurrence,
               // 打开重复时控制器会补上日期，所以这里几乎总是非空；
               // 兜底用今天，与 `setRecurrence` 补的是同一天。
               anchor: draft.planDate ?? _today(),
@@ -879,8 +921,13 @@ class _RecurrenceSection extends StatelessWidget {
   const _RecurrenceSection({
     required this.draft,
     required this.anchor,
+    required this.unsupported,
     required this.controller,
   });
+
+  /// 这条任务的规则这个界面表达不了时，是那条原串（否则 null）。
+  /// 见 [TaskDraft.unsupportedRecurrence]。
+  final String? unsupported;
 
   final RecurrenceDraft draft;
 
@@ -893,6 +940,24 @@ class _RecurrenceSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+
+    // 界面表达不了的规则：**只读一行，不给动**。
+    //
+    // 显示成「不重复」再让用户一按保存把规则抹掉，是最糟的一种
+    // 「什么都没做却坏了东西」。说清楚它还在、只是这里改不了。
+    if (unsupported != null) {
+      return Column(
+        key: TaskEditorPage.unsupportedRecurrenceKey,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('重复', style: text.bodyLarge),
+          const SizedBox(height: Spacing.xxs),
+          Text('这条规则这里改不了，保存不会动它。', style: text.bodySmall),
+          const SizedBox(height: Spacing.xxs),
+          Text(unsupported!, style: text.bodySmall),
+        ],
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

@@ -31,6 +31,7 @@ import 'features/settings/application/settings_providers.dart';
 import 'features/settings/presentation/category_manager_page.dart';
 import 'features/settings/presentation/settings_page.dart';
 import 'features/shell/presentation/app_shell.dart';
+import 'features/task/application/task_editor_controller.dart';
 import 'features/task/presentation/task_editor_page.dart';
 import 'features/views/shared/application/view_kind.dart';
 import 'features/views/shared/presentation/filter_bar.dart';
@@ -46,8 +47,11 @@ import 'features/views/task_list/presentation/task_list_page.dart';
 /// 不允许**两处都没有**（那会是一个点了没反应的按钮）。
 final Map<ViewKind, Widget Function(BuildContext, VoidCallback?)> viewRegistry =
     {
-      ViewKind.list: (context, onCreateTask) =>
-          TaskListPage(onCreateTask: onCreateTask),
+      ViewKind.list: (context, onCreateTask) => TaskListPage(
+        onCreateTask: onCreateTask,
+        // 路由由组合根接上 —— 视图自己不认识路由表。
+        onEditTask: (id) => context.go(AppRoutes.editTask(id)),
+      ),
     };
 
 /// 尚未实装的视图，M3 逐个搬进 [viewRegistry]。
@@ -73,6 +77,9 @@ abstract final class AppRoutes {
   /// 分类管理（FR-CFG-03）。设置页的**二级页**，所以挂在它下面 ——
   /// 返回手势该回到设置，不是回到列表。
   static const String categories = '/settings/categories';
+
+  /// 编辑一条已有任务。
+  static String editTask(String id) => '/task/$id/edit';
 }
 
 GoRouter buildAppRouter() => GoRouter(
@@ -92,6 +99,25 @@ GoRouter buildAppRouter() => GoRouter(
               builder: (context, state) => const CategoryManagerPage(),
             ),
           ],
+        ),
+        GoRoute(
+          path: 'task/:id/edit',
+          // **参数用一层 ProviderScope 注入**，不是传构造参数。
+          //
+          // 编辑器的初值在 Notifier 的 `build()` 里取（那样才只取一次，
+          // 不会被后续的库推送冲掉填到一半的表单），而 `build()` 手上
+          // 只有 ref —— 于是「正在编辑哪条」得是个 provider。
+          //
+          // 覆盖它是组合根的活：页面自己不认识路由（同外壳的
+          // onOpenSettings、设置页的 onOpenCategories）。
+          builder: (context, state) => ProviderScope(
+            overrides: [
+              editingTaskIdProvider.overrideWithValue(
+                state.pathParameters['id'],
+              ),
+            ],
+            child: TaskEditorPage(onSaved: (_) => context.pop()),
+          ),
         ),
         GoRoute(
           path: 'task/new',

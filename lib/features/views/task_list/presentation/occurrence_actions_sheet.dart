@@ -30,24 +30,31 @@ abstract final class OccurrenceSheetKeys {
   static const Key skip = ValueKey('occurrence-skip');
   static const Key unskip = ValueKey('occurrence-unskip');
   static const Key hint = ValueKey('occurrence-skip-hint');
+  static const Key editSeries = ValueKey('occurrence-edit-series');
 }
 
 /// 打开某一行的动作弹层。
 ///
 /// 不重复的任务暂时没有可放的动作，所以**不弹** —— 弹一个空壳
 /// 比不弹更让人以为坏了。
-Future<void> showOccurrenceActions(BuildContext context, TaskOccurrence row) {
+Future<void> showOccurrenceActions(
+  BuildContext context,
+  TaskOccurrence row, {
+  void Function(String taskId)? onEditSeries,
+}) {
   if (!row.isOccurrence) return Future<void>.value();
   return showModalBottomSheet<void>(
     context: context,
-    builder: (context) => _OccurrenceActionsSheet(row: row),
+    builder: (context) =>
+        _OccurrenceActionsSheet(row: row, onEditSeries: onEditSeries),
   );
 }
 
 class _OccurrenceActionsSheet extends ConsumerWidget {
-  const _OccurrenceActionsSheet({required this.row});
+  const _OccurrenceActionsSheet({required this.row, this.onEditSeries});
 
   final TaskOccurrence row;
+  final void Function(String taskId)? onEditSeries;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -78,6 +85,19 @@ class _OccurrenceActionsSheet extends ConsumerWidget {
               ],
             ),
           ),
+          if (onEditSeries != null)
+            ListTile(
+              key: OccurrenceSheetKeys.editSeries,
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('编辑整条重复任务'),
+              // 说清作用范围。不说的话，用户会以为这是「只改这一次」——
+              // 改完发现每一次都变了，那是最伤的一种误解。
+              subtitle: const Text('改的是规则本身，每一次都会变'),
+              onTap: () {
+                Navigator.of(context).pop();
+                onEditSeries!(row.taskId);
+              },
+            ),
           if (isSkipped)
             ListTile(
               key: OccurrenceSheetKeys.unskip,

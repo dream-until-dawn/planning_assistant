@@ -15,9 +15,11 @@ import '../../../core/patch/unset.dart';
 import '../../../core/time/minute_of_day.dart';
 import '../../../core/time/plan_date.dart';
 import '../../../domain/commands/task_command.dart';
+import '../../../domain/entities/stage.dart';
 import '../../../domain/entities/task.dart';
 import '../../../domain/value_objects/recurrence.dart';
 import '../../views/shared/application/category_providers.dart';
+import '../../views/shared/application/task_providers.dart';
 import 'recurrence_draft.dart';
 
 /// 表单里的一个阶段（FR-TASK-02）。
@@ -74,6 +76,8 @@ final class StageDraft {
 /// 要么实体的不变量被放宽，要么表单没法表达「填一半」。
 final class TaskDraft {
   const TaskDraft({
+    this.editingTaskId,
+    this.unsupportedRecurrence,
     this.title = '',
     this.note = '',
     this.isAllDay = true,
@@ -85,6 +89,25 @@ final class TaskDraft {
     this.stages = const [],
     this.recurrence = const RecurrenceDraft(),
   });
+
+  /// 正在编辑哪条任务。**null = 新建**。
+  ///
+  /// 保存时靠它分岔：新建走 `CreateTaskCommand`，编辑走
+  /// `UpdateTaskFieldsCommand`。
+  final String? editingTaskId;
+
+  /// 这条任务的重复规则**这个界面表达不了**（`RecurrenceDraft.fromRrule`
+  /// 认不出来），原样存着。
+  ///
+  /// 没有它的话，打开一条 `BYDAY=-1FR`（每月最后一个周五）的任务，
+  /// 重复区会显示成「不重复」—— 用户什么都没动，一按保存，
+  /// **规则就被悄悄抹掉了**。这是「反解只为显示」那条注释里
+  /// 早就点名的危险，真做编辑时才会撞上。
+  ///
+  /// 非 null 时：重复区变成一行只读说明，保存时把原串原样传回去。
+  final String? unsupportedRecurrence;
+
+  bool get isEditing => editingTaskId != null;
 
   final String title;
   final String note;
@@ -209,6 +232,8 @@ final class TaskDraft {
     List<StageDraft>? stages,
     RecurrenceDraft? recurrence,
   }) => TaskDraft(
+    editingTaskId: editingTaskId,
+    unsupportedRecurrence: unsupportedRecurrence,
     title: title ?? this.title,
     note: note ?? this.note,
     isAllDay: isAllDay ?? this.isAllDay,
@@ -228,6 +253,54 @@ final class TaskDraft {
   );
 }
 
+/// 从一条已有任务还原出草稿（编辑模式的初值）。
+///
+/// **重复规则可能还原不出来**：`RecurrenceDraft.fromRrule` 只认这个界面
+/// 造得出来的那几种。认不出时把原串塞进 [TaskDraft.unsupportedRecurrence]
+/// 原样带着 —— 显示成「不重复」再让用户一按保存把规则抹掉，
+/// 是最糟的一种「什么都没做却坏了东西」。
+TaskDraft draftFromTask(Task task, List<Stage> stages) {
+  final recurrence = task.recurrence;
+  final restored = recurrence == null
+      ? null
+      : RecurrenceDraft.fromRrule(recurrence);
+
+  return TaskDraft(
+    editingTaskId: task.id,
+    unsupportedRecurrence: recurrence != null && restored == null
+        ? recurrence.canonical
+        : null,
+    title: task.title,
+    note: task.note ?? '',
+    isAllDay: task.isAllDay,
+    planDate: task.planDate,
+    startMinute: task.startMinute,
+    endDate: task.endDate,
+    endMinute: task.endMinute,
+    categoryId: task.categoryId,
+    stages: [
+      for (final s in stages)
+        StageDraft(
+          id: s.id,
+          title: s.title,
+          startOffsetMinutes: s.startOffsetMinutes,
+          durationMinutes: s.durationMinutes,
+        ),
+    ],
+    recurrence: restored ?? const RecurrenceDraft(),
+  );
+}
+
+/// 正在编辑哪条任务。**null = 新建**。
+///
+/// 由组合根在编辑路由上用一层 `ProviderScope` 覆盖注入 ——
+/// 编辑器自己不认识路由，参数从上面来（同外壳的 `onOpenSettings`）。
+///
+/// 为什么不用 `NotifierProvider.family`：那要靠 `ref.$arg` 取参数，
+/// 是个带 `$` 前缀的内部 API。覆盖一个普通 Provider 只用公开接口，
+/// 而且「作用域内这一份是哪条任务」读起来就是那个意思。
+final editingTaskIdProvider = Provider<String?>((ref) => null);
+
 /// 表单控制器。
 final class TaskEditorController extends Notifier<TaskDraft> {
   /// 初值。**分类取配置里的默认**（settings-spec §2.4
@@ -241,8 +314,26 @@ final class TaskEditorController extends Notifier<TaskDraft> {
   /// 配置里指着一个被删掉的分类时回落成未分类，而不是造出一条
   /// 指向死分类的任务。
   @override
-  TaskDraft build() =>
-      TaskDraft(categoryId: ref.read(defaultCategoryIdProvider));
+  TaskDraft build() {
+    final editingId = ref.read(editingTaskIdProvider);
+    if (editingId == null) {
+      return TaskDraft(categoryId: ref.read(defaultCategoryIdProvider));
+    }
+    // **全程用 read，不用 watch。** watch 的话，库里任何一次推送
+    // （别的任务变了、分类流来了一帧）都会重建 Notifier，
+    // 把用户填到一半的东西冲掉。初值就该只在开表单那一刻取一次。
+    final task = ref.read(taskByIdProvider(editingId));
+    if (task == null) {
+      // 取不到就退回一张新建表单。**不该发生** —— 编辑入口都是从
+      // 列表里点出来的，那条任务必然在内存里。真发生了的话，
+      // 页面那一层会先显示「这条任务不在了」，走不到这里。
+      return const TaskDraft();
+    }
+    return draftFromTask(
+      task,
+      ref.read(stagesByTaskProvider)[task.id] ?? const [],
+    );
+  }
 
   void setTitle(String value) => state = state.copyWith(title: value);
 
@@ -399,8 +490,47 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     state = state.copyWith(stages: list);
   }
 
+  /// 把阶段整表写回。
+  ///
+  /// **编辑时也要发**，而且草稿里没有阶段时要发一条空的 —— 用户把阶段
+  /// 全删了，不发这条的话库里那些阶段原地不动，界面显示没有、库里还有。
+  Future<void> _replaceStages(String taskId, TaskDraft draft) {
+    final filled = draft.isStaged ? draft.filledStages : const <StageDraft>[];
+    if (!draft.isEditing && filled.isEmpty) {
+      // 新建且没有阶段：连发都不用发。
+      return Future<void>.value();
+    }
+    return ref
+        .read(taskCommandDispatcherProvider)
+        .dispatch(
+          ReplaceStagesCommand(
+            taskId: taskId,
+            stages: [
+              // **这里才把列表位置转成连续的 orderIndex。**
+              // 编辑期间用户增删拖拽，序号一直是乱的；
+              // 领域层要求从 0 起连续，所以在边界上一次转好。
+              for (final (i, s) in filled.indexed)
+                StageSpec(
+                  id: s.id,
+                  title: s.title.trim(),
+                  orderIndex: i,
+                  startOffsetMinutes: s.startOffsetMinutes,
+                  durationMinutes: s.durationMinutes,
+                ),
+            ],
+          ),
+        );
+  }
+
   /// 草稿里的重复规则 → 库里存的规范形串。
+  ///
+  /// **这个界面表达不了的规则原样带回去**：编辑一条
+  /// `BYDAY=-1FR`（每月最后一个周五）的任务时，重复区是只读的，
+  /// 草稿里那个 `RecurrenceDraft` 一直是「不重复」——
+  /// 照它编码的话，用户改个标题就把规则抹掉了。
   String? _canonicalRule(TaskDraft draft) {
+    final unsupported = draft.unsupportedRecurrence;
+    if (unsupported != null) return unsupported;
     final raw = draft.recurrence.toRrule();
     return raw == null ? null : Recurrence.parse(raw).canonical;
   }
@@ -416,7 +546,8 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     }
 
     final resolver = ref.read(timeZoneResolverProvider);
-    final id = ref.read(idGeneratorProvider).newId();
+    // 编辑时沿用原来的 ID，新建才生成。
+    final id = draft.editingTaskId ?? ref.read(idGeneratorProvider).newId();
 
     // **不变量兜底**：非全天必须有日期。上面几个 setter 已经保证了，
     // 但那是界面路径的保证 —— 将来多一个入口（语音、导入、Agent）
@@ -424,6 +555,36 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     final planDate = draft.isAllDay
         ? draft.planDate
         : (draft.planDate ?? _today());
+
+    // 编辑走**改字段**，不是重新建一条。
+    //
+    // `isAllDay` 不在 `UpdateTaskFieldsCommand` 里，是**故意的**：
+    // 全天 ⇄ 定时切换会改变 occurrenceKey 的形态，已有的例外要在
+    // 同一事务里迁移 key（data-model §4.6、R-27）。那需要一条专门的
+    // `ConvertTaskAllDayMode` 命令，roadmap 排在 M3。
+    // 在那之前编辑模式里那个开关是禁用的 —— 让它能拨却存不下去，
+    // 就是又一个「改了没反应」的开关。
+    if (draft.isEditing) {
+      await ref
+          .read(taskCommandDispatcherProvider)
+          .dispatch(
+            UpdateTaskFieldsCommand(
+              taskId: id,
+              title: draft.title.trim(),
+              note: draft.note.trim().isEmpty ? null : draft.note.trim(),
+              categoryId: draft.categoryId,
+              recurrenceRule: _canonicalRule(draft),
+              planDate: planDate,
+              startMinute: draft.isAllDay ? null : draft.startMinute,
+              endDate: draft.endDate,
+              endMinute: draft.endDate == null || draft.isAllDay
+                  ? null
+                  : draft.endMinute,
+            ),
+          );
+      await _replaceStages(id, draft);
+      return id;
+    }
 
     await ref
         .read(taskCommandDispatcherProvider)
@@ -461,29 +622,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     // 两条命令而不是一条大的：命令要可重放（FR-AI-01），
     // 而「建任务」与「设阶段」本来就是两件可以分别发生的事
     // （改已有任务的阶段时只发后一条）。
-    if (draft.isStaged) {
-      final filled = draft.filledStages;
-      await ref
-          .read(taskCommandDispatcherProvider)
-          .dispatch(
-            ReplaceStagesCommand(
-              taskId: id,
-              stages: [
-                // **这里才把列表位置转成连续的 orderIndex。**
-                // 编辑期间用户增删拖拽，序号一直是乱的；
-                // 领域层要求从 0 起连续，所以在边界上一次转好。
-                for (final (i, s) in filled.indexed)
-                  StageSpec(
-                    id: s.id,
-                    title: s.title.trim(),
-                    orderIndex: i,
-                    startOffsetMinutes: s.startOffsetMinutes,
-                    durationMinutes: s.durationMinutes,
-                  ),
-              ],
-            ),
-          );
-    }
+    await _replaceStages(id, draft);
 
     return id;
   }
@@ -494,7 +633,15 @@ final class TaskEditorController extends Notifier<TaskDraft> {
 ///
 /// Riverpod 3 把 autoDispose 从 Notifier 基类挪到了 provider 上
 /// （`AutoDisposeNotifier` 已删除）—— 类照常 extends [Notifier]。
+/// **`dependencies` 是必需的，不是文档摆设。**
+///
+/// 编辑路由用一层 `ProviderScope` 覆盖 [editingTaskIdProvider]。
+/// 不声明依赖的话，这个 provider 仍然在**根作用域**解析 —— 那里的
+/// editingTaskId 永远是 null，于是编辑页打开的是一张新建表单，
+/// 标题写着「新建任务」，改完还会多出一条任务。
+/// 而且它不报错：一切照常运行，只是作用域没生效。
 final taskEditorProvider =
     NotifierProvider.autoDispose<TaskEditorController, TaskDraft>(
       TaskEditorController.new,
+      dependencies: [editingTaskIdProvider],
     );

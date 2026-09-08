@@ -9,9 +9,6 @@ library;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../app_providers.dart';
-import '../../../../domain/entities/occurrence_override.dart';
-import '../../../../domain/entities/stage.dart';
-import '../../../../domain/entities/task.dart';
 import '../../../../domain/recurrence/recurrence_engine.dart';
 import '../../../../domain/value_objects/task_status.dart';
 import '../../../settings/application/registry.dart';
@@ -20,28 +17,9 @@ import '../../shared/application/category_providers.dart';
 import '../../shared/application/occurrence_expansion.dart';
 import '../../shared/application/task_filter.dart';
 import '../../shared/application/task_occurrence.dart';
+import '../../shared/application/task_providers.dart';
 import '../../shared/application/view_shared_state.dart';
 import 'task_grouping.dart';
-
-/// 库里的活动任务，**未经筛选**。
-///
-/// 拆成两个 provider 是有意的：这一个是数据源，
-/// [filteredTasksProvider] 才是列表看到的东西。合成一个的话，
-/// 「空态」就分不清是「一条任务都没有」还是「筛完之后没有」——
-/// 而这两种的正确文案完全不同。
-final visibleTasksProvider = StreamProvider<List<Task>>(
-  (ref) => ref.watch(taskRepositoryProvider).watchTasks(),
-);
-
-/// 全部单次例外的流（FR-TASK-05）。
-///
-/// **必须是顶层 provider**，与 [allStagesProvider] 同一条理由：
-/// 在别的 provider 体内内联构造 `StreamProvider` 会每次重建出一个新对象，
-/// `watch` 于是不停重新订阅 —— 测试表现为「did not complete」，
-/// 看不出是死循环。
-final allOverridesProvider = StreamProvider<List<OccurrenceOverride>>(
-  (ref) => ref.watch(taskRepositoryProvider).watchAllOverrides(),
-);
 
 /// 展开成「一行一次发生」（view-specs §0.2）。
 ///
@@ -102,38 +80,3 @@ final groupedTasksProvider = Provider<List<TaskGroup>>((ref) {
     categories: ref.watch(categoryListProvider),
   );
 });
-
-/// 按 taskId 索引的阶段（FR-TASK-02：父任务进度 = 已完成阶段数 / 总数）。
-///
-/// 一次取全再索引，不按 taskId 分别订阅 —— 理由见
-/// `TaskRepository.watchAllStages` 的注释。
-/// 全部阶段的流。
-///
-/// **必须是顶层 provider。** 一度写成在 [stagesByTaskProvider] 体内
-/// 内联 `ref.watch(StreamProvider(...))` —— 那样每次重建都构造一个
-/// **新的 provider 对象**，`watch` 于是不停重新订阅，测试直接挂死
-/// （表现是「did not complete」，看不出是死循环）。
-final allStagesProvider = StreamProvider<List<Stage>>(
-  (ref) => ref.watch(taskRepositoryProvider).watchAllStages(),
-);
-
-final stagesByTaskProvider = Provider<Map<String, List<Stage>>>((ref) {
-  final stages = ref.watch(allStagesProvider);
-  return switch (stages) {
-    AsyncData(:final value) => _indexByTask(value),
-    _ => const {},
-  };
-});
-
-Map<String, List<Stage>> _indexByTask(List<Stage> stages) {
-  final map = <String, List<Stage>>{};
-  for (final s in stages) {
-    (map[s.taskId] ??= []).add(s);
-  }
-  // 组内按 orderIndex 排 —— 进度只数个数，但详情页要按顺序显示，
-  // 索引在这里排好，省得每个消费者各排一遍。
-  for (final list in map.values) {
-    list.sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
-  }
-  return map;
-}

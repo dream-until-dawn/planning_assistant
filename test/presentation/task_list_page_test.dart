@@ -17,8 +17,8 @@ import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/features/views/shared/application/category_providers.dart';
+import 'package:planning_assistant/features/views/shared/application/task_providers.dart';
 import 'package:planning_assistant/features/views/shared/application/view_shared_state.dart';
-import 'package:planning_assistant/features/views/task_list/application/task_list_providers.dart';
 import 'package:planning_assistant/features/views/task_list/presentation/task_list_page.dart';
 
 import '../support/app_harness.dart';

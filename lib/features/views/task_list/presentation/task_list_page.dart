@@ -19,6 +19,7 @@ import '../../../../domain/value_objects/task_status.dart';
 import '../../../task/application/recurrence_draft.dart';
 import '../../shared/application/category_providers.dart';
 import '../../shared/application/task_occurrence.dart';
+import '../../shared/application/task_providers.dart';
 import '../../shared/application/view_shared_state.dart';
 import '../application/task_grouping.dart';
 import '../application/task_list_actions.dart';
@@ -26,7 +27,11 @@ import '../application/task_list_providers.dart';
 import 'occurrence_actions_sheet.dart';
 
 class TaskListPage extends ConsumerStatefulWidget {
-  const TaskListPage({this.onCreateTask, super.key});
+  const TaskListPage({this.onCreateTask, this.onEditTask, super.key});
+
+  /// 打开某条任务的编辑页。**由组合根接上路由**（同外壳的
+  /// `onOpenSettings`）—— 视图自己不认识路由表。
+  final void Function(String taskId)? onEditTask;
 
   /// 空态里那个行动按钮。为 null 时按钮不出现 ——
   /// §8.2 要求「一个明确行动按钮」，而一个点不动的按钮比没有更糟。
@@ -131,12 +136,17 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
                         // 怎么找回来，用户完全没有线索。
                         onToggleDone: () =>
                             ref.read(toggleTaskDoneProvider).call(task),
-                        // 点卡片打开这一次的动作（view-specs §0.3）。
-                        // 不重复的任务暂时没有可放的动作，所以不给点 ——
-                        // 弹一个空壳比不弹更让人以为坏了。
-                        onTap: task.isOccurrence
-                            ? () => showOccurrenceActions(context, task)
-                            : null,
+                        // 点卡片（view-specs §0.3）。
+                        //
+                        // 不重复的任务只有一条路，直接开编辑；
+                        // 重复的先弹动作 —— 那里要先问「改哪一次」。
+                        onTap: () => task.isOccurrence
+                            ? showOccurrenceActions(
+                                context,
+                                task,
+                                onEditSeries: widget.onEditTask,
+                              )
+                            : widget.onEditTask?.call(task.taskId),
                       ),
                       const SizedBox(height: Spacing.cardGap),
                     ],

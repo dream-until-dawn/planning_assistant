@@ -23,9 +23,9 @@ import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/domain/value_objects/task_status.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/views/shared/application/category_providers.dart';
+import 'package:planning_assistant/features/views/shared/application/task_providers.dart';
 import 'package:planning_assistant/features/views/shared/application/view_kind.dart';
 import 'package:planning_assistant/features/views/shared/presentation/filter_bar.dart';
-import 'package:planning_assistant/features/views/task_list/application/task_list_providers.dart';
 import 'package:planning_assistant/features/views/task_list/presentation/task_list_page.dart';
 
 /// M2 的真实形态：只有列表一个视图，切换器因此不出现。

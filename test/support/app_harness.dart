@@ -27,7 +27,7 @@ import 'package:planning_assistant/domain/commands/command_dispatcher.dart';
 import 'package:planning_assistant/domain/entities/category.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/features/views/shared/application/category_providers.dart';
-import 'package:planning_assistant/features/views/task_list/application/task_list_providers.dart';
+import 'package:planning_assistant/features/views/shared/application/task_providers.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 
 /// 一套装好的依赖，供 `ProviderScope(overrides: ...)` 使用。
