@@ -188,6 +188,23 @@ final class DriftTaskRepository implements TaskRepository {
   }
 
   @override
+  Future<int> purgeDeleted(Iterable<String> taskIds) async {
+    var purged = 0;
+    await _db.transaction(() async {
+      for (final id in taskIds) {
+        // 子实体交给外键的 `ON DELETE CASCADE`（`app_database.dart` 里
+        // 开了 `PRAGMA foreign_keys`）。
+        //
+        // 这里**只删墓碑**（`purgeTombstone` 那句 WHERE），所以级联删掉的
+        // 也一定是墓碑的子行 —— 软删除本来就是级联打墓碑的
+        // （`softDeleteTaskCascade`），父是墓碑时子不可能还活着。
+        purged += await _tasks.purgeTombstone(id);
+      }
+    });
+    return purged;
+  }
+
+  @override
   Future<void> restoreTask(String id) async {
     await _db.transaction(() async {
       final task = await findTaskById(id, scope: TaskScope.all);

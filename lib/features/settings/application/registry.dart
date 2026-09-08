@@ -84,6 +84,7 @@ final List<SettingSpecBase> settingsRegistry = [
   firstDayOfWeek,
   calendarSplitRatio,
   ganttLaneBy,
+  trashRetentionDays,
   defaultCategoryId,
   swipeRight,
   swipeLeft,
@@ -271,6 +272,27 @@ final SettingSpec<Weekday> firstDayOfWeek = _enumSpec(
   group: SettingGroup.view,
   label: '一周从哪天开始',
   description: '影响日历的排列',
+);
+
+/// 回收站保留期（task-lifecycle §6）。
+///
+/// 超过它的墓碑会在下次启动时被物理清理（L-09）。
+///
+/// **给的是几个档位，不是任意数字**：一个能填 0 的输入框意味着
+/// 「删了立刻永久消失」，那与回收站的意义正相反。
+final SettingSpec<int> trashRetentionDays = SettingSpec<int>(
+  key: 'data.trashRetentionDays',
+  defaultValue: 30,
+  exposure: SettingExposure.exposed,
+  group: SettingGroup.data,
+  editor: SettingEditor.select,
+  label: '回收站保留',
+  description: '超过这个天数的已删任务会在下次启动时清理掉',
+  options: const [(7, '7 天'), (30, '30 天'), (90, '90 天')],
+  encode: (v) => v,
+  // 认不出的值回落到默认。**必须显式列出合法值** ——
+  // 配置文件被手改成 0 的话，「删了立刻永久消失」就成了默认行为。
+  decode: (json) => json is int && const [7, 30, 90].contains(json) ? json : 30,
 );
 
 /// 甘特的泳道按什么分（view-specs §4.3）。

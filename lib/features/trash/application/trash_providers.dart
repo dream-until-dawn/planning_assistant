@@ -8,8 +8,7 @@
 /// 一个字都没落地。又是「模型有旋钮、界面够不着」那一族。
 ///
 /// 删除是**软删除**：写 `deletedAt` 墓碑，不物理删（§1.1）。
-/// 物理清理由启动时的后台任务做（L-09），**那一步还没实现** ——
-/// 所以现在的回收站是只进不出的，记在 roadmap 里。
+/// 物理清理由启动时的后台任务做（L-09），见 `trash_purge.dart`。
 library;
 
 import 'package:flutter/widgets.dart' show VoidCallback;
@@ -19,11 +18,21 @@ import '../../../app_providers.dart';
 import '../../../domain/commands/task_command.dart';
 import '../../../domain/entities/task.dart';
 import '../../../domain/repositories/task_repository.dart';
+import '../../settings/application/registry.dart';
+import '../../settings/application/settings_providers.dart';
 
 /// 回收站里的任务，持续推送。
 final trashedTasksProvider = StreamProvider<List<Task>>(
   (ref) =>
       ref.watch(taskRepositoryProvider).watchTasks(scope: TaskScope.trashed),
+);
+
+/// 回收站保留期（天）。
+///
+/// 单独一个 provider 是因为**界面也要用它**（「还剩几天」），
+/// 而它不该为了一个天数去 watch 整张配置表。
+final trashRetentionProvider = Provider<int>(
+  (ref) => settingOf(ref, trashRetentionDays),
 );
 
 /// 删除与恢复。

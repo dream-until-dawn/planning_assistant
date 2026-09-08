@@ -56,6 +56,15 @@ abstract interface class TaskRepository {
   /// 写入任务。**会校验领域不变量**，违反时抛异常而不是写进库。
   Future<void> saveTask(Task task);
 
+  /// **物理删除**一条已打墓碑的任务及其子实体（task-lifecycle §6、L-09）。
+  ///
+  /// 只用于超期清理。**不接受活着的任务** —— 判「该不该清」是领域策略
+  /// （`isPurgeable`）的事，仓库这一侧只负责「只删墓碑」这条硬约束：
+  /// 调用方算错了，最坏也只是清早了，不会把活数据抹掉。
+  ///
+  /// 返回真正删掉了几条任务（子实体不计）。
+  Future<int> purgeDeleted(Iterable<String> taskIds);
+
   /// 全部单次例外，持续推送。
   ///
   /// **一次取全部，不按任务分**：列表要一次展开几十条重复任务，

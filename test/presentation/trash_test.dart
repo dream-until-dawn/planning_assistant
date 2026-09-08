@@ -14,8 +14,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
+import 'package:planning_assistant/app_providers.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
+import 'package:planning_assistant/domain/repositories/task_repository.dart';
 import 'package:planning_assistant/features/settings/presentation/settings_page.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
@@ -39,6 +41,28 @@ Future<void> _createTask(WidgetTester tester, String title) async {
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), title);
   await tester.pump();
   await tapVisible(tester, TaskEditorPage.saveButtonKey);
+}
+
+/// 把回收站里那条任务的删除时刻挪到 [ago] 之前。
+///
+/// 走仓库而不是直接改库：`saveTask` 会不会把 `deletedAt` 顺手改掉
+/// 是这条路径的一部分，绕开它就等于假设了它的行为。
+Future<void> _backdate(WidgetTester tester, Duration ago) async {
+  final container = ProviderScope.containerOf(
+    tester.element(find.byType(PlanningAssistantApp)),
+  );
+  final repo = container.read(taskRepositoryProvider);
+  final now = container.read(clockProvider).nowUtc();
+  final task = (await repo.findTasks(scope: TaskScope.trashed)).single;
+  await repo.saveTask(task.copyWith(deletedAt: now.subtract(ago)));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _deleteFirst(WidgetTester tester) async {
+  await tester.tap(find.byType(TaskCard));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(TaskEditorPage.deleteButtonKey));
+  await tester.pumpAndSettle();
 }
 
 Future<void> _openTrash(WidgetTester tester) async {
@@ -124,10 +148,7 @@ void main() {
     testAppWidgets('删掉的任务在里面，能恢复', (tester) async {
       await _pumpApp(tester);
       await _createTask(tester, '买菜');
-      await tester.tap(find.byType(TaskCard));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(TaskEditorPage.deleteButtonKey));
-      await tester.pumpAndSettle();
+      await _deleteFirst(tester);
 
       await _openTrash(tester);
       expect(find.byKey(TrashPage.pageKey), findsOneWidget);
@@ -152,10 +173,7 @@ void main() {
     testAppWidgets('恢复之后列表里又有了', (tester) async {
       await _pumpApp(tester);
       await _createTask(tester, '买菜');
-      await tester.tap(find.byType(TaskCard));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(TaskEditorPage.deleteButtonKey));
-      await tester.pumpAndSettle();
+      await _deleteFirst(tester);
 
       await _openTrash(tester);
       await tester.tap(
@@ -171,6 +189,64 @@ void main() {
 
       expect(find.byType(TaskCard), findsOneWidget);
       expect(find.text('买菜'), findsOneWidget);
+    });
+
+    group('还剩几天', () {
+      // ## 这句话为什么值得单独测
+      //
+      // 它是**一句承诺**：写「还剩 12 天」就等于说 12 天内还能救回来。
+      // 自动清理没接上之前这句话不敢写（那时只显示删除日期）；
+      // 现在敢写了，就得保证它与清理判据说的是同一件事。
+      testAppWidgets('刚删掉：还剩一整个保留期', (tester) async {
+        await _pumpApp(tester);
+        await _createTask(tester, '买菜');
+        await _deleteFirst(tester);
+        await _openTrash(tester);
+
+        expect(find.textContaining('还剩 30 天'), findsOneWidget);
+      });
+
+      testAppWidgets('**差几小时到期时说「今天最后一天」，不说「还剩 1 天」**', (tester) async {
+        // 29 天 20 小时。拿 `保留期 - 差值.inDays` 算的实现会显示
+        // 「还剩 1 天」—— 而它今晚就被清了。这条测的正是那个差错。
+        await _pumpApp(tester);
+        await _createTask(tester, '买菜');
+        await _deleteFirst(tester);
+        await _backdate(tester, const Duration(days: 29, hours: 20));
+        await _openTrash(tester);
+
+        expect(find.textContaining('今天最后一天'), findsOneWidget);
+        expect(find.textContaining('还剩'), findsNothing, reason: '多给了用户一天');
+      });
+
+      testAppWidgets('已过期但还没清：说清楚它什么时候没', (tester) async {
+        // 清理只在启动时跑，所以「过期了还躺在这儿」是常态而非异常。
+        await _pumpApp(tester);
+        await _createTask(tester, '买菜');
+        await _deleteFirst(tester);
+        await _backdate(tester, const Duration(days: 40));
+        await _openTrash(tester);
+
+        expect(find.textContaining('下次启动时清理'), findsOneWidget);
+      });
+
+      testAppWidgets('保留期改小了，剩余天数跟着变', (tester) async {
+        // 界面里写死 30 的实现在这里露馅。
+        await _pumpApp(tester);
+        await _createTask(tester, '买菜');
+        await _deleteFirst(tester);
+
+        final container = ProviderScope.containerOf(
+          tester.element(find.byType(PlanningAssistantApp)),
+        );
+        await container
+            .read(settingsRepositoryProvider)
+            .put('data.trashRetentionDays', 7, scope: 'global');
+        await tester.pumpAndSettle();
+
+        await _openTrash(tester);
+        expect(find.textContaining('还剩 7 天'), findsOneWidget);
+      });
     });
   });
 }

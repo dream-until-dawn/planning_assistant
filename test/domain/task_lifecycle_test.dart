@@ -416,6 +416,56 @@ void main() {
         isFalse,
       );
     });
+
+    group('剩余时间', () {
+      // 界面要写「还剩几天」，而它必须与上面那条判据同源。
+      // 这一组钉的就是「同源」——两处各算各的时，下面第二条会露馅。
+      test('刚删掉时剩满一个保留期', () {
+        expect(
+          timeUntilPurge(t, now: deletedAt, retentionDays: 30),
+          const Duration(days: 30),
+        );
+      });
+
+      test('**差几个小时到期时，剩余不足一天**', () {
+        // 29 天 20 小时：`30 - 差值.inDays` 会算成「还剩 1 天」，
+        // 而再过 4 小时它就真的被清了。界面据此显示「还剩 1 天」
+        // 是在承诺一件明早就不成立的事。
+        final left = timeUntilPurge(
+          t,
+          now: deletedAt.add(const Duration(days: 29, hours: 20)),
+          retentionDays: 30,
+        )!;
+        expect(left.inDays, 0);
+        expect(left.isNegative, isFalse, reason: '还没到期，不该是负的');
+      });
+
+      test('过期后为负 —— 「早就该清了」是个真实状态', () {
+        // 清理发生在下次启动，所以「已过期但还在」必然存在。
+        // 压成 0 的话，界面分不出「今天最后一天」和「早该没了」。
+        expect(
+          timeUntilPurge(
+            t,
+            now: deletedAt.add(const Duration(days: 40)),
+            retentionDays: 30,
+          ),
+          const Duration(days: -10),
+        );
+      });
+
+      test('恰好到期是 0，而 0 不算过期', () {
+        final at = deletedAt.add(const Duration(days: 30));
+        expect(timeUntilPurge(t, now: at, retentionDays: 30), Duration.zero);
+        expect(isPurgeable(t, now: at, retentionDays: 30), isFalse);
+      });
+
+      test('未删除的没有剩余时间可言', () {
+        expect(
+          timeUntilPurge(task(), now: DateTime.utc(2030), retentionDays: 30),
+          isNull,
+        );
+      });
+    });
   });
 
   group('L-12 / L-13 归档维度', () {

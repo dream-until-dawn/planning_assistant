@@ -20,6 +20,8 @@
 /// 经过与结论记在 module-map §1。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -35,6 +37,7 @@ import 'features/settings/presentation/settings_page.dart';
 import 'features/shell/presentation/app_shell.dart';
 import 'features/task/application/task_editor_controller.dart';
 import 'features/task/presentation/task_editor_page.dart';
+import 'features/trash/application/trash_purge.dart';
 import 'features/trash/presentation/trash_page.dart';
 import 'features/views/calendar/presentation/calendar_page.dart';
 import 'features/views/gantt/presentation/gantt_view.dart';
@@ -188,7 +191,7 @@ GoRouter buildAppRouter() => GoRouter(
   ],
 );
 
-class PlanningAssistantApp extends ConsumerWidget {
+class PlanningAssistantApp extends ConsumerStatefulWidget {
   PlanningAssistantApp({super.key, GoRouter? router})
     : _router = router ?? buildAppRouter();
 
@@ -196,7 +199,33 @@ class PlanningAssistantApp extends ConsumerWidget {
   final GoRouter _router;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PlanningAssistantApp> createState() =>
+      _PlanningAssistantAppState();
+}
+
+class _PlanningAssistantAppState extends ConsumerState<PlanningAssistantApp> {
+  @override
+  void initState() {
+    super.initState();
+    // 启动时清一遍过期的回收站（task-lifecycle §6「物理清理由启动时的
+    // 一次后台任务执行」）。
+    //
+    // **不 await，也不拦住首帧**：清理是维护性的，清不掉下次再清，
+    // 而为它多等一次 IO 会直接顶到 NFR-PERF-01 的 1.5 秒。
+    //
+    // 放 `addPostFrameCallback` 而不是直接调：initState 里读 provider
+    // 会在首帧构建过程中触发库查询，那是「构建期间改 provider」那一类
+    // 麻烦的来源。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // 失败只当没清成。这里没有用户在等一个结果，
+      // 弹一条错误提示只会在冷启动时吓人一跳。
+      unawaited(ref.read(trashPurgeProvider)().catchError((_) => 0));
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     // 明暗与圆角档位都是配置项 —— 根必须监听它们，
     // 否则在设置页改完要重启才生效。
     final corners = ref.setting(cornerStyle);
@@ -229,7 +258,7 @@ class PlanningAssistantApp extends ConsumerWidget {
         ThemeModeSetting.light => ThemeMode.light,
         ThemeModeSetting.dark => ThemeMode.dark,
       },
-      routerConfig: _router,
+      routerConfig: widget._router,
     );
   }
 }

@@ -238,9 +238,34 @@ abstract class SyncedDao<Tbl extends Table, Row extends DataClass>
     });
   }
 
+  /// **物理删除**一行（task-lifecycle §6、用例 L-09）。
+  ///
+  /// ## 为什么这个方法可以存在，而 [softDelete] 之外的路径不行
+  ///
+  /// 上面那句「物理删除会让『删除』这件事无法同步」说的是**用户按下删除**
+  /// 那一刻：那时对端还不知道这条被删了，行没了就没法告诉它。
+  ///
+  /// 超期清理是另一回事：墓碑已经存在、已经进过 outbox（V1 里
+  /// 「已同步」恒为真），对端早就知道了。这时留着行只是占地方。
+  ///
+  /// **只删已经打了墓碑的行**（`deleted_at IS NOT NULL`）——
+  /// 少了这个条件，一次调用错就把活着的数据抹了，而且没有退路。
+  ///
+  /// **不写 change_log**：这一步不是一次新的用户操作，
+  /// 而是把一条早已同步过的删除落到本地存储上。
+  Future<int> purgeTombstone(String id) async {
+    return customUpdate(
+      'DELETE FROM ${table.actualTableName} '
+      'WHERE ${_primaryKeyColumn()} = ? AND deleted_at IS NOT NULL',
+      variables: [Variable<String>(id)],
+      updates: {table},
+    );
+  }
+
   /// 单列主键的列名。
   ///
-  /// **只有 [softDelete] 用它** —— 它的签名是单个 `String id`，
+  /// **只有 [softDelete] 与 [purgeTombstone] 用它** —— 两者的签名都是
+  /// 单个 `String id`，
   /// 复合主键无从表达。其余路径都按主键**列集合**处理，
   /// 见 [_primaryKeyValuesOf]。
   String _primaryKeyColumn() {
