@@ -744,6 +744,76 @@ import
     }
   });
 
+  /// 允许构造 `SnackBarAction` 的文件。**每条要写理由。**
+  ///
+  /// 名单锚定确切文件名，不做子串匹配 —— 同 `endDate` lint 那条白名单。
+  const snackBarActionOwners = {
+    // 全项目发提示的唯一入口。`persist: false` 那一行就在它身上。
+    'undo_snackbar.dart',
+  };
+
+  test('构造 SnackBarAction 的地方必须在名单里', () {
+    // ## 这条与下面那条守的**不是同一件事**
+    //
+    // 下面那条是**逐处的性质检查**：凡是带 action 的提示都得写
+    // `persist: false`。它守得住「第五处忘了写」，
+    // **守不住「第五处照抄一整套、而且写对了」** —— 那时它绿，
+    // 而重复回来了。四份拷贝加同一段长注释，正是这次要消掉的东西。
+    //
+    // 所以「`scanned` 从 4 降到 1」不是那条守卫变弱了：
+    // 它从来就没在守这一件事。评审点出来的。
+    //
+    // ## 为什么是名单，不是禁令
+    //
+    // 将来真要加一个**非撤销**的动作提示（「查看」「重试」都是合理
+    // 需求），路要通 —— 但得在名单里留下一行，而那一行就是下一个
+    // 评审者会看见的东西。**一刀切会挡住合理需求，名单不会。**
+    //
+    // 我一度以「不带 action 的提示没有 persist 这个坑，一刀切会拦掉
+    // 合法用法」否掉过收紧。那个反驳**落在规则之外**：它说的是禁止
+    // 构造 `SnackBar`，而这里管的是 `SnackBarAction` ——
+    // 不带 action 的提示里根本没有它。反例不在规则的论域里。
+    final outsiders = <String>[];
+    for (final file in libFiles) {
+      final rel = _relToLib(file.path);
+      if (rel == null) continue;
+      final name = rel.split('/').last;
+      if (snackBarActionOwners.contains(name)) continue;
+      if (file.readAsStringSync().contains('SnackBarAction')) {
+        outsiders.add('  - lib/$rel');
+      }
+    }
+
+    expect(
+      outsiders,
+      isEmpty,
+      reason:
+          '带动作的提示请走 `showUndoSnackBar`；确实需要新的一类动作，'
+          '就把文件加进 snackBarActionOwners 并写明理由：\n'
+          '${outsiders.join('\n')}',
+    );
+  });
+
+  test('SnackBarAction 名单里的文件都真的在，而且真的构造了它', () {
+    // 反僵尸（同白名单那条）：名单锚的是文件名。
+    //
+    // 但这里多验一层「**真的构造了**」—— 光验文件存在的话，
+    // 把入口挪走之后名单会变成一条对着空文件的豁免，
+    // 而下一个人以为它还在挡着什么。
+    final present = {
+      for (final f in _dartFiles('lib')) _norm(f.path).split('/').last: f,
+    };
+    for (final name in snackBarActionOwners) {
+      final file = present[name];
+      expect(file, isNotNull, reason: '名单里的 $name 已经不存在了');
+      expect(
+        file!.readAsStringSync().contains('SnackBarAction'),
+        isTrue,
+        reason: '$name 已经不构造 SnackBarAction 了，这条豁免该删',
+      );
+    }
+  });
+
   test('带撤销按钮的 SnackBar 必须显式写 persist: false', () {
     // ## 为什么要一条守卫，而不是「记住就行」
     //
@@ -760,6 +830,20 @@ import
     // 这是一条**默认值与我们的意图相反**的 API：不写就是错的，
     // 而错的表现在代码里完全看不出来 —— 那正是该由守卫盯着的形状，
     // 靠「下次记得」是守不住的。
+    // ## 两处启发式，写明它们的边界
+    //
+    // 1. **700 字符的窗口**：从每个 `SnackBar(` 往后看这么多字符。
+    //    `SnackBarAction` 若出现在更靠后的位置就看不见了。
+    //    实际的提示块都在两百字符以内，留了三倍余量 —— 但这是个
+    //    **拍出来的数**，不是分析出来的边界。
+    // 2. **`split('SnackBar(')` 会在 `showSnackBar(` 上也切一刀**
+    //    （子串命中）。于是切出来的块比真正的构造点**多**。
+    //    方向是偏向多报而非漏报 —— 安全的那一侧，
+    //    但下一个人调这个窗口时该知道自己在调什么。
+    //
+    // 两条都是「够不着的写法是有的」那一类，同 `endDate` lint 里
+    // 那段名字启发式的说明。写在这儿是为了让边界可见，
+    // 不是为了让人以为它管全了。
     final violations = <String>[];
     var scanned = 0;
     for (final file in libFiles) {
