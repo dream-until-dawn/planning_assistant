@@ -238,6 +238,29 @@ def _self_test() -> int:
             print(f'  自检失败：{name} —— 期望缺 {want}，实得缺 {missing}')
             bad += 1
 
+    # ── 第 9.1 类：同一条需求被点了几次，**几处都要记下来** ──
+    #
+    # `--verbose` 的全部意义是「让人看清证据有多强」。只留第一处的话，
+    # 打出来的可能是较弱的那一份 —— FR-VIEW-06 上真发生过：
+    # 界面用例量的是验收原话，却没点编号；点了编号的是状态级用例。
+    #
+    # 成对：只验「两处都在」的话，一个「把语料全塞进去」的实现也能过，
+    # 所以另一半验「只点了一次就只有一处」。
+    twice = [
+        full[0],
+        ('c_test.dart', "testWidgets('FR-ZZ-01 甲的另一面', () {});"),
+    ]
+    multi = [
+        ('同一条被点两次 → 两处都在', twice, 2),
+        ('只点一次 → 只有一处', full[:1], 1),
+    ]
+    for name, corpus, want in multi:
+        _, _, where = evaluate([('FR-ZZ-01', 'V1')], corpus, set())
+        got = len(where.get('FR-ZZ-01', []))
+        if got != want:
+            print(f'  自检失败：{name} —— 期望 {want} 处，实得 {got} 处')
+            bad += 1
+
     # ── 第 10 类：豁免表的棘轮 ────────────────────────────
     #
     # 同样**成对**：只验「越界会报」的话，一个「一律报」的实现也能过。
@@ -261,7 +284,7 @@ def _self_test() -> int:
         return 1
     print(
         f'自检通过（{len(cases)} 条提取 + {len(pairs)} 条端到端 '
-        f'+ {len(ratchets)} 条棘轮）'
+        f'+ {len(multi)} 条点名去处 + {len(ratchets)} 条棘轮）'
     )
     return 0
 
@@ -274,10 +297,18 @@ def evaluate(reqs, corpus, exempt):
     而这条工具的**存在理由**是「缺了会红」，那一半一条都没验过 ——
     docstring 承诺了两件事，机制只兑现一件。
     """
+    # **每条编号被点名的地方全都记下来，不是只记第一处。**
+    #
+    # 一度是 `setdefault`（只留第一处）。评审在 FR-VIEW-06 上撞见了
+    # 它的代价：那条需求的验收原话是「日历选中 9/20 → 切时间轴 →
+    # 显示 9/20」，而真正量这件事的界面用例**没有点编号**，
+    # 点了编号的是另一条「provider 自己不会把状态丢掉」的状态级用例。
+    # 两边都绿，但 `--verbose` 打出来的是较弱的那份证据 ——
+    # 而这份输出的全部意义就是「让人看清证据有多强」。
     where = {}
     for name, text in corpus:
         for rid, desc in mentioned(text).items():
-            where.setdefault(rid, (name, desc))
+            where.setdefault(rid, []).append((name, desc))
 
     missing, covered = [], []
     for rid, phase in reqs:
@@ -316,9 +347,9 @@ def main(argv: list) -> int:
     # 只是被一个名字里带编号的用例蹭了一下。
     if '--verbose' in argv:
         for rid in sorted(covered):
-            rel, desc = where[rid]
-            print(f'  {rid:<14} {rel}')
-            print(f'  {"":<14}   {desc}')
+            for rel, desc in where[rid]:
+                print(f'  {rid:<14} {rel}')
+                print(f'  {"":<14}   {desc}')
 
     if missing:
         print(f'没有任何用例点名的 {len(missing)} 条：')
