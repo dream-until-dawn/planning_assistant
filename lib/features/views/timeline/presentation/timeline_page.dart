@@ -70,6 +70,10 @@ class TimelinePage extends ConsumerStatefulWidget {
   /// 某一天的分隔。
   static Key dateKey(PlanDate date) => ValueKey('timeline-date-$date');
 
+  /// 阶段行上的完成钮。参数同 [entryKey]。
+  static Key stageDoneKey(String entryId) =>
+      ValueKey('timeline-stage-done-$entryId');
+
   @override
   ConsumerState<TimelinePage> createState() => _TimelinePageState();
 }
@@ -531,17 +535,18 @@ class _StageLine extends ConsumerWidget {
             ),
             child: Row(
               children: [
-                // 勾选框直接摆在行上 —— 阶段的完成钮此前只在
+                // 完成钮直接摆在行上 —— 阶段的完成钮此前只在
                 // 「改哪一次」那张底部弹层里，隔着两步（FR-TASK-07）。
-                SizedBox(
-                  width: Spacing.minTouchTarget,
-                  height: Spacing.minTouchTarget,
-                  child: Checkbox(
-                    value: done,
-                    onChanged: (v) => ref
-                        .read(occurrenceActionsProvider)
-                        .setStageDone(entry.row, entry.stage.id, v ?? false),
-                  ),
+                //
+                // 用的是任务卡片那一个，不是 Material 的 `Checkbox`：
+                // 同一屏上方框与圆钮表示同一件事，真机截图上一眼就
+                // 能看出不对。
+                DoneButton(
+                  key: TimelinePage.stageDoneKey(entry.id),
+                  isDone: done,
+                  onPressed: () => ref
+                      .read(occurrenceActionsProvider)
+                      .setStageDone(entry.row, entry.stage.id, !done),
                 ),
                 Container(
                   width: TaskCard.stripeWidth,

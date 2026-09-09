@@ -403,21 +403,15 @@ void main() {
       );
 
       // 今天那次的热身勾上了，明天那次没有 —— 两行读的是两份状态。
-      final todayBox = tester.widget<Checkbox>(
-        find.descendant(
-          of: find.byKey(TimelinePage.entryKey('晨跑#2026-09-08T06:00#热身')),
-          matching: find.byType(Checkbox),
-        ),
+      final todayBox = tester.widget<DoneButton>(
+        find.byKey(TimelinePage.stageDoneKey('晨跑#2026-09-08T06:00#热身')),
       );
-      final tomorrowBox = tester.widget<Checkbox>(
-        find.descendant(
-          of: find.byKey(TimelinePage.entryKey('晨跑#2026-09-09T06:00#热身')),
-          matching: find.byType(Checkbox),
-        ),
+      final tomorrowBox = tester.widget<DoneButton>(
+        find.byKey(TimelinePage.stageDoneKey('晨跑#2026-09-09T06:00#热身')),
       );
 
-      expect(todayBox.value, isTrue);
-      expect(tomorrowBox.value, isFalse, reason: '明天那次读到了今天的状态');
+      expect(todayBox.isDone, isTrue);
+      expect(tomorrowBox.isDone, isFalse, reason: '明天那次读到了今天的状态');
     });
   });
 
@@ -689,12 +683,7 @@ void main() {
         ),
       ]);
 
-      await tester.tap(
-        find.descendant(
-          of: find.byKey(TimelinePage.entryKey('搬家#装车')),
-          matching: find.byType(Checkbox),
-        ),
-      );
+      await tester.tap(find.byKey(TimelinePage.stageDoneKey('搬家#装车')));
       await tester.pumpAndSettle();
 
       final stages = await (harness.db.select(
