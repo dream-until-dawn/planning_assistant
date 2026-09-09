@@ -661,6 +661,20 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     state = state.copyWith(stages: list);
   }
 
+  /// 拖拽重排（FR-TASK-02 验收里那句「可拖拽重排」）。
+  ///
+  /// [newIndex] 是**最终落点**，不需要再减一 —— 界面那侧用的是
+  /// `onReorderItem`，它已经替调用方调过了。
+  /// 老的 `onReorder` 给的是「移除之前的插入位置」（往下拖时大 1），
+  /// 两者混用的表现是「往下拖一格没反应」，看着像手势没识别。
+  void reorderStages(int oldIndex, int newIndex) {
+    final list = [...state.stages];
+    if (oldIndex < 0 || oldIndex >= list.length) return;
+    if (newIndex == oldIndex) return;
+    list.insert(newIndex.clamp(0, list.length - 1), list.removeAt(oldIndex));
+    state = state.copyWith(stages: list);
+  }
+
   void moveStageDown(String id) {
     final list = [...state.stages];
     final i = list.indexWhere((s) => s.id == id);

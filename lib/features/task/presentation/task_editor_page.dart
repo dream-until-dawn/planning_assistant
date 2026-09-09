@@ -157,6 +157,10 @@ class TaskEditorPage extends ConsumerStatefulWidget {
       ValueKey('editor-stage-remove-$stageId');
   static Key stageUpKey(String stageId) => ValueKey('editor-stage-up-$stageId');
 
+  /// 拖拽把手（FR-TASK-02「可拖拽重排」）。
+  static Key stageDragKey(String stageId) =>
+      ValueKey('editor-stage-drag-$stageId');
+
   /// 阶段的完成勾选。
   ///
   /// **这个也是补出来的。** `Stage.status` 与 `StageSpec.status` 一直都在，
@@ -1007,9 +1011,21 @@ class _PriorityPicker extends StatelessWidget {
 /// **默认不出现任何阶段行** —— 大多数任务是单项的（FR-TASK-01 的基调），
 /// 一进来就摆两个空行会把「填得越少越好」变成「先删两行」。
 ///
-/// 拖拽重排（§FR-TASK-02 的验收里提到）先用上下箭头代替：
-/// 拖拽在两三个阶段时收益很小，而它要处理滚动冲突与无障碍替代操作。
-/// TODO(M3): 换成 ReorderableListView，并保留箭头作为读屏用户的替代路径。
+/// ## 重排：拖拽 + 箭头，两条路都留着
+///
+/// FR-TASK-02 的验收原话是「阶段可增删改、**可拖拽重排**」。
+/// 一度只有上下箭头 —— 能用，但那不是验收要的东西。
+///
+/// **箭头没有被拖拽取代，是并存的**：拖拽对读屏用户不可用
+/// （NFR-A11Y-03 那一族），而「把第三个移到第一个」用箭头点两下就行。
+/// 只留拖拽等于把这个功能从一部分人手里拿走。
+///
+/// 几个实现上的选择，都是被这张表单的形状逼出来的：
+///
+/// - `buildDefaultDragHandles: false` + 显式把手。默认的把手在移动端是
+///   **长按整行**，而每一行里有个输入框 —— 长按那儿是选词，不是拖动；
+/// - `shrinkWrap` + `NeverScrollableScrollPhysics`：这一段活在编辑器
+///   那个 `ListView` 里面，自己再滚一层的话，两层滚动会互相抢手势。
 class _StageSection extends StatelessWidget {
   const _StageSection({
     required this.draft,
@@ -1035,105 +1051,143 @@ class _StageSection extends StatelessWidget {
       children: [
         Text('阶段（可选）', style: text.bodySmall),
         const SizedBox(height: Spacing.xs),
-        for (final (i, stage) in draft.stages.indexed)
-          Padding(
-            padding: const EdgeInsets.only(bottom: Spacing.xs),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+        ReorderableListView(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          buildDefaultDragHandles: false,
+          // **用 `onReorderItem` 而不是 `onReorder`。**
+          // 后者已废弃，而两者的 `newIndex` 语义不同：
+          // 旧的给的是「移除之前的插入位置」（往下拖时大 1），
+          // 新的**已经替你调好了**。
+          // 混用的表现是「往下拖一格没反应」，看着像手势没识别。
+          onReorderItem: controller.reorderStages,
+          children: [
+            for (final (i, stage) in draft.stages.indexed)
+              Padding(
+                // **Key 必须在这一层**（`ReorderableListView` 的直接
+                // 孩子上），而且要跟着阶段走而不是跟着下标 ——
+                // 用下标的话，拖完之后 Flutter 认为「还是那几个位置」，
+                // 输入框的内容会串行。
+                key: ValueKey(stage.id),
+                padding: const EdgeInsets.only(bottom: Spacing.xs),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 勾完成。序号让位给它 —— 序号在时间按钮那一行
-                    // 也能看出来（第几个），而「做完没有」没有别处可看。
-                    //
-                    // **重复任务这里不给勾**（FR-TASK-07）：编辑器编的是
-                    // 整条任务，而重复任务的阶段状态是**按每一次**存的。
-                    // 在这儿勾写进的是 `Stage.status`，那一列对重复任务
-                    // 没人读 —— 勾了没反应，比没有这个框更糟。
-                    // 它的正确位置是单次动作弹层（view-specs §4.3）。
-                    if (draft.isRecurring)
-                      SizedBox(
-                        width: 48,
-                        child: Center(
-                          child: Text('${i + 1}', style: text.bodySmall),
-                        ),
-                      )
-                    else
-                      Semantics(
-                        label: '第 ${i + 1} 个阶段完成',
-                        child: Checkbox(
-                          key: TaskEditorPage.stageDoneKey(stage.id),
-                          value: stage.isDone,
-                          onChanged: (v) =>
-                              controller.setStageDone(stage.id, v ?? false),
-                        ),
-                      ),
-                    Expanded(
-                      child: TextField(
-                        key: TaskEditorPage.stageFieldKey(stage.id),
-                        decoration: const InputDecoration(hintText: '这一步做什么'),
-                        // **编辑模式必须有 controller。**
+                    Row(
+                      children: [
+                        // 勾完成。序号让位给它 —— 序号在时间按钮那一行
+                        // 也能看出来（第几个），而「做完没有」没有别处可看。
                         //
-                        // 页面开头那段注释早就写明了这件事（标题与备注
-                        // 因此各有一个 controller），而阶段这一行漏了 ——
-                        // 于是打开一条已有的阶段事项，几行阶段全是空的，
-                        // 看起来像内容丢了。存下去倒是不丢（草稿里还在），
-                        // 但用户看到的是一张空表单。
-                        //
-                        // 一直没被发现，是因为没有任何一条用例断言过
-                        // 「重新打开时阶段标题显示出来」—— 勾选、排序、
-                        // 时间那几条都只按 Key 找控件，不看里面的字。
-                        controller: TextEditingController(text: stage.title)
-                          ..selection = TextSelection.collapsed(
-                            offset: stage.title.length,
+                        // **重复任务这里不给勾**（FR-TASK-07）：编辑器编的是
+                        // 整条任务，而重复任务的阶段状态是**按每一次**存的。
+                        // 在这儿勾写进的是 `Stage.status`，那一列对重复任务
+                        // 没人读 —— 勾了没反应，比没有这个框更糟。
+                        // 它的正确位置是单次动作弹层（view-specs §4.3）。
+                        if (draft.isRecurring)
+                          SizedBox(
+                            width: 48,
+                            child: Center(
+                              child: Text('${i + 1}', style: text.bodySmall),
+                            ),
+                          )
+                        else
+                          Semantics(
+                            label: '第 ${i + 1} 个阶段完成',
+                            child: Checkbox(
+                              key: TaskEditorPage.stageDoneKey(stage.id),
+                              value: stage.isDone,
+                              onChanged: (v) =>
+                                  controller.setStageDone(stage.id, v ?? false),
+                            ),
                           ),
-                        // 划掉是**辅助**，不是唯一标记 —— 勾选框自己
-                        // 就带着状态（§8.1 那条原则）。
-                        // 重复任务不显示划掉 —— 那个 `isDone` 对它
-                        // 没有意义（状态按每一次存）。
-                        style: !draft.isRecurring && stage.isDone
-                            ? TextStyle(
-                                decoration: TextDecoration.lineThrough,
-                                color: context.appColors.disabledText,
-                              )
-                            : null,
-                        onChanged: (v) => controller.setStageTitle(stage.id, v),
+                        Expanded(
+                          child: TextField(
+                            key: TaskEditorPage.stageFieldKey(stage.id),
+                            decoration: const InputDecoration(
+                              hintText: '这一步做什么',
+                            ),
+                            // **编辑模式必须有 controller。**
+                            //
+                            // 页面开头那段注释早就写明了这件事（标题与备注
+                            // 因此各有一个 controller），而阶段这一行漏了 ——
+                            // 于是打开一条已有的阶段事项，几行阶段全是空的，
+                            // 看起来像内容丢了。存下去倒是不丢（草稿里还在），
+                            // 但用户看到的是一张空表单。
+                            //
+                            // 一直没被发现，是因为没有任何一条用例断言过
+                            // 「重新打开时阶段标题显示出来」—— 勾选、排序、
+                            // 时间那几条都只按 Key 找控件，不看里面的字。
+                            controller: TextEditingController(text: stage.title)
+                              ..selection = TextSelection.collapsed(
+                                offset: stage.title.length,
+                              ),
+                            // 划掉是**辅助**，不是唯一标记 —— 勾选框自己
+                            // 就带着状态（§8.1 那条原则）。
+                            // 重复任务不显示划掉 —— 那个 `isDone` 对它
+                            // 没有意义（状态按每一次存）。
+                            style: !draft.isRecurring && stage.isDone
+                                ? TextStyle(
+                                    decoration: TextDecoration.lineThrough,
+                                    color: context.appColors.disabledText,
+                                  )
+                                : null,
+                            onChanged: (v) =>
+                                controller.setStageTitle(stage.id, v),
+                          ),
+                        ),
+                        // 拖拽把手。**读屏用户用不了拖拽**，所以旁边那个
+                        // 上移箭头留着 —— 两条路并存，不是过渡方案。
+                        ReorderableDragStartListener(
+                          index: i,
+                          child: Semantics(
+                            label: '拖动调整第 ${i + 1} 个阶段的顺序',
+                            child: IconButton(
+                              key: TaskEditorPage.stageDragKey(stage.id),
+                              // 把手自己不响应点击 —— 它只是个抓取点。
+                              // 给它一个 onPressed 会让点一下有反馈却什么
+                              // 也不发生，那比没有反馈更让人以为坏了。
+                              onPressed: null,
+                              icon: const Icon(Icons.drag_handle),
+                              tooltip: '拖动排序',
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          key: TaskEditorPage.stageUpKey(stage.id),
+                          onPressed: i == 0
+                              ? null
+                              : () => controller.moveStageUp(stage.id),
+                          icon: const Icon(Icons.arrow_upward),
+                          tooltip: '上移',
+                        ),
+                        IconButton(
+                          key: TaskEditorPage.stageRemoveKey(stage.id),
+                          onPressed: () => controller.removeStage(stage.id),
+                          icon: const Icon(Icons.close),
+                          tooltip: '删除这个阶段',
+                        ),
+                      ],
+                    ),
+                    // 时间收在标题下面一行的小按钮里：大多数阶段只是
+                    // 「先做这个、再做那个」，没有具体时刻。
+                    Padding(
+                      padding: const EdgeInsets.only(left: Spacing.xxl),
+                      child: _StageTimeButton(
+                        stage: stage,
+                        anchor: _stageAnchor(draft, today),
+                        isAllDay: draft.isAllDay,
+                        onChanged: (start, duration) => controller.setStageTime(
+                          stage.id,
+                          startOffsetMinutes: start,
+                          durationMinutes: duration,
+                        ),
                       ),
-                    ),
-                    IconButton(
-                      key: TaskEditorPage.stageUpKey(stage.id),
-                      onPressed: i == 0
-                          ? null
-                          : () => controller.moveStageUp(stage.id),
-                      icon: const Icon(Icons.arrow_upward),
-                      tooltip: '上移',
-                    ),
-                    IconButton(
-                      key: TaskEditorPage.stageRemoveKey(stage.id),
-                      onPressed: () => controller.removeStage(stage.id),
-                      icon: const Icon(Icons.close),
-                      tooltip: '删除这个阶段',
                     ),
                   ],
                 ),
-                // 时间收在标题下面一行的小按钮里：大多数阶段只是
-                // 「先做这个、再做那个」，没有具体时刻。
-                Padding(
-                  padding: const EdgeInsets.only(left: Spacing.xxl),
-                  child: _StageTimeButton(
-                    stage: stage,
-                    anchor: _stageAnchor(draft, today),
-                    isAllDay: draft.isAllDay,
-                    onChanged: (start, duration) => controller.setStageTime(
-                      stage.id,
-                      startOffsetMinutes: start,
-                      durationMinutes: duration,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+              ),
+          ],
+        ),
         AppButton(
           key: TaskEditorPage.addStageKey,
           label: draft.stages.isEmpty ? '分成几个阶段' : '再加一个阶段',
