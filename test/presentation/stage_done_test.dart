@@ -59,6 +59,90 @@ Future<void> _reopen(WidgetTester tester) async {
 }
 
 void main() {
+  group('FR-TASK-02 拖拽重排', () {
+    // 验收原话是「阶段可增删改、**可拖拽重排**」。
+    // 一度只有上下箭头 —— 能用，但那不是验收要的东西。
+    // 可追溯性门禁认为 FR-TASK-02「有覆盖」（有用例点了它的名），
+    // 而它的验收标准并没有全满足 —— 点名 ≠ 测到，这是同一条判据
+    // 的又一次体现（testing-strategy §1.15）。
+
+    testAppWidgets('把第一个阶段拖到第二个后面，顺序真的换了', (tester) async {
+      final harness = await _pumpApp(tester);
+      await _createStaged(tester, 2);
+      await _reopen(tester);
+      await tester.scrollUntilVisible(
+        find.byKey(TaskEditorPage.stageSectionKey),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+
+      final ids = (await harness.db.select(harness.db.stages).get())
+        ..sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
+      expect(ids.map((s) => s.title), ['第 1 步', '第 2 步']);
+
+      // 抓住第一行的把手往下拖一行的高度。
+      final handle = find.byKey(TaskEditorPage.stageDragKey(ids.first.id));
+      final rowHeight =
+          tester
+              .getCenter(find.byKey(TaskEditorPage.stageDragKey(ids[1].id)))
+              .dy -
+          tester.getCenter(handle).dy;
+      // **`ReorderableDragStartListener` 是「一动就拖」，不是长按。**
+      // （长按那个是 `ReorderableDelayedDragStartListener`。）
+      // 所以这里不等长按，先挪过手势判定的那点距离，再一格一格挪 ——
+      // 一步到位的话动画来不及跟，落点会算在半路上。
+      final drag = await tester.startGesture(tester.getCenter(handle));
+      await tester.pump();
+      await drag.moveBy(const Offset(0, 24));
+      await tester.pump();
+      for (var i = 0; i < 4; i++) {
+        await drag.moveBy(Offset(0, rowHeight / 4));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await drag.up();
+      await tester.pumpAndSettle();
+
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
+
+      final after = (await harness.db.select(harness.db.stages).get())
+        ..sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
+      expect(after.map((s) => s.title), [
+        '第 2 步',
+        '第 1 步',
+      ], reason: '拖完顺序没变 —— 落库的 orderIndex 还是原来的');
+    });
+
+    testAppWidgets('**上下箭头没有被拖拽取代** —— 读屏用户用不了拖拽', (tester) async {
+      // 只留拖拽等于把这个功能从一部分人手里拿走（NFR-A11Y 那一族）。
+      // 这条钉住「两条路并存」，不是「拖拽做完了就可以删箭头」。
+      final harness = await _pumpApp(tester);
+      await _createStaged(tester, 2);
+      await _reopen(tester);
+      await tester.scrollUntilVisible(
+        find.byKey(TaskEditorPage.stageSectionKey),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+
+      final ids = (await harness.db.select(harness.db.stages).get())
+        ..sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
+
+      // 把手在，箭头也在。
+      expect(
+        find.byKey(TaskEditorPage.stageDragKey(ids.first.id)),
+        findsOneWidget,
+      );
+      await tapVisible(tester, TaskEditorPage.stageUpKey(ids[1].id));
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
+
+      final after = (await harness.db.select(harness.db.stages).get())
+        ..sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
+      expect(after.map((s) => s.title), ['第 2 步', '第 1 步']);
+    });
+  });
+
   testAppWidgets('重新打开时，阶段标题要显示出来（不是空白行）', (tester) async {
     // **这是个真发生过的缺陷。** 阶段那一行的 `TextField` 没有
     // controller —— 页面开头那段注释早就写明「编辑模式必须有」

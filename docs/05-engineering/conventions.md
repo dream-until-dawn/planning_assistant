@@ -111,6 +111,11 @@ python tool/check_doc_links.py --self-test
 python tool/check_traceability.py --self-test
 ```
 
+**它在 `ci.yml` 的「需求可追溯性」那一步跑。** 这句话是规矩的一部分：
+一条门禁写进文档而没接进 CI，和没有门禁是一回事 ——
+这一条自己就当过一段时间的反面教材（见
+[测试策略 §1.19](testing-strategy.md#119-一条没接进-ci-的门禁和没有门禁是一回事)）。
+
 **每条 V1 需求都要有测试点它的名。** 全集来自 `requirements.md` 的编号本身，
 不来自代码 —— 这是仓库里唯一一条不靠代码定义自己全集的检查，
 理由见[测试策略 §1.15](testing-strategy.md#115-完备性守卫只能守住它认识的那个全集)。

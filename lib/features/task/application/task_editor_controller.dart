@@ -12,6 +12,7 @@ import 'package:meta/meta.dart';
 
 import '../../../app_providers.dart';
 import '../../../core/patch/unset.dart';
+import '../../../core/time/local_wall_time.dart';
 import '../../../core/time/minute_of_day.dart';
 import '../../../core/time/plan_date.dart';
 import '../../../domain/commands/task_command.dart';
@@ -546,10 +547,73 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     // 没有起点就无从展开。与「关掉全天补今天」是同一条道理，
     // 而且补得看得见，用户不同意可以当场改。
     final needsDate = value.enabled && state.planDate == null;
+    // **关掉重复时，把第一次发生的阶段进度搬回草稿**（FR-TASK-07）。
+    //
+    // 阶段状态有两个存储位置：不重复看 `Stage.status`，重复看那张表。
+    // 关掉重复之后读路径改看前者，而草稿里那一份对重复任务恒为 pending
+    // （界面上根本不给勾）—— 不搬的话，用户在这条任务上勾过的进度
+    // **当场从界面上消失**，一保存就真的没了。
+    //
+    // **在草稿这一层搬，不在命令里搬。** 命令那条路走不通：一次保存里
+    // `ReplaceStagesCommand` 排在后面，会把写好的状态原样盖掉
+    // （`recurrence_conversion.dart` 里记着那次尝试）。
+    // 搬进草稿反而更好 —— 勾选框当场就带着正确的状态出现，
+    // 用户在保存**之前**就看见了。
+    // 只在**从重复切到不重复**那一下搬，而且**整个编辑会话只搬一次**。
+    //
+    // 「只搬一次」是 task-lifecycle §4.2「**用户显式操作优先于推导**」
+    // 在这个位置上的实例：搬过来之后用户手动取消了那一勾，
+    // 再来一次转换不能把它改回去 —— §4.2 那句「破坏用户已记录的
+    // 阶段进度比留下不一致更糟」说的就是这件事。
+    //
+    // **我一度把这条判断错了。** 变异演练里「一律搬」没变红，
+    // 我把场景表述成「关掉→取消→再打开→再关掉，该不该重新搬」，
+    // 觉得没有明显正确答案，于是删掉了自己写的那条测试，
+    // 并在这里写「这是精确性不是正确性」。
+    // 换个表述答案就有了：**再次转换能不能覆盖用户刚做出的取消**——
+    // 而那条规格早就写过了，只是我没认出来。
+    final leavingRecurring =
+        state.isRecurring && !value.enabled && !_inheritedStagesOnce;
     state = state.copyWith(
       recurrence: value,
       planDate: needsDate ? _today() : state.planDate,
+      stages: leavingRecurring ? _stagesFromFirstOccurrence() : null,
     );
+    if (leavingRecurring) _inheritedStagesOnce = true;
+  }
+
+  /// 这次编辑里已经搬过一回进度了。见 [setRecurrence] 里那段。
+  ///
+  /// 放私有字段而不是放进 [TaskDraft]：它不是表单的内容，
+  /// 是这次会话的簿记 —— 进了 draft 就会被 `copyWith` 到处传，
+  /// 而且它对「保存下去是什么」毫无影响。
+  bool _inheritedStagesOnce = false;
+
+  /// 把第一次发生的阶段状态读进草稿的阶段行。
+  ///
+  /// **「第一次」不是随便挑的**：关掉重复之后这条任务只剩一次发生，
+  /// 而那一次就是它自己的开始时刻 —— 与 `convertRecurrenceMode` 正方向
+  /// 迁到「第一次」是同一个身份。
+  List<StageDraft> _stagesFromFirstOccurrence() {
+    final taskId = state.editingTaskId;
+    final date = state.planDate;
+    if (taskId == null || date == null) return state.stages;
+
+    final key = OccurrenceKey.fromWallTime(
+      LocalWallTime(
+        date: date,
+        minuteOfDay: state.startMinute ?? MinuteOfDay.midnight,
+        timeZoneId: ref.read(timeZoneResolverProvider).currentZoneId(),
+      ),
+      isAllDay: state.isAllDay,
+    );
+    final states = ref.read(stageStatesByTaskProvider)[taskId]?[key];
+    if (states == null) return state.stages;
+
+    return [
+      for (final s in state.stages)
+        if (states[s.id] case final st?) s.copyWith(status: st.status) else s,
+    ];
   }
 
   /// 加一个空阶段行。
@@ -658,6 +722,20 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     final tmp = list[i - 1];
     list[i - 1] = list[i];
     list[i] = tmp;
+    state = state.copyWith(stages: list);
+  }
+
+  /// 拖拽重排（FR-TASK-02 验收里那句「可拖拽重排」）。
+  ///
+  /// [newIndex] 是**最终落点**，不需要再减一 —— 界面那侧用的是
+  /// `onReorderItem`，它已经替调用方调过了。
+  /// 老的 `onReorder` 给的是「移除之前的插入位置」（往下拖时大 1），
+  /// 两者混用的表现是「往下拖一格没反应」，看着像手势没识别。
+  void reorderStages(int oldIndex, int newIndex) {
+    final list = [...state.stages];
+    if (oldIndex < 0 || oldIndex >= list.length) return;
+    if (newIndex == oldIndex) return;
+    list.insert(newIndex.clamp(0, list.length - 1), list.removeAt(oldIndex));
     state = state.copyWith(stages: list);
   }
 

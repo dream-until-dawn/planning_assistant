@@ -344,6 +344,148 @@ void main() {
     expect(states.single.status, 'done');
   });
 
+  testAppWidgets('**关掉重复时，第一次发生的进度搬回阶段勾选框**', (tester) async {
+    // 阶段状态有两个存储位置：不重复看 `Stage.status`，重复看那张表。
+    // 关掉重复之后读路径改看前者，而草稿里那一份对重复任务恒为 pending
+    // （界面上根本不给勾）—— 不搬的话，用户勾过的进度**当场从界面上
+    // 消失**，一保存就真的没了。
+    //
+    // 搬在**草稿这一层**：勾选框当场就带着正确的状态出现，
+    // 用户在保存**之前**就看见了。走命令那条路会被
+    // `ReplaceStagesCommand` 盖掉（recurrence_conversion.dart 记着）。
+    final harness = await _pumpApp(tester);
+    await _createRecurringStaged(tester);
+    final stages = await _stageIds(harness);
+
+    // 今天这一次，勾掉第一步。
+    await _goToDay(tester, _today);
+    await _openSheet(tester);
+    await _tick(tester, stages.first);
+    await _closeSheet(tester);
+    expect(find.textContaining('1/3'), findsOneWidget, reason: '前提：勾上了');
+
+    // 进编辑器关掉重复。
+    await _openSheet(tester);
+    await tester.tap(find.byKey(OccurrenceSheetKeys.editSeries));
+    await tester.pumpAndSettle();
+    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+    await tester.pumpAndSettle();
+
+    // **保存之前**，勾选框就该已经带着那份进度了。
+    await tester.scrollUntilVisible(
+      find.byKey(TaskEditorPage.stageSectionKey),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    final box = tester.widget<Checkbox>(
+      find.byKey(TaskEditorPage.stageDoneKey(stages.first)),
+    );
+    expect(box.value, isTrue, reason: '关掉重复之后，勾过的那一步变回了未勾');
+
+    await tapVisible(tester, TaskEditorPage.saveButtonKey);
+    final row = (await harness.db.select(harness.db.stages).get()).firstWhere(
+      (r) => r.id == stages.first,
+    );
+    expect(row.status, 'done', reason: '落库之后进度还是丢了');
+  });
+
+  testAppWidgets('**用户手动取消之后，再次转换不会把它改回来**（§4.2）', (tester) async {
+    // task-lifecycle §4.2：**用户显式操作优先于推导**。
+    // 那一节结尾写着「这条不对称是刻意的，必须有专门测试锁住
+    //（否则将来有人「顺手统一一下」就悄悄改掉了）」——
+    // 这条就是那把锁在「转换时继承进度」这个新位置上的实例。
+    //
+    // **这条测试我写过一次又删掉过一次。** 当时我把场景表述成
+    // 「关掉→取消→再打开→再关掉，该不该重新搬」，觉得没有明显正确
+    // 答案，于是判定那个条件「是精确性不是正确性」。
+    // 换个表述答案就有了：**再次转换能不能覆盖用户刚做出的取消**。
+    // 规格早就写过了，我没认出来。
+    //
+    // 所以这里断言的是**原则**（手动改动不被覆盖），
+    // 不是机制（只在某个方向搬）—— 后者是变更检测器。
+    final harness = await _pumpApp(tester);
+    await _createRecurringStaged(tester);
+    final stages = await _stageIds(harness);
+
+    await _goToDay(tester, _today);
+    await _openSheet(tester);
+    await _tick(tester, stages.first);
+    await _closeSheet(tester);
+
+    await _openSheet(tester);
+    await tester.tap(find.byKey(OccurrenceSheetKeys.editSeries));
+    await tester.pumpAndSettle();
+
+    Future<void> scrollToStages() async {
+      await tester.scrollUntilVisible(
+        find.byKey(TaskEditorPage.stageSectionKey),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+    }
+
+    // 关掉重复 → 进度搬过来了。
+    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+    await scrollToStages();
+    expect(
+      tester
+          .widget<Checkbox>(
+            find.byKey(TaskEditorPage.stageDoneKey(stages.first)),
+          )
+          .value,
+      isTrue,
+      reason: '前提：搬过来了',
+    );
+
+    // **用户手动取消那一勾。**
+    await tapVisible(tester, TaskEditorPage.stageDoneKey(stages.first));
+    // 再打开重复、再关掉。
+    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+    await tapVisible(
+      tester,
+      TaskEditorPage.frequencyKey(RecurrenceFrequency.daily),
+    );
+    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+    await scrollToStages();
+
+    expect(
+      tester
+          .widget<Checkbox>(
+            find.byKey(TaskEditorPage.stageDoneKey(stages.first)),
+          )
+          .value,
+      isFalse,
+      reason: '用户手动取消的那一勾被「搬」覆盖回去了 —— 违反 §4.2「显式操作优先」',
+    );
+  });
+
+  testAppWidgets('对照组：只搬第一次那一份，别的发生不掺和', (tester) async {
+    // 少了这条，一个「把任意一次的进度搬过来」的实现能让上面绿。
+    final harness = await _pumpApp(tester);
+    await _createRecurringStaged(tester);
+    final stages = await _stageIds(harness);
+
+    // **只勾明天那一次**，今天那一次不动。
+    await _goToDay(tester, _tomorrow);
+    await _openSheet(tester);
+    await _tick(tester, stages.first);
+    await _closeSheet(tester);
+
+    await _goToDay(tester, _today);
+    await _openSheet(tester);
+    await tester.tap(find.byKey(OccurrenceSheetKeys.editSeries));
+    await tester.pumpAndSettle();
+    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+    await tapVisible(tester, TaskEditorPage.saveButtonKey);
+
+    final row = (await harness.db.select(harness.db.stages).get()).firstWhere(
+      (r) => r.id == stages.first,
+    );
+    expect(row.status, 'pending', reason: '把别的发生的进度也搬过来了 —— 那不是这条任务现在这一次');
+  });
+
   testAppWidgets('对照组：不重复的阶段任务不弹这个弹层', (tester) async {
     // 它没有「某一次」，阶段状态就在阶段自己身上 ——
     // 勾选仍在编辑器里（`stage_done_test.dart` 验那条路）。
