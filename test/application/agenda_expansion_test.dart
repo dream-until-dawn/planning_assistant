@@ -121,11 +121,15 @@ void main() {
       expect(_dates(rows), [_today, _today.addDays(1)]);
     });
 
-    test('逾期一堆时，逾期只留最早一条，另一条是今天的', () {
+    test('逾期一堆时：逾期全留，今天起再留两条', () {
       // ## 这一条是这套规则存在的理由
       //
       // 直译成「最早的两次未完成」的话，出的是 8/26 与 8/27 ——
       // **今天那次反而看不见**，而议程要回答的正是「接下来是什么」。
+      // 所以那个「两次」只管今天起的那一侧。
+      //
+      // 逾期的**全留**是用户的决定（中间有过一版只留最早一条）：
+      // 漏了几次和漏了一次是两件事，折叠之后两者长得一样。
       final rows = _agenda([
         _task(
           '吃药',
@@ -134,10 +138,36 @@ void main() {
           rrule: 'RRULE:FREQ=DAILY',
         ),
       ]);
-      expect(_dates(rows), [const PlanDate(2026, 8, 26), _today]);
+
+      // 8/26…9/7 共十三条逾期（窗口往回只到 8/25），加今天与明天。
+      expect(_dates(rows).first, const PlanDate(2026, 8, 26));
+      expect(_dates(rows).last, _today.addDays(1));
+      expect(
+        _dates(rows).where((d) => d.isBefore(_today)),
+        hasLength(13),
+        reason: '逾期的被折叠了',
+      );
+      expect(_dates(rows).where((d) => !d.isBefore(_today)), [
+        _today,
+        _today.addDays(1),
+      ], reason: '今天起留的不是「本次和下次」两条');
     });
 
-    test('逾期的补完之后，两条都在今天起', () {
+    test('**往回不是无限的** —— 逾期最多回溯 pastDays 天', () {
+      // 「全留」的代价必须是有界的。规则从 2025 年就开始了，
+      // 而窗口只往回看两周（`ListHorizon.pastDays`）。
+      final rows = _agenda([
+        _task(
+          '吃药',
+          date: const PlanDate(2025, 1, 1),
+          start: 8 * 60,
+          rrule: 'RRULE:FREQ=DAILY',
+        ),
+      ]);
+      expect(_dates(rows).first, _today.addDays(-ListHorizon.pastDays));
+    });
+
+    test('逾期的补完之后，只剩今天起那两条', () {
       // 8/26、8/27 各写一条 done 的例外，于是最早的未完成就是今天。
       final rows = _agenda(
         [
@@ -161,12 +191,22 @@ void main() {
             ),
         ],
       );
-      // 8/28…9/7 还是逾期的，所以第一条是 8/28。
-      expect(_dates(rows), [const PlanDate(2026, 8, 28), _today]);
+      // 8/28…9/7 还是逾期的（那两天补上了，别的没有），所以第一条是 8/28。
+      expect(_dates(rows).first, const PlanDate(2026, 8, 28));
+      expect(
+        _dates(rows).contains(const PlanDate(2026, 8, 26)),
+        isFalse,
+        reason: '标了完成的那次又回来了',
+      );
+      expect(_dates(rows).where((d) => !d.isBefore(_today)), [
+        _today,
+        _today.addDays(1),
+      ]);
     });
 
-    test('规则已经结束、只剩逾期的 → 只出最早那条', () {
-      // 「逾期留一条」是刻意的上界：五次漏做只说一次「你欠着」。
+    test('规则已经结束、只剩逾期的 → 那几条全在', () {
+      // 漏了五次就显示五次。折叠的话，「我欠着几次」这个问题
+      // 在界面上就没有答案了。
       final rows = _agenda([
         _task(
           '交房租',
@@ -175,7 +215,10 @@ void main() {
           rrule: 'RRULE:FREQ=DAILY;UNTIL=20260905T000000Z',
         ),
       ]);
-      expect(_dates(rows), [const PlanDate(2026, 9, 1)]);
+      // 9/5 那次**不在**：`UNTIL` 是 UTC 的 9/5 00:00，而那次是
+      // 本地 09:00 = UTC 01:00，越过了界。写期望时按本地日期数
+      // 会多算一条 —— 这条注释就是那次算错留下的。
+      expect(_dates(rows), [for (var d = 1; d <= 4; d++) PlanDate(2026, 9, d)]);
     });
 
     test('稀疏规则靠兜底窗口找到下一次，不整条消失', () {

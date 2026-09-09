@@ -428,8 +428,9 @@ void main() {
       );
     });
 
-    testAppWidgets('逾期一堆时，出的是最早那条 + 今天那条', (tester) async {
+    testAppWidgets('逾期一堆时：逾期全留，今天起两条', (tester) async {
       // 直译成「最早的两次」的话，两条都在半个月前，**今天那次反而不见了**。
+      // 所以那个「两次」只管今天起的那一侧，逾期的全留（用户的决定）。
       await _pump(
         tester,
         tasks: [
@@ -442,20 +443,36 @@ void main() {
         ],
       );
 
-      expect(
-        find.byKey(TimelinePage.dateKey(const PlanDate(2026, 8, 26))),
-        findsOneWidget,
-        reason: '最早那次不见了',
+      // 进来时定位在聚焦日（今天），逾期那一段在上面 —— **先滚上去**。
+      // 不滚的话它们没被建出来，`findsNothing` 会是「懒加载」的假象，
+      // 而不是「被折叠了」。
+      await tester.drag(
+        find.byKey(TimelinePage.scrollKey),
+        const Offset(0, 4000),
       );
-      expect(
-        find.byKey(TimelinePage.dateKey(_today)),
-        findsOneWidget,
-        reason: '今天那次被两条陈年逾期挤掉了',
+      await tester.pumpAndSettle();
+
+      for (final d in [26, 27, 28]) {
+        expect(
+          find.byKey(TimelinePage.dateKey(PlanDate(2026, 8, d))),
+          findsOneWidget,
+          reason: '8/$d 那次被折叠了 —— 逾期的该全留',
+        );
+      }
+    });
+
+    testAppWidgets('今天起只出本次和下次，不出第三条', (tester) async {
+      await _pump(
+        tester,
+        tasks: [_task('吃药', start: 8 * 60, rrule: 'RRULE:FREQ=DAILY')],
       );
+
+      expect(find.byKey(TimelinePage.dateKey(_today)), findsOneWidget);
+      expect(find.byKey(TimelinePage.dateKey(_tomorrow)), findsOneWidget);
       expect(
-        find.byKey(TimelinePage.dateKey(const PlanDate(2026, 8, 27))),
+        find.byKey(TimelinePage.dateKey(_today.addDays(2))),
         findsNothing,
-        reason: '逾期的留了不止一条',
+        reason: '今天起留的不止两条',
       );
     });
   });

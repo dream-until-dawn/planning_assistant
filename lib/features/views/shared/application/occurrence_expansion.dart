@@ -301,20 +301,36 @@ List<TaskOccurrence> expandInWindow({
 /// 会在一处出错：一条搁下两周的每日任务，最早的两次都在半个月前，
 /// 于是**今天那次反而看不见** —— 而这个视图要回答的正是「接下来是什么」。
 ///
-/// 所以逾期的只留**最早一条**（一条足够说明「你欠着」），
-/// 今天起的按顺序补满到两条：
+/// 所以那个「两次」只管**今天起**的那一侧：
+///
+///  · 逾期的**全部保留**；
+///  · 今天起的按顺序留两条（本次与下次）。
 ///
 /// | 情形（今天 9/9） | 出哪几条 |
 /// |---|---|
-/// | 每日，8/26 起全没做 | 8/26、9/9 |
+/// | 每日，8/26 起全没做 | 8/26…9/8 每一条，加上 9/9、9/10 |
 /// | 每日，逾期的都补上了 | 9/9、9/10 |
-/// | 每周一，9/2 漏了 | 9/2、9/9 |
-/// | 规则已经结束，只剩逾期的 | 最早那条 |
+/// | 每周一，9/2 漏了 | 9/2、9/9、9/16 |
+/// | 规则已经结束，只剩逾期的 | 全部逾期的那些 |
+///
+/// ### 逾期为什么不折叠
+///
+/// 中间有过一版是「逾期只留最早一条」（一条足够说明「你欠着」），
+/// 用户看过之后要求**全留**。这不是技术判断，是他的决定：
+/// 漏了几次和漏了一次是两件事，而折叠之后这两者长得一样。
+///
+/// 代价是有界的：往回只展开 [ListHorizon.pastDays] 天，
+/// 所以一条每日任务最多堆出十四行，不会无限长。
 ///
 /// [includeSkipped] / [includeCompleted] 同 [expandForList]：
 /// 用户显式筛「已跳过」「已完成」时把被折叠掉的那些放回来。
 /// 没有它们的话，这个视图会对筛选器**装作没看见**，
 /// 而四个视图必须对同一份筛选给同一种反应（FR-VIEW-05）。
+/// 今天起最多留几次 —— 就是用户说的「本次和下次」。
+///
+/// **只管未来那一侧**：逾期的不受它限制（见 [expandForAgenda] 的说明）。
+const int _upcomingPerTask = 2;
+
 List<TaskOccurrence> expandForAgenda({
   required List<Task> tasks,
   required List<OccurrenceOverride> overrides,
@@ -354,12 +370,10 @@ List<TaskOccurrence> expandForAgenda({
     final taskOverrides = byTask[task.id] ?? const <OccurrenceOverride>[];
 
     final picked = <TaskOccurrence>[];
-    var tookOverdue = false;
-    var tookUpcoming = false;
+    var upcoming = 0;
 
     void consider(List<Occurrence> occurrences) {
       for (final o in occurrences) {
-        if (picked.length >= 2) return;
         final row = TaskOccurrence(
           task: task,
           occurrence: o,
@@ -367,13 +381,15 @@ List<TaskOccurrence> expandForAgenda({
           stageStates: stageStatesByTask[task.id]?[o.key] ?? const {},
         );
         if (!wanted(row.status)) continue;
+
         if (o.start.date.isBefore(today)) {
-          // 逾期的只留最早一条，见上表。
-          if (tookOverdue) continue;
-          tookOverdue = true;
-        } else {
-          tookUpcoming = true;
+          // 逾期的全留（用户的决定，见上面那段）。
+          picked.add(row);
+          continue;
         }
+        // 今天起的只留本次和下次。
+        if (upcoming >= _upcomingPerTask) continue;
+        upcoming++;
         picked.add(row);
       }
     }
@@ -389,7 +405,7 @@ List<TaskOccurrence> expandForAgenda({
 
     // 常规窗口里一条未来的都没有 → 往更远处找。不找的话，
     // 「每年 5 月 20 日」这类稀疏规则在九月整条从时间轴上消失。
-    if (!tookUpcoming) {
+    if (upcoming == 0) {
       consider(
         engine.expand(
           context: context,
