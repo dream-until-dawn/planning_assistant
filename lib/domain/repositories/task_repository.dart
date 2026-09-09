@@ -6,6 +6,7 @@
 /// 方法签名里**不出现任何 Drift 类型**，架构守卫会检查这一点。
 library;
 
+import '../entities/checklist_item.dart';
 import '../entities/occurrence_override.dart';
 import '../entities/stage.dart';
 import '../entities/stage_occurrence_state.dart';
@@ -100,6 +101,20 @@ abstract interface class TaskRepository {
 
   /// 写一条阶段状态。同一个 (stageId, occurrenceKey) 覆盖写。
   Future<void> saveStageState(StageOccurrenceState state);
+
+  /// 全部清单项（FR-TASK-09）。与 [watchAllStages] 同一个理由：
+  /// 一次取全再索引，不按 taskId 逐条订阅。
+  Stream<List<ChecklistItem>> watchAllChecklistItems();
+
+  /// 一条任务的清单项。[scope] 决定要不要带上墓碑 ——
+  /// 整表替换时必须看得见墓碑，否则会把已删的又「新建」回来。
+  Future<List<ChecklistItem>> findChecklistOfTask(
+    String taskId, {
+    TaskScope scope = TaskScope.active,
+  });
+
+  /// 整表写回一条任务的清单项（含墓碑）。
+  Future<void> saveChecklist(String taskId, List<ChecklistItem> items);
 
   /// 写入任务及其阶段（同一事务）。
   ///

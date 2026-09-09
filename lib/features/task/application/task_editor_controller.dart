@@ -15,6 +15,7 @@ import '../../../core/patch/unset.dart';
 import '../../../core/time/minute_of_day.dart';
 import '../../../core/time/plan_date.dart';
 import '../../../domain/commands/task_command.dart';
+import '../../../domain/entities/checklist_item.dart';
 import '../../../domain/entities/stage.dart';
 import '../../../domain/entities/task.dart';
 import '../../../domain/value_objects/occurrence_key.dart';
@@ -33,6 +34,30 @@ import 'recurrence_draft.dart';
 /// 混用一个类型的话，每次增删都得立刻重排一遍 orderIndex，
 /// 而中间任何一步出错都会写出不连续的序号 —— 那是领域层会直接拒绝的。
 @immutable
+/// 编辑器里的一条清单项（FR-TASK-09）。
+///
+/// **比 [StageDraft] 少的东西就是它的定义**：没有时间偏移、没有时长。
+/// 清单项「不参与时间排布」（术语表），少这两个字段不是省略，
+/// 是它跟阶段的分界线 —— 哪天有人给它加上 `startOffsetMinutes`，
+/// 它就变成了第二种阶段。
+final class ChecklistDraft {
+  const ChecklistDraft({
+    required this.id,
+    this.title = '',
+    this.isDone = false,
+  });
+
+  final String id;
+  final String title;
+  final bool isDone;
+
+  ChecklistDraft copyWith({String? title, bool? isDone}) => ChecklistDraft(
+    id: id,
+    title: title ?? this.title,
+    isDone: isDone ?? this.isDone,
+  );
+}
+
 final class StageDraft {
   const StageDraft({
     required this.id,
@@ -105,6 +130,7 @@ final class TaskDraft {
     this.categoryId,
     this.priority = TaskPriority.normal,
     this.stages = const [],
+    this.checklist = const [],
     this.recurrence = const RecurrenceDraft(),
   });
 
@@ -167,6 +193,16 @@ final class TaskDraft {
   /// **1 个是非法的**，领域层会拒绝 —— 一个只有一个阶段的阶段事项
   /// 与单项任务毫无区别。界面上由 [canSave] 挡住。
   final List<StageDraft> stages;
+
+  /// 清单项（FR-TASK-09）。
+  final List<ChecklistDraft> checklist;
+
+  /// 有效清单项：标题非空的那些。同 [filledStages] ——
+  /// 点了「加一项」还没打字的空行不该落库。
+  List<ChecklistDraft> get filledChecklist => [
+    for (final i in checklist)
+      if (i.title.trim().isNotEmpty) i,
+  ];
 
   /// 有效阶段：标题非空的那些。
   ///
@@ -262,6 +298,7 @@ final class TaskDraft {
     Object? categoryId = unset,
     TaskPriority? priority,
     List<StageDraft>? stages,
+    List<ChecklistDraft>? checklist,
     RecurrenceDraft? recurrence,
   }) => TaskDraft(
     editingTaskId: editingTaskId,
@@ -283,6 +320,7 @@ final class TaskDraft {
     categoryId: patch(categoryId, this.categoryId),
     priority: priority ?? this.priority,
     stages: stages ?? this.stages,
+    checklist: checklist ?? this.checklist,
     recurrence: recurrence ?? this.recurrence,
   );
 }
@@ -296,6 +334,7 @@ final class TaskDraft {
 TaskDraft draftFromTask(
   Task task,
   List<Stage> stages, {
+  List<ChecklistItem> checklist = const [],
   OccurrenceKey? splitAt,
 }) {
   final recurrence = task.recurrence;
@@ -329,6 +368,10 @@ TaskDraft draftFromTask(
           durationMinutes: s.durationMinutes,
           status: s.status,
         ),
+    ],
+    checklist: [
+      for (final i in checklist)
+        ChecklistDraft(id: i.id, title: i.title, isDone: i.isDone),
     ],
     recurrence: restored ?? const RecurrenceDraft(),
   );
@@ -399,6 +442,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     return draftFromTask(
       task,
       ref.read(stagesByTaskProvider)[task.id] ?? const [],
+      checklist: ref.read(checklistByTaskProvider)[task.id] ?? const [],
       splitAt: ref.read(editingSplitAtProvider),
     );
   }
@@ -486,6 +530,35 @@ final class TaskEditorController extends Notifier<TaskDraft> {
   }
 
   /// 加一个空阶段行。
+  /// 加一条清单项（FR-TASK-09）。
+  void addChecklistItem() => state = state.copyWith(
+    checklist: [
+      ...state.checklist,
+      ChecklistDraft(id: ref.read(idGeneratorProvider).newId()),
+    ],
+  );
+
+  void setChecklistTitle(String id, String title) => state = state.copyWith(
+    checklist: [
+      for (final i in state.checklist)
+        if (i.id == id) i.copyWith(title: title) else i,
+    ],
+  );
+
+  void setChecklistDone(String id, bool done) => state = state.copyWith(
+    checklist: [
+      for (final i in state.checklist)
+        if (i.id == id) i.copyWith(isDone: done) else i,
+    ],
+  );
+
+  void removeChecklistItem(String id) => state = state.copyWith(
+    checklist: [
+      for (final i in state.checklist)
+        if (i.id != id) i,
+    ],
+  );
+
   void addStage() => state = state.copyWith(
     stages: [
       ...state.stages,
@@ -644,6 +717,34 @@ final class TaskEditorController extends Notifier<TaskDraft> {
         );
   }
 
+  /// 把清单整表写回（FR-TASK-09）。
+  ///
+  /// **编辑时也要发，而且没有项时要发一条空的** —— 与阶段同一个理由：
+  /// 用户把清单全删了，不发这条的话库里那些原地不动，
+  /// 界面显示没有、库里还有。
+  Future<void> _replaceChecklist(String taskId, TaskDraft draft) {
+    final items = draft.filledChecklist;
+    if (!draft.isEditing && items.isEmpty) {
+      return Future<void>.value();
+    }
+    return ref
+        .read(taskCommandDispatcherProvider)
+        .dispatch(
+          ReplaceChecklistCommand(
+            taskId: taskId,
+            items: [
+              for (final (i, item) in items.indexed)
+                ChecklistItemSpec(
+                  id: item.id,
+                  title: item.title.trim(),
+                  orderIndex: i,
+                  isDone: item.isDone,
+                ),
+            ],
+          ),
+        );
+  }
+
   /// 草稿里的重复规则 → 库里存的规范形串。
   ///
   /// **这个界面表达不了的规则原样带回去**：编辑一条
@@ -733,6 +834,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
             ),
           );
       await _replaceStages(id, draft);
+      await _replaceChecklist(id, draft);
       return id;
     }
 
@@ -747,6 +849,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     // 而「建任务」与「设阶段」本来就是两件可以分别发生的事
     // （改已有任务的阶段时只发后一条）。
     await _replaceStages(id, draft);
+    await _replaceChecklist(id, draft);
 
     return id;
   }

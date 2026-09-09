@@ -9,6 +9,7 @@ library;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../app_providers.dart';
+import '../../../../domain/entities/checklist_item.dart';
 import '../../../../domain/entities/occurrence_override.dart';
 import '../../../../domain/entities/stage.dart';
 import '../../../../domain/entities/stage_occurrence_state.dart';
@@ -121,4 +122,28 @@ Map<String, Map<OccurrenceKey, StageStatesOfOccurrence>> _indexStates(
     for (final entry in byTask.entries)
       entry.key: groupByOccurrence(entry.value),
   };
+}
+
+/// 全部清单项（FR-TASK-09）。同 [allStagesProvider]，必须是顶层 provider。
+final allChecklistItemsProvider = StreamProvider<List<ChecklistItem>>(
+  (ref) => ref.watch(taskRepositoryProvider).watchAllChecklistItems(),
+);
+
+/// 按 taskId 索引的清单项，已按 `orderIndex` 排好（查询里排的）。
+final checklistByTaskProvider = Provider<Map<String, List<ChecklistItem>>>((
+  ref,
+) {
+  final items = ref.watch(allChecklistItemsProvider);
+  return switch (items) {
+    AsyncData(:final value) => _indexChecklist(value),
+    _ => const {},
+  };
+});
+
+Map<String, List<ChecklistItem>> _indexChecklist(List<ChecklistItem> items) {
+  final map = <String, List<ChecklistItem>>{};
+  for (final i in items) {
+    (map[i.taskId] ??= []).add(i);
+  }
+  return map;
 }

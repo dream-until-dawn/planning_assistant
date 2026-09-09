@@ -71,6 +71,7 @@ sealed class TaskCommand {
         CompleteTaskWithStagesCommand.fromJson(json),
       SetStageOccurrenceStatusCommand.kType =>
         SetStageOccurrenceStatusCommand.fromJson(json),
+      ReplaceChecklistCommand.kType => ReplaceChecklistCommand.fromJson(json),
       _ => throw UnknownCommandException(type),
     };
   }
@@ -91,6 +92,7 @@ sealed class TaskCommand {
     MoveOccurrenceCommand.kType,
     SplitRecurringTaskCommand.kType,
     SetStageOccurrenceStatusCommand.kType,
+    ReplaceChecklistCommand.kType,
   ];
 }
 
@@ -764,5 +766,74 @@ final class SetStageOccurrenceStatusCommand extends TaskCommand {
         stageId: json['stageId']! as String,
         occurrenceKey: OccurrenceKey.parse(json['occurrenceKey']! as String),
         status: TaskStatus.fromWireName(json['status']! as String),
+      );
+}
+
+/// 整表替换一条任务的清单项（FR-TASK-09）。
+///
+/// 与 [ReplaceStagesCommand] 同一个形状：编辑器一次提交整份清单，
+/// 不在新列表里的旧项**打墓碑而不是物理删** —— 物理删的话，
+/// V3 对端只会看到「这条还在」。
+///
+/// **没有「至少两项」那条约束。** 阶段有（一个阶段的阶段事项与单项
+/// 任务没有区别），而清单一项是完全正常的：「记得带伞」。
+final class ReplaceChecklistCommand extends TaskCommand {
+  const ReplaceChecklistCommand({required this.taskId, required this.items});
+
+  static const kType = 'replaceChecklist';
+
+  final String taskId;
+  final List<ChecklistItemSpec> items;
+
+  @override
+  String get type => kType;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'type': kType,
+    'taskId': taskId,
+    'items': [for (final i in items) i.toJson()],
+  };
+
+  static ReplaceChecklistCommand fromJson(Map<String, Object?> json) =>
+      ReplaceChecklistCommand(
+        taskId: json['taskId']! as String,
+        items: [
+          for (final i in json['items']! as List)
+            ChecklistItemSpec.fromJson(i as Map<String, Object?>),
+        ],
+      );
+}
+
+/// 命令载荷里的一条清单项。
+///
+/// 与实体分开是因为命令要能**序列化往返**（FR-AI-01：V4 的 Agent
+/// 构造同一批命令）—— 墓碑、时间戳这些是仓库那一侧的事。
+final class ChecklistItemSpec {
+  const ChecklistItemSpec({
+    required this.id,
+    required this.title,
+    required this.orderIndex,
+    this.isDone = false,
+  });
+
+  final String id;
+  final String title;
+  final int orderIndex;
+  final bool isDone;
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'title': title,
+    'orderIndex': orderIndex,
+    'isDone': isDone,
+  };
+
+  static ChecklistItemSpec fromJson(Map<String, Object?> json) =>
+      ChecklistItemSpec(
+        id: json['id']! as String,
+        title: json['title']! as String,
+        orderIndex: json['orderIndex']! as int,
+        isDone: json['isDone']! as bool,
       );
 }

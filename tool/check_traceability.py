@@ -62,8 +62,8 @@ EXEMPT = {
     # roadmap 里各有一条记着。
     # FR-TASK-07 当晚就补完了，所以不在这张表里 —— 它现在由
     # stage_occurrence_state_test.dart 与 stage_occurrence_test.dart 点名。
-    'FR-TASK-09': '**欠账**：子任务清单（checklist）。'
-    '表和导出都有了，界面上一个入口都没有',
+    # FR-TASK-09 也补完了 —— 现在由 checklist_test.dart 点名。
+    # 这张表里于是**一条真缺口都不剩**，剩下的全是排在后面的里程碑。
 }
 
 

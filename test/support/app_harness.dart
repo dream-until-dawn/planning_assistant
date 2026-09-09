@@ -314,7 +314,18 @@ Future<void> tapVisible(WidgetTester tester, Key key) async {
     //
     // 撞见过一次：设置页加了两个配置项之后，「分类管理」那一行被挤出
     // cacheExtent，**七条与设置毫无关系的用例一起红**。
-    await tester.scrollUntilVisible(finder, 200);
+    // **必须指定滚哪个** —— 不指定时它要求全树只有一个 `Scrollable`，
+    // 而每个 `TextField` 自己带一个（`EditableText` 里的）。
+    // 表单里有输入框时就会炸成「Bad state: Too many elements」，
+    // 而那句话跟「控件在屏幕外」一点关系都没有。
+    //
+    // 取 `.first`：`find.byType` 是深度优先，表单的 `ListView` 是那些
+    // 输入框的祖先，所以它排在前面。
+    await tester.scrollUntilVisible(
+      finder,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
   }
   await tester.ensureVisible(finder);

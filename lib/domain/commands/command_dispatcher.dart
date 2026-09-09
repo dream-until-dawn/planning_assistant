@@ -8,6 +8,7 @@ library;
 import '../../core/patch/unset.dart';
 import '../../core/time/clock.dart';
 import '../../core/time/time_zone_resolver.dart';
+import '../entities/checklist_item.dart';
 import '../entities/occurrence.dart';
 import '../entities/occurrence_override.dart';
 import '../entities/stage.dart';
@@ -97,6 +98,8 @@ final class CommandDispatcher {
         await _completeWithStages(command);
       case SetStageOccurrenceStatusCommand():
         await _setStageOccurrenceStatus(command);
+      case ReplaceChecklistCommand():
+        await _replaceChecklist(command);
     }
   }
 
@@ -294,6 +297,49 @@ final class CommandDispatcher {
     // 阶段任务标完成时必须连阶段一起处理，否则父子状态不一致。
     // 这里只处理「非完成」的迁移；完成走 CompleteTaskWithStagesCommand。
     await _repo.saveTask(updated);
+  }
+
+  /// 整表替换清单项（FR-TASK-09）。
+  ///
+  /// 与 `_replaceStages` 同一个形状，**少一条约束**：清单没有
+  /// 「至少两项」的要求 —— 一项是完全正常的（「记得带伞」）。
+  /// 顺序仍然要求连续从 0 开始：断号的话「上移一位」这类操作
+  /// 会跳格，而那是界面看不出来的错。
+  Future<void> _replaceChecklist(ReplaceChecklistCommand c) async {
+    _requireContiguousChecklistOrder(c.items);
+    await _require(c.taskId);
+
+    final existing = await _repo.findChecklistOfTask(
+      c.taskId,
+      scope: TaskScope.all,
+    );
+    final incoming = {for (final i in c.items) i.id};
+
+    await _repo.saveChecklist(c.taskId, [
+      for (final i in c.items)
+        ChecklistItem(
+          id: i.id,
+          taskId: c.taskId,
+          title: i.title,
+          orderIndex: i.orderIndex,
+          isDone: i.isDone,
+        ),
+      // 不在新列表里的旧项打墓碑，不物理删（同阶段）。
+      for (final old in existing)
+        if (!incoming.contains(old.id) && old.deletedAt == null)
+          old.copyWith(deletedAt: _now()),
+    ]);
+  }
+
+  void _requireContiguousChecklistOrder(List<ChecklistItemSpec> items) {
+    final order = [for (final i in items) i.orderIndex]..sort();
+    for (var i = 0; i < order.length; i++) {
+      if (order[i] != i) {
+        throw DomainInvariantViolation(
+          '清单项的 orderIndex 必须是连续的 0..${items.length - 1}，实得 $order',
+        );
+      }
+    }
   }
 
   Future<void> _replaceStages(ReplaceStagesCommand c) async {

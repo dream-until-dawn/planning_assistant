@@ -128,8 +128,29 @@
 | `taskId` | TEXT NOT NULL FK CASCADE | |
 | `title` | TEXT NOT NULL | |
 | `isDone` | BOOL NOT NULL DEFAULT 0 | |
-| `orderIndex` | INT NOT NULL | |
+| `orderIndex` | INT NOT NULL | **连续从 0 开始**，由命令层校验 |
 | **同步信封** | | |
+
+#### 实现（M3）
+
+与 `stage_occurrence_states` 一样，这张表和 DAO 从 M1 就在、导出也带着它，
+**领域层以上直到 M3 末尾才接上**。写入走 `ReplaceChecklistCommand`
+（整表替换 + 打墓碑），与 `ReplaceStagesCommand` 同一个形状，
+**少一条约束**：清单没有「至少两项」的要求 —— 一项是正常的（「记得带伞」）。
+
+**清单不按发生分**，这条不对称是照着表设计的：阶段有
+`stage_occurrence_states`，清单没有对应的表。阶段那份是必要的
+（这周的热身与下周的热身是两件事）；清单是附在任务身上的备忘。
+代价要说清：**重复任务的清单勾上了就一直勾着**。
+将来若要按发生分，那是加一张表 + 一条判据的事，
+别在这张表上偷偷塞一个 `occurrenceKey` —— 那会让「轻量」这个定位失效。
+
+> **编辑器必须等这条流吐值再建草稿。** 控制器用 `read` 取初值（对的 ——
+> `watch` 会把用户填到一半的东西冲掉），而 `read` 一个没人订阅过的
+> `StreamProvider` 拿到的是 loading，回落是**空清单**：
+> 编辑一条有清单的任务，清单区是空的，一保存就整表清掉。
+> 阶段没这毛病纯属巧合 —— 列表卡片要算进度，一直 watch 着它。
+> 清单不上任何视图（FR-TASK-09），没人替它保温。
 
 ### 3.4 `occurrence_overrides`
 
