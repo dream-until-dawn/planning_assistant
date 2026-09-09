@@ -130,6 +130,16 @@ abstract interface class TaskRepository {
   /// 旧行打墓碑，新行另起（主键是从 key 派生的，见 `all_day_conversion`）。
   Future<void> applyAllDayConversion(AllDayConversion conversion);
 
+  /// 单项 ⇄ 重复切换的落盘（FR-TASK-07）。
+  ///
+  /// **必须原子**：任务改了而阶段状态没迁，那段时间里用户看到的是
+  /// 「我做完的东西没了」——数据其实还在，只是读路径改看另一张表。
+  Future<void> applyRecurrenceConversion(
+    Task task,
+    List<Stage> stages,
+    List<StageOccurrenceState> states,
+  );
+
   /// 写入任务及其阶段（同一事务）。
   ///
   /// 分两次调用的话，中途失败会留下「任务改了但阶段没改」的半截状态 ——

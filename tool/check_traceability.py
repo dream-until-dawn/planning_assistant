@@ -162,31 +162,75 @@ def _self_test() -> int:
         if got != want:
             print(f'  自检失败：{name} —— 期望 {want}，实得 {got}')
             bad += 1
+
+    # ── 第 9 类：**端到端，而且成对** ────────────────────────
+    #
+    # 上面那些验的全是提取函数 `mentioned()`。而这条工具的存在理由是
+    # 「**缺了会红**」—— 在补这一段之前，那一半一条都没验过。
+    # 提取得再准，如果缺了不会红，整条工具还是摆设。
+    #
+    # **必须成对**：只验「缺一条会红」的话，一个 `return 1` 的实现
+    # 也能过。这与 R-27 撞车那里配的对照组是同一个动作。
+    reqs = [('FR-ZZ-01', 'V1'), ('FR-ZZ-02', 'V1'), ('FR-ZZ-09', 'V2')]
+    full = [
+        ('a_test.dart', "test('FR-ZZ-01 甲', () {});"),
+        ('b_test.dart', "group('FR-ZZ-02 乙', () {});"),
+    ]
+    pairs = [
+        ('缺一条 → 报出来', full[:1], ['FR-ZZ-02']),
+        ('一条不缺 → 不报', full, []),
+        # V2 的不算数：它本来就还没实现，报它等于每次都红。
+        ('V2 的不参与', full, []),
+        # 豁免的也不算 —— 但豁免表是**另一份声明**，
+        # 不该顺手让「点了名」这件事也失效。
+        ('豁免的不报', [], ['FR-ZZ-02']),
+    ]
+    for name, corpus, want in pairs:
+        exempt = {'FR-ZZ-01'} if name == '豁免的不报' else set()
+        missing, _, _ = evaluate(reqs, corpus, exempt)
+        if missing != want:
+            print(f'  自检失败：{name} —— 期望缺 {want}，实得缺 {missing}')
+            bad += 1
+
     if bad:
         print(f'自检没过（{bad} 条）—— 校验结果不予采信')
         return 1
-    print(f'自检通过（{len(cases)} 条）')
+    print(f'自检通过（{len(cases)} 条提取 + {len(pairs)} 条端到端）')
     return 0
+
+
+def evaluate(reqs, corpus, exempt):
+    """(缺的, 被谁点了名) —— **不碰 IO**，好让自检能喂合成语料。
+
+    抽出来是为了让「真缺的时候会红」可测。在此之前这一段长在 `main`
+    里，于是自检只能验提取函数 `mentioned()`；
+    而这条工具的**存在理由**是「缺了会红」，那一半一条都没验过 ——
+    docstring 承诺了两件事，机制只兑现一件。
+    """
+    where = {}
+    for name, text in corpus:
+        for rid, desc in mentioned(text).items():
+            where.setdefault(rid, (name, desc))
+
+    missing, covered = [], []
+    for rid, phase in reqs:
+        if phase != 'V1' or rid in exempt:
+            continue
+        # 要的是**一条用例**点名。只在注释里出现不算 ——
+        # 那是实现在自称完成，不是有人验过。
+        (covered if rid in where else missing).append(rid)
+    return missing, covered, where
 
 
 def main(argv: list) -> int:
     if '--self-test' in argv and _self_test() != 0:
         return 1
 
-    # 编号 → (文件, 用例描述)
-    where = {}
-    for path in (ROOT / 'test').rglob('*.dart'):
-        rel = path.relative_to(ROOT).as_posix()
-        for rid, desc in mentioned(path.read_text(encoding='utf-8')).items():
-            where.setdefault(rid, (rel, desc))
-
-    missing, covered = [], []
-    for rid, phase in requirements():
-        if phase != 'V1' or rid in EXEMPT:
-            continue
-        # 要的是**一条用例**点名。只在注释里出现不算 ——
-        # 那是实现在自称完成，不是有人验过。
-        (covered if rid in where else missing).append(rid)
+    corpus = [
+        (p.relative_to(ROOT).as_posix(), p.read_text(encoding='utf-8'))
+        for p in (ROOT / 'test').rglob('*.dart')
+    ]
+    missing, covered, where = evaluate(requirements(), corpus, EXEMPT)
 
     total = len(covered) + len(missing)
     print(f'V1 需求 {total} 条，豁免 {len(EXEMPT)} 条')

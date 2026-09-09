@@ -19,6 +19,7 @@ import '../policies/task_lifecycle.dart';
 import '../recurrence/recurrence_engine.dart';
 import '../repositories/task_repository.dart';
 import '../services/all_day_conversion.dart';
+import '../services/recurrence_conversion.dart';
 import '../value_objects/occurrence_key.dart';
 import '../value_objects/recurrence.dart';
 import '../value_objects/task_status.dart';
@@ -270,27 +271,49 @@ final class CommandDispatcher {
     final task = await _require(c.taskId);
     // 命令里的哨兵语义（不传 = 不改，显式 null = 清空）直接传给 copyWith，
     // 两边用的是同一套约定。
-    await _repo.saveTask(
-      task.copyWith(
-        title: c.title,
-        note: c.note,
-        categoryId: c.categoryId,
-        priority: c.priority,
-        planDate: c.planDate,
-        startMinute: c.startMinute,
-        endDate: c.endDate,
-        endMinute: c.endMinute,
-        // 规则串在这里规范化。哨兵原样透传 —— 命令与实体共用同一个 [unset]，
-        // 所以「不改」不需要在中间翻译一道。
-        recurrence: identical(c.recurrenceRule, unset)
-            ? unset
-            : (c.recurrenceRule == null
-                  ? null
-                  : Recurrence.parse(c.recurrenceRule! as String)),
-        colorArgb: c.colorArgb,
-        icon: c.icon,
-        sortOrder: c.sortOrder,
-      ),
+    final updated = task.copyWith(
+      title: c.title,
+      note: c.note,
+      categoryId: c.categoryId,
+      priority: c.priority,
+      planDate: c.planDate,
+      startMinute: c.startMinute,
+      endDate: c.endDate,
+      endMinute: c.endMinute,
+      // 规则串在这里规范化。哨兵原样透传 —— 命令与实体共用同一个 [unset]，
+      // 所以「不改」不需要在中间翻译一道。
+      recurrence: identical(c.recurrenceRule, unset)
+          ? unset
+          : (c.recurrenceRule == null
+                ? null
+                : Recurrence.parse(c.recurrenceRule! as String)),
+      colorArgb: c.colorArgb,
+      icon: c.icon,
+      sortOrder: c.sortOrder,
+    );
+
+    // **改重复规则会改变「阶段状态该读哪一份」**（FR-TASK-07）。
+    //
+    // 不重复看 `Stage.status`，重复看 `stage_occurrence_states` ——
+    // 于是 null ⇄ 非 null 那一刻，用户勾过的进度会**当场从界面上消失**
+    // （数据没丢，只是读路径改看另一张空表了）。
+    //
+    // 与 R-27 同一个模式：身份变了就显式迁移，不让读路径去猜。
+    final migration = convertRecurrenceMode(
+      updated,
+      was: task.isRecurring,
+      stages: await _repo.findStagesOfTask(c.taskId),
+      states: await _repo.findStageStatesOfTask(c.taskId),
+    );
+    if (migration == null) {
+      await _repo.saveTask(updated);
+      return;
+    }
+    // 一个事务：任务改了而阶段没迁的话，那段时间里读到的是空进度。
+    await _repo.applyRecurrenceConversion(
+      updated,
+      migration.stages,
+      migration.states,
     );
   }
 
@@ -385,6 +408,21 @@ final class CommandDispatcher {
     final incoming = {for (final s in c.stages) s.id};
     final before = {for (final s in existing) s.id: s};
 
+    // **重复任务的 `Stage.status` 恒为 pending。**
+    //
+    // 那一列对重复任务没人读（状态按每一次存，判据见 `stageStatusFor`）。
+    // 让它带着 done 落库，就是留下一个能被写、写了没人看的字段 ——
+    // 而这种字段下一个人一定会去写它。
+    //
+    // **归一化而不是抛异常**：编辑器把一条已完成的单项任务改成重复时，
+    // 它手上那份草稿还带着 done（草稿是任务还不重复时读的），
+    // 抛的话这条最普通的编辑就存不下去。
+    // 那份 done **不会丢** —— `_updateFields` 里的
+    // `convertRecurrenceMode` 已经先把它搬到第一次发生上了，
+    // 而那条命令排在这一条之前。
+    TaskStatus statusOf(StageSpec s) =>
+        task.isRecurring ? TaskStatus.pending : s.status;
+
     final stages = <Stage>[
       for (final s in c.stages)
         Stage(
@@ -395,14 +433,14 @@ final class CommandDispatcher {
           startOffsetMinutes: s.startOffsetMinutes,
           durationMinutes: s.durationMinutes,
           colorArgb: s.colorArgb,
-          status: s.status,
+          status: statusOf(s),
           // **本来就完成着的，保留原来的完成时刻。**
           //
           // 一律盖成 `_now()` 的话，用户改一下任务标题，所有已完成阶段的
           // 完成时间都变成「刚刚」—— 而这条整表写回是每次保存都跑的。
           // 表现是「上周做完的事显示成刚做完」，没人会去查这个字段，
           // 但它是导出与将来同步时的真实数据。
-          completedAt: s.status == TaskStatus.done
+          completedAt: statusOf(s) == TaskStatus.done
               ? (before[s.id]?.status == TaskStatus.done
                     ? before[s.id]!.completedAt
                     : _now())

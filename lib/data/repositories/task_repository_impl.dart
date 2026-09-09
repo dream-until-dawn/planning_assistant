@@ -204,6 +204,24 @@ final class DriftTaskRepository implements TaskRepository {
   }
 
   @override
+  Future<void> applyRecurrenceConversion(
+    Task task,
+    List<Stage> stages,
+    List<StageOccurrenceState> states,
+  ) async {
+    task.checkInvariants();
+    await _db.transaction(() async {
+      await _tasks.upsert(task.toCompanion());
+      for (final s in stages) {
+        await _stages.upsert(s.toCompanion());
+      }
+      for (final s in states) {
+        await _stageStates.upsert(stageStateToCompanion(s));
+      }
+    });
+  }
+
+  @override
   Future<void> applyAllDayConversion(AllDayConversion conversion) async {
     // **一个事务**：任务改了而例外的 key 没迁，那些例外就永久失联 ——
     // 库里还在、界面上再也挂不上任何一次发生，而且没有任何报错。
