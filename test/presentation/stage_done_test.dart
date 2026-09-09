@@ -53,8 +53,7 @@ Future<void> _createStaged(WidgetTester tester, int count) async {
 
 /// 重新打开那条任务。
 Future<void> _reopen(WidgetTester tester) async {
-  await tester.tap(find.byType(TaskCard));
-  await tester.pumpAndSettle();
+  await openEditorFromCard(tester, card: find.byType(TaskCard));
 }
 
 void main() {

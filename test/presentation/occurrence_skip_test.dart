@@ -170,8 +170,17 @@ void main() {
     expect(find.textContaining('已跳过'), findsWidgets);
   });
 
-  testAppWidgets('对照组：不重复的任务点了不弹', (tester) async {
-    // 弹一个只有标题、没有任何动作的空壳，比不弹更让人以为坏了。
+  testAppWidgets('对照组：不重复的任务弹的是另一套 —— 没有「跳过」', (tester) async {
+    // ## 这条用例翻过面
+    //
+    // 原来验的是「不重复的任务点了**不弹**」，理由写的是「弹一个只有
+    // 标题、没有任何动作的空壳，比不弹更让人以为坏了」。
+    // 用户 2026-09-09 要求两种任务统一都弹（完成 / 编辑），
+    // 于是「空壳」的前提不成立了。
+    //
+    // 但对照的意义还在，只是换了对象：**跳过是「某一次」才有的动作**，
+    // 不重复的任务没有「这一次」这回事。弹层里出现「跳过这一次」
+    // 就说明分流坏了。
     await setScreenSize(tester, const Size(390, 844));
     final harness = appHarness();
     await tester.pumpWidget(
@@ -189,6 +198,15 @@ void main() {
 
     await tester.tap(find.byType(TaskCard).first);
     await tester.pumpAndSettle();
-    expect(find.byKey(OccurrenceSheetKeys.sheet), findsNothing);
+
+    expect(find.byKey(OccurrenceSheetKeys.sheet), findsOneWidget);
+    expect(find.byKey(OccurrenceSheetKeys.toggleDone), findsOneWidget);
+    expect(find.byKey(OccurrenceSheetKeys.edit), findsOneWidget);
+    expect(
+      find.byKey(OccurrenceSheetKeys.skip),
+      findsNothing,
+      reason: '不重复的任务没有「这一次」，不该给「跳过这一次」',
+    );
+    expect(find.byKey(OccurrenceSheetKeys.editSeries), findsNothing);
   });
 }

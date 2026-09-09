@@ -55,8 +55,7 @@ void main() {
       await _pumpApp(tester);
       await _create(tester, '买菜');
 
-      await tester.tap(find.byType(TaskCard).first);
-      await tester.pumpAndSettle();
+      await openEditorFromCard(tester);
 
       expect(find.text('编辑任务'), findsOneWidget);
       final field = tester.widget<TextField>(
@@ -70,8 +69,7 @@ void main() {
       await _create(tester, '买菜');
       final before = (await harness.db.select(harness.db.tasks).get()).single;
 
-      await tester.tap(find.byType(TaskCard).first);
-      await tester.pumpAndSettle();
+      await openEditorFromCard(tester);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '买水果');
       await tester.pump();
       await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
@@ -95,8 +93,7 @@ void main() {
       await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(TaskCard).first);
-      await tester.pumpAndSettle();
+      await openEditorFromCard(tester);
       await tester.enterText(find.byKey(TaskEditorPage.noteFieldKey), '');
       await tester.pump();
       await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
@@ -138,8 +135,7 @@ void main() {
       expect(await harness.db.select(harness.db.stages).get(), hasLength(2));
 
       // 进编辑，把两个阶段都删掉。
-      await tester.tap(find.byType(TaskCard).first);
-      await tester.pumpAndSettle();
+      await openEditorFromCard(tester);
       // 表单是懒建的，阶段区在折线以下 —— 先滚过去，
       // 否则下面那个 `.first` 找的是一个还没建出来的按钮。
       await tester.scrollUntilVisible(
@@ -180,6 +176,7 @@ void main() {
       await _pumpApp(tester);
       await _create(tester, '晨会', recurring: true);
 
+      // 这一条看的是**抽屉本身**，不进编辑页。
       await tester.tap(find.byType(TaskCard).first);
       await tester.pumpAndSettle();
 
@@ -191,10 +188,7 @@ void main() {
       final harness = await _pumpApp(tester);
       await _create(tester, '晨会', recurring: true);
 
-      await tester.tap(find.byType(TaskCard).first);
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(OccurrenceSheetKeys.editSeries));
-      await tester.pumpAndSettle();
+      await openEditorFromCard(tester);
 
       expect(find.text('编辑任务'), findsOneWidget);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '站会');
@@ -221,10 +215,7 @@ void main() {
       await _pumpApp(tester);
       await _create(tester, '晨会', recurring: true);
 
-      await tester.tap(find.byType(TaskCard).first);
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(OccurrenceSheetKeys.editSeries));
-      await tester.pumpAndSettle();
+      await openEditorFromCard(tester);
 
       final sw = tester.widget<SwitchListTile>(
         find.byKey(TaskEditorPage.allDaySwitchKey),
@@ -262,10 +253,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // 现在它是重复任务了，点卡片弹的是动作层，从那里进编辑。
-      await tester.tap(find.byType(TaskCard).first);
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(OccurrenceSheetKeys.editSeries));
-      await tester.pumpAndSettle();
+      await openEditorFromCard(tester);
 
       expect(
         find.byKey(TaskEditorPage.unsupportedRecurrenceKey),
@@ -294,10 +282,7 @@ void main() {
       await _pumpApp(tester);
       await _create(tester, '晨会', recurring: true);
 
-      await tester.tap(find.byType(TaskCard).first);
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(OccurrenceSheetKeys.editSeries));
-      await tester.pumpAndSettle();
+      await openEditorFromCard(tester);
 
       // **先滚过去再断言。**
       //

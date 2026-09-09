@@ -16,6 +16,8 @@
 /// 自己还能不能反悔。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -24,6 +26,7 @@ import '../../../../domain/services/stage_occurrence_status.dart';
 import '../../../../domain/value_objects/task_status.dart';
 import '../../shared/application/task_occurrence.dart';
 import '../../shared/application/task_providers.dart';
+import '../../shared/presentation/toggle_done_action.dart';
 import '../application/task_list_actions.dart';
 
 /// 弹层里各行的 Key。
@@ -33,6 +36,10 @@ abstract final class OccurrenceSheetKeys {
   static const Key unskip = ValueKey('occurrence-unskip');
   static const Key hint = ValueKey('occurrence-skip-hint');
   static const Key editSeries = ValueKey('occurrence-edit-series');
+
+  /// 不重复的任务那两条（用户第①条：两种任务同一套动作）。
+  static const Key toggleDone = ValueKey('occurrence-toggle-done');
+  static const Key edit = ValueKey('occurrence-edit');
   static const Key editFromHere = ValueKey('occurrence-edit-from-here');
 
   /// 这一次的阶段勾选（FR-TASK-07）。
@@ -42,20 +49,28 @@ abstract final class OccurrenceSheetKeys {
 
 /// 打开某一行的动作弹层。
 ///
-/// 不重复的任务暂时没有可放的动作，所以**不弹** —— 弹一个空壳
-/// 比不弹更让人以为坏了。
+/// ## 不重复的任务也弹（用户 2026-09-09 定的）
+///
+/// 一度只对重复任务弹，不重复的点一下直接推编辑页 —— 理由写的是
+/// 「不重复的没有可放的动作，弹一个空壳比不弹更让人以为坏了」。
+/// 用户的原话：
+///
+/// > 统一任务点击，无论是否重复任务都出现抽屉选项
+/// > （非重复的任务的选项可以是 完成 和 编辑）
+///
+/// 那个「空壳」的前提不成立了：完成与编辑本来就是两个动作，
+/// 而先前把「编辑」做成了点一下的默认结果、把「完成」赶到卡片左边那个
+/// 小圆钮上 —— **同一行上两个动作，一个要点卡片、一个要点钮**，
+/// 而重复任务那边两个都在弹层里。统一之后哪一种任务都是同一套。
 Future<void> showOccurrenceActions(
   BuildContext context,
   TaskOccurrence row, {
   void Function(String taskId, {String? from})? onEditSeries,
-}) {
-  if (!row.isOccurrence) return Future<void>.value();
-  return showModalBottomSheet<void>(
-    context: context,
-    builder: (context) =>
-        _OccurrenceActionsSheet(row: row, onEditSeries: onEditSeries),
-  );
-}
+}) => showModalBottomSheet<void>(
+  context: context,
+  builder: (context) =>
+      _OccurrenceActionsSheet(row: row, onEditSeries: onEditSeries),
+);
 
 class _OccurrenceActionsSheet extends ConsumerWidget {
   const _OccurrenceActionsSheet({required this.row, this.onEditSeries});
@@ -68,6 +83,7 @@ class _OccurrenceActionsSheet extends ConsumerWidget {
     final text = Theme.of(context).textTheme;
     final actions = ref.read(occurrenceActionsProvider);
     final isSkipped = row.status == TaskStatus.skipped;
+    final isDone = row.status == TaskStatus.done;
 
     return SafeArea(
       key: OccurrenceSheetKeys.sheet,
@@ -93,12 +109,48 @@ class _OccurrenceActionsSheet extends ConsumerWidget {
                   Text(row.title, style: text.titleMedium),
                   // **说清动作作用在哪一次上。** 不写日期的话，
                   // 「跳过」看着像是要停掉整条规则。
-                  Text('${row.planDate}这一次', style: text.bodySmall),
+                  //
+                  // 不重复的任务没有「这一次」这回事 —— 写上去反而
+                  // 让人以为它也是重复的。
+                  Text(
+                    row.isOccurrence
+                        ? '${row.planDate}这一次'
+                        : (row.planDate == null ? '没有日期' : '${row.planDate}'),
+                    style: text.bodySmall,
+                  ),
                 ],
               ),
             ),
             if (row.stages.isNotEmpty) _StageChecklist(row: row),
-            if (onEditSeries != null)
+            // ## 完成：两种任务都有，写法不同
+            //
+            // 不重复的改 `tasks.status`，某一次的写例外
+            // （`ToggleTaskDone` 里那个岔口）。这里只表达意图，
+            // 分流在那边。
+            ListTile(
+              key: OccurrenceSheetKeys.toggleDone,
+              leading: Icon(
+                isDone ? Icons.remove_done : Icons.check_circle_outline,
+              ),
+              title: Text(isDone ? '标为未完成' : '完成'),
+              onTap: () {
+                Navigator.of(context).pop();
+                unawaited(toggleDoneWithUndo(context, ref, row));
+              },
+            ),
+            // 不重复的任务：直接编辑它本身。重复的那两条在下面 ——
+            // 它们要先说清「改的是整条还是从这次起」。
+            if (!row.isOccurrence && onEditSeries != null)
+              ListTile(
+                key: OccurrenceSheetKeys.edit,
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('编辑'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  onEditSeries!(row.taskId);
+                },
+              ),
+            if (row.isOccurrence && onEditSeries != null)
               ListTile(
                 key: OccurrenceSheetKeys.editSeries,
                 leading: const Icon(Icons.edit_outlined),
@@ -111,7 +163,7 @@ class _OccurrenceActionsSheet extends ConsumerWidget {
                   onEditSeries!(row.taskId);
                 },
               ),
-            if (onEditSeries != null && !isSkipped)
+            if (row.isOccurrence && onEditSeries != null && !isSkipped)
               ListTile(
                 key: OccurrenceSheetKeys.editFromHere,
                 leading: const Icon(Icons.call_split),
@@ -124,7 +176,9 @@ class _OccurrenceActionsSheet extends ConsumerWidget {
                   onEditSeries!(row.taskId, from: row.key!.value);
                 },
               ),
-            if (isSkipped)
+            if (!row.isOccurrence)
+              const SizedBox.shrink()
+            else if (isSkipped)
               ListTile(
                 key: OccurrenceSheetKeys.unskip,
                 leading: const Icon(Icons.undo),

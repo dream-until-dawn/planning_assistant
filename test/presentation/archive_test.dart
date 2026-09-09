@@ -58,8 +58,7 @@ Future<void> _createTask(
 }
 
 Future<void> _archiveFromEditor(WidgetTester tester) async {
-  await tester.tap(find.byType(TaskCard).first);
-  await tester.pumpAndSettle();
+  await openEditorFromCard(tester);
   // 重复任务点卡片先弹「改哪一次」——归档改的是**整条任务**，
   // 所以走「编辑整条重复任务」那条。不重复的直接就是编辑页。
   if (find.byKey(OccurrenceSheetKeys.editSeries).evaluate().isNotEmpty) {

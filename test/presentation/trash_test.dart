@@ -58,8 +58,7 @@ Future<void> _backdate(WidgetTester tester, Duration ago) async {
 }
 
 Future<void> _deleteFirst(WidgetTester tester) async {
-  await tester.tap(find.byType(TaskCard));
-  await tester.pumpAndSettle();
+  await openEditorFromCard(tester);
   await tester.tap(find.byKey(TaskEditorPage.deleteButtonKey));
   await tester.pumpAndSettle();
 }
@@ -76,8 +75,7 @@ void main() {
     await _createTask(tester, '买菜');
     expect(find.byType(TaskCard), findsOneWidget);
 
-    await tester.tap(find.byType(TaskCard));
-    await tester.pumpAndSettle();
+    await openEditorFromCard(tester);
     await tester.tap(find.byKey(TaskEditorPage.deleteButtonKey));
     await tester.pumpAndSettle();
 
@@ -95,8 +93,7 @@ void main() {
     await _pumpApp(tester);
     await _createTask(tester, '买菜');
 
-    await tester.tap(find.byType(TaskCard));
-    await tester.pumpAndSettle();
+    await openEditorFromCard(tester);
     await tester.tap(find.byKey(TaskEditorPage.deleteButtonKey));
     await tester.pumpAndSettle();
 

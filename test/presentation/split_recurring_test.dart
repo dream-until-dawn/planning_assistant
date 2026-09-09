@@ -231,8 +231,14 @@ void main() {
 
     await tester.tap(find.byType(TaskCard).first);
     await tester.pumpAndSettle();
-    // 直接进的是编辑页，根本没有弹层。
+
+    // 弹层现在两种任务都弹（用户第①条），所以这条对照验的是
+    // **抽屉里没有那两条**：「本次及以后」按定义作用在某一次上，
+    // 不重复的任务没有「这一次」。
+    expect(find.byKey(OccurrenceSheetKeys.sheet), findsOneWidget);
     expect(find.byKey(OccurrenceSheetKeys.editFromHere), findsNothing);
-    expect(find.text('编辑任务'), findsOneWidget);
+    expect(find.byKey(OccurrenceSheetKeys.editSeries), findsNothing);
+    // 编辑那条在，只是它叫「编辑」，改的就是这一条任务本身。
+    expect(find.byKey(OccurrenceSheetKeys.edit), findsOneWidget);
   });
 }

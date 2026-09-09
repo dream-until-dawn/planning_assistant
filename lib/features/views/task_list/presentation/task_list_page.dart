@@ -5,6 +5,8 @@
 /// 空态不是占位符，它是规格里要求的一屏（§8.2）。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -179,13 +181,14 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
                       ref.read(selectionProvider.notifier).toggle(task.id);
                       return;
                     }
-                    task.isOccurrence
-                        ? showOccurrenceActions(
-                            context,
-                            task,
-                            onEditSeries: widget.onEditTask,
-                          )
-                        : widget.onEditTask?.call(task.taskId);
+                    // **一律弹动作抽屉**（用户第①条，四个视图同一套）。
+                    unawaited(
+                      showOccurrenceActions(
+                        context,
+                        task,
+                        onEditSeries: widget.onEditTask,
+                      ),
+                    );
                   },
                 ),
               ),

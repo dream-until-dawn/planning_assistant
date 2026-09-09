@@ -24,6 +24,7 @@ import 'package:planning_assistant/data/database/dao/synced_dao.dart';
 import 'package:planning_assistant/data/repositories/category_repository_impl.dart';
 import 'package:planning_assistant/data/repositories/settings_repository_impl.dart';
 import 'package:planning_assistant/data/repositories/task_repository_impl.dart';
+import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/domain/commands/command_dispatcher.dart';
 import 'package:planning_assistant/domain/entities/category.dart';
 import 'package:planning_assistant/domain/entities/stage.dart';
@@ -38,6 +39,7 @@ import 'package:planning_assistant/features/views/shared/application/category_pr
 import 'package:planning_assistant/features/views/shared/application/task_providers.dart';
 import 'package:planning_assistant/features/views/shared/presentation/filter_bar.dart';
 import 'package:planning_assistant/features/views/shared/presentation/filter_sheet.dart';
+import 'package:planning_assistant/features/views/task_list/presentation/occurrence_actions_sheet.dart';
 import 'package:planning_assistant/features/views/timeline/application/timeline_providers.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 
@@ -344,6 +346,25 @@ Future<void> tapVisible(WidgetTester tester, Key key) async {
   await tester.pumpAndSettle();
   await tester.tap(finder);
   await tester.pumpAndSettle();
+}
+
+/// 点一行卡片，再从动作抽屉里进编辑页。
+///
+/// 点一下直接进编辑那条路没有了（用户第①条：两种任务同一套动作），
+/// 所以「打开编辑」变成了两步。收成一个夹具 ——
+/// 用例关心的是「编辑页里是什么」，不是抽屉怎么开。
+///
+/// 不重复的任务走「编辑」，某一次走「编辑整条重复任务」。
+Future<void> openEditorFromCard(WidgetTester tester, {Finder? card}) async {
+  await tester.tap(card ?? find.byType(TaskCard).first);
+  await tester.pumpAndSettle();
+  final single = find.byKey(OccurrenceSheetKeys.edit);
+  await tapVisible(
+    tester,
+    single.evaluate().isEmpty
+        ? OccurrenceSheetKeys.editSeries
+        : OccurrenceSheetKeys.edit,
+  );
 }
 
 /// 往库里写一条配置，然后等一帧让它流回界面。

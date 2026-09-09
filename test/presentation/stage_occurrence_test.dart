@@ -101,6 +101,7 @@ Future<void> _goToDay(WidgetTester tester, PlanDate date) async {
 
 /// 打开当天那一行的动作弹层。
 Future<void> _openSheet(WidgetTester tester) async {
+  // 这里要的是**抽屉本身**（在里面勾阶段），不是进编辑页。
   await tester.tap(find.byType(TaskCard).first);
   await tester.pumpAndSettle();
   expect(find.byKey(OccurrenceSheetKeys.sheet), findsOneWidget);
@@ -237,10 +238,7 @@ void main() {
     await _createRecurringStaged(tester);
     final stages = await _stageIds(harness);
 
-    await tester.tap(find.byType(TaskCard).first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(OccurrenceSheetKeys.editSeries));
-    await tester.pumpAndSettle();
+    await openEditorFromCard(tester);
 
     // **先滚到阶段区。** 不滚的话它压根没建出来，
     // 下面那句 `findsNothing` 就是自证（§1.11 那族）。
@@ -279,8 +277,7 @@ void main() {
     }
     await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
-    await tester.tap(find.byType(TaskCard).first);
-    await tester.pumpAndSettle();
+    await openEditorFromCard(tester);
 
     final ids = await _stageIds(harness);
     await tester.scrollUntilVisible(
@@ -315,16 +312,14 @@ void main() {
     await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
     final ids = await _stageIds(harness);
-    await tester.tap(find.byType(TaskCard).first);
-    await tester.pumpAndSettle();
+    await openEditorFromCard(tester);
     await tapVisible(tester, TaskEditorPage.stageDoneKey(ids.first));
     await tapVisible(tester, TaskEditorPage.saveButtonKey);
     expect(find.textContaining('阶段 1/2'), findsOneWidget, reason: '前提：勾上了');
 
     // 改成每天重复。**这一处要真的去拨开关** —— 它是从「不重复」
     // 转成「重复」，而不是新建时就选了重复形态。
-    await tester.tap(find.byType(TaskCard).first);
-    await tester.pumpAndSettle();
+    await openEditorFromCard(tester);
     await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
     await tapVisible(
       tester,
@@ -504,8 +499,7 @@ void main() {
     await tapVisible(tester, TaskEditorPage.addStageKey);
     await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
-    await tester.tap(find.byType(TaskCard));
-    await tester.pumpAndSettle();
+    await openEditorFromCard(tester);
     expect(find.byKey(OccurrenceSheetKeys.sheet), findsNothing);
     expect(find.byKey(TaskEditorPage.titleFieldKey), findsOneWidget);
   });

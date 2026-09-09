@@ -77,8 +77,7 @@ Future<List<String>> _createStaged(WidgetTester tester) async {
 }
 
 Future<void> _reopen(WidgetTester tester) async {
-  await tester.tap(find.byType(TaskCard).first);
-  await tester.pumpAndSettle();
+  await openEditorFromCard(tester);
 }
 
 /// 把任务从「全天」改成「有具体时刻」。

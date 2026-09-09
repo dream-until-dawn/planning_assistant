@@ -733,10 +733,10 @@ String _semanticsLabel(PlanDate date, bool isToday, DayDots dots) {
       '${count == 0 ? '' : '，$count 件事'}';
 }
 
-void _openRow(BuildContext context, TaskOccurrence row, OpenTask? onEditTask) {
-  if (row.isOccurrence) {
-    showOccurrenceActions(context, row, onEditSeries: onEditTask);
-  } else {
-    onEditTask?.call(row.taskId);
-  }
-}
+/// 点一行：**一律弹动作抽屉**（用户第①条）。
+///
+/// 不重复的任务一度是「点一下直接进编辑」—— 于是同一行上「完成」
+/// 要点卡片左边那个小圆钮、「编辑」要点卡片本身，而重复任务那边
+/// 两个动作都在抽屉里。统一之后哪一种任务都是同一套。
+void _openRow(BuildContext context, TaskOccurrence row, OpenTask? onEditTask) =>
+    unawaited(showOccurrenceActions(context, row, onEditSeries: onEditTask));

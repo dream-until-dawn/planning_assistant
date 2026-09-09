@@ -20,6 +20,8 @@
 /// 比给每根条套一个 `GestureDetector` 省得多。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -251,13 +253,10 @@ class _GanttViewState extends ConsumerState<GanttView> {
     return offset;
   }
 
-  void _open(TaskOccurrence row) {
-    if (row.isOccurrence) {
-      showOccurrenceActions(context, row, onEditSeries: widget.onEditTask);
-    } else {
-      widget.onEditTask?.call(row.taskId);
-    }
-  }
+  /// 点一根条：**一律弹动作抽屉**（用户第①条，四个视图同一套）。
+  void _open(TaskOccurrence row) => unawaited(
+    showOccurrenceActions(context, row, onEditSeries: widget.onEditTask),
+  );
 }
 
 /// 泳道表头（§4.2「吸顶」）。

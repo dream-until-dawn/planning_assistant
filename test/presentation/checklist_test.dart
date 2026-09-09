@@ -65,8 +65,7 @@ Future<void> _createWithChecklist(
 }
 
 Future<void> _reopen(WidgetTester tester) async {
-  await tester.tap(find.byType(TaskCard).first);
-  await tester.pumpAndSettle();
+  await openEditorFromCard(tester);
 }
 
 /// 把清单区滚进视野。
