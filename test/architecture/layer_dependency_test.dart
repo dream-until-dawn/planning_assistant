@@ -726,21 +726,47 @@ import
     );
   });
 
-  test('两条视图侧 lint 的白名单文件都真的存在（防止白名单变僵尸）', () {
+  test('两条视图侧 lint 的白名单文件都在，而且真的还在做被豁免的那件事', () {
     // 白名单锚的是文件名。文件改了名而白名单没跟着改的话，
     // 那一条豁免会**静默失效**：守卫开始扫一个本该豁免的文件，
     // 或者更糟 —— 一条早就不存在的豁免留在表里，
     // 下一个人以为它还在挡着什么。
-    const named = {
-      'task_occurrence.dart',
-      'occurrence_expansion.dart',
-      'stage_occurrence_status.dart',
+    //
+    // ## 「存在」不够，还要「真的在做」
+    //
+    // 这一层是从 `SnackBarAction` 那条名单推广过来的（评审提的，
+    // 而那正是 §1.11.1「第二次写下同类理由时就该归并」的用法 ——
+    // 这已经是第三处名单了）。
+    //
+    // 只验存在的话，**被豁免的行为搬走之后，豁免会指着一个空文件**：
+    // 文件还在、检查还绿，而它豁免的那件事已经没人做了。
+    // 下一个人在那个文件里新写一处，名单不会拦 ——
+    // 一条本该早就删掉的豁免，把整块地方重新开放了。
+    //
+    // 所以每条豁免都带上**它被豁免的那个模式**，两样一起验。
+    final exemptions = <String, RegExp>{
+      // `endDate` lint：派生跨度的定义处与它的上游。
+      'task_occurrence.dart': RegExp(
+        r'\b(row|task|occurrence)\.(endDate|endMinute)\b',
+      ),
+      'occurrence_expansion.dart': RegExp(
+        r'\b(row|task|occurrence)\.(endDate|endMinute)\b',
+      ),
+      // `stage.status` lint：分流本身住在这儿。
+      'stage_occurrence_status.dart': RegExp(r'\b(stage|s)\.status\b'),
     };
+
     final present = {
-      for (final f in _dartFiles('lib')) _norm(f.path).split('/').last,
+      for (final f in _dartFiles('lib')) _norm(f.path).split('/').last: f,
     };
-    for (final name in named) {
-      expect(present, contains(name), reason: '白名单里的 $name 已经不存在了');
+    for (final MapEntry(key: name, value: pattern) in exemptions.entries) {
+      final file = present[name];
+      expect(file, isNotNull, reason: '白名单里的 $name 已经不存在了');
+      expect(
+        pattern.hasMatch(file!.readAsStringSync()),
+        isTrue,
+        reason: '$name 里已经没有 ${pattern.pattern} 了 —— 这条豁免该删',
+      );
     }
   });
 
@@ -1083,7 +1109,11 @@ import
     const allowedDaoWriters = {
       // DAO 基类与各表 DAO 自身。
       'data/database/dao/synced_dao.dart',
-      'data/database/dao/table_daos.dart',
+      // `table_daos.dart` **不在这儿**：它只声明每张表的表名 / 实体类型 /
+      // 主键怎么取，写库全在 `SyncedDao` 基类里（那个文件头一句就写着）。
+      // 它一度挂在这张名单上，是一条**从没用上的豁免** ——
+      // 加强版反僵尸守卫（「不只是文件在，还要真的在做那件事」）
+      // 头一次跑就把它挑出来了。
       // 导入导出与回放走裸 SQL，不经 DAO —— 它们是「恢复」不是「操作」，
       // 不该再写一遍 outbox。见各自文件的头部注释。
       'data/dto/export_bundle.dart',
@@ -1153,22 +1183,37 @@ import
     );
   });
 
-  test('上面那条白名单里的文件确实存在 —— 防止白名单变成僵尸', () {
+  test('上面那条白名单里的文件都在，而且真的还在写库 —— 防止白名单变僵尸', () {
     // 白名单条目对应的文件被删或改名后，那一条就永远匹配不上，
     // 于是守卫在那个位置**静默失效**。这是守卫本身最常见的烂法。
+    //
+    // 「存在」之外还验「真的在写」，理由同视图侧那条：
+    // 写库的代码搬走之后，豁免会指着一个不再写库的文件，
+    // 而下一个人在那儿新写一处，名单不会拦。
     const whitelisted = [
       'lib/domain/commands/command_dispatcher.dart',
       'lib/data/repositories/task_repository_impl.dart',
       'lib/data/database/dao/synced_dao.dart',
-      'lib/data/database/dao/table_daos.dart',
       'lib/data/dto/export_bundle.dart',
       'lib/data/outbox/change_log_replayer.dart',
     ];
-    final missing = [
-      for (final f in whitelisted)
-        if (!File(f).existsSync()) f,
-    ];
-    expect(missing, isEmpty, reason: '白名单指向已不存在的文件：$missing');
+    // 判据放得比 lint 本身宽：只问「这个文件里还有写库这回事吗」。
+    // 卡死具体方法名的话，重构一次方法名这条就会红，
+    // 而那时它报的不是「豁免过期了」，是「我认得的名字变了」。
+    final writeish = RegExp(
+      r'\b(insert|update|delete|upsert|write|save|replace|softDelete|'
+      r'purge|restore|dispatch)\w*\s*\(',
+      caseSensitive: false,
+    );
+    for (final path in whitelisted) {
+      final file = File(path);
+      expect(file.existsSync(), isTrue, reason: '白名单指向已不存在的文件：$path');
+      expect(
+        writeish.hasMatch(file.readAsStringSync()),
+        isTrue,
+        reason: '$path 里已经看不到写库了 —— 这条豁免该删',
+      );
+    }
   });
 }
 
