@@ -1,16 +1,34 @@
-/// 六张空态插画的**视觉回归**（design-system §8.2、FR-VIEW-02 验收）。
+/// 六张空态插画（design-system §8.2、FR-VIEW-02 验收）。
 ///
-/// ## 为什么这一族非拍图不可
+/// ## 金标与断言各管什么
 ///
-/// 别的组件还能用断言型测试兜一层（触控尺寸、约束、反差）。
-/// 插画不行：**它的正确性就是「看起来对不对」**，
-/// 而「一个 `Path` 画出来是不是一朵云」没有任何非图像的判据。
+/// | | 金标 | 反差断言 |
+/// |---|---|---|
+/// | 管 | 构图：认不认得出是一朵云、六张像不像一套、有没有画出画布 | 线条在色斑上看不看得见 |
+/// | 判据 | **没有**——只能人看 | 反差是个数 |
+/// | 红了怎么办 | 人看图确认是否有意 | 去改 token |
 ///
-/// 所以这里只拍图，红了就人去看。要它挡住的是：
+/// **金标的存在理由是「没有非图像的判据」**，不是「反差断言抓不住」。
+/// 这个区别要紧：反差断言其实**抓得住** token 相关的问题（下面那段
+/// 有实测），照「历史上是金标先抓到的」去论证，将来有人补齐断言之后
+/// 就会推出「金标冗余」——而它管的构图那一半，一条数都写不出来。
 ///
-///  · 手滑改坐标把某一笔画到画布外（那在代码里完全看不出来）；
-///  · 换 token 之后色斑与线条的反差塌掉；
-///  · 深色模式下线条与色斑贴到一起。
+/// ## 一个实测，把上面那张表钉住
+///
+/// 第一版用的是「色斑 `brandFill` + 线条 `brandGraphic`」。
+/// 把 `blobOf` 改回 `brandFill` 重跑反差断言：
+///
+/// ```
+/// light：线条在色斑上看得见 [E]  Actual: <1.94>
+/// dark ：线条在色斑上看得见 [E]  Actual: <1.0>
+/// ```
+///
+/// 两个主题**都红**。深色下是 1.0 —— `AppTheme.dark()` 把
+/// brandFill / brandGraphic / brandText 设成了同一个值。
+///
+/// 而当时金标只让**深色**那张显出问题（六个纯色块，一眼可见）；
+/// 浅色那张 1.94 看着完全正常，**人是看不出来的**。
+/// 也就是说这两样谁也不比谁强，管的是不同的东西。
 ///
 /// 一张图放齐六张画 × 明暗两套 —— 分开拍的话，改一个共用常数
 /// （比如线宽）要看十二张才知道影响面。
@@ -67,24 +85,29 @@ void main() {
   }
 
   group('线条与色斑的反差（§10.2 图形级 ≥3:1）', () {
-    // ## 这一组是**两次翻车**留下的
+    // ## 这一组问的是「**这个组件用的那一对**够不够」
     //
-    //  1. 第一版「色斑 `brandFill`、线条 `brandGraphic`」——
-    //     `AppTheme.dark()` 把这两个 token 设成了同一个值，
-    //     深色下六张画全成了纯色块。**金标拍出来了，但那是人看出来的。**
-    //  2. 第二版改成「同色的两个透明度」，以为反差就与 token 无关了。
-    //     浅色下只有 2.85:1 —— 那一次是这几条断言拦下的，不是眼睛。
+    // 第一稿把 token 又抄了一遍（`primaryGraphic` / `sunken` 直接写在
+    // 断言里）。那样验的是「某一对 token 的反差」——组件改用别的 token
+    // 时，这条断言**照旧绿着**，因为它根本不知道组件改了。
+    // 而这一组存在的全部理由，就是挡住组件选错 token。
     //
-    // 金标管「画得像不像」（没有非图像的判据），这里管「看不看得见」
-    // （反差是个数，数就该断言）。两者缺一不可。
+    // 所以改成读 `EmptyIllustration.blobOf/inkOf`：两边同一处来源，
+    // 断言才真的跟着组件走。评审追问金标与断言的分工时翻出来的。
 
-    for (final (name, ink, blob) in [
-      ('light', BrandColors.primaryGraphic, SurfaceColors.sunken),
-      ('dark', BrandColors.primaryDark, SurfaceColors.sunkenDark),
+    int rgb(Color c) => c.toARGB32() & 0xFFFFFF;
+
+    for (final (name, theme) in [
+      ('light', AppTheme.light()),
+      ('dark', AppTheme.dark()),
     ]) {
       test('$name：线条在色斑上看得见', () {
+        final colors = theme.extension<AppSemanticColors>()!;
         expect(
-          contrastRatio(ink, blob),
+          contrastRatio(
+            rgb(EmptyIllustration.inkOf(colors)),
+            rgb(EmptyIllustration.blobOf(colors)),
+          ),
           greaterThanOrEqualTo(3),
           reason: '$name 下线条淹在色斑里了',
         );
@@ -93,7 +116,9 @@ void main() {
 
     test('对照组：同色时这条断言会红', () {
       // 少了这条，一个恒返回 10 的 `contrastRatio` 能让上面全绿 ——
-      // 而「两个 token 恰好相等」正是第一次翻车的形状。
+      // 而「两个 token 恰好相等」正是第一次翻车的形状：
+      // `AppTheme.dark()` 把 brandFill / brandGraphic / brandText
+      // 设成了同一个值。
       expect(
         contrastRatio(BrandColors.primaryDark, BrandColors.primaryDark),
         1,

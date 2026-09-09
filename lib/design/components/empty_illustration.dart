@@ -70,6 +70,22 @@ class EmptyIllustration extends StatelessWidget {
   /// 画布边长。所有坐标都按这个尺寸写死，缩放交给 `CustomPaint`。
   static const double size = 120;
 
+  /// 色斑用哪个 token。
+  ///
+  /// ## 为什么是两个公开的函数，而不是直接写在 [build] 里
+  ///
+  /// 反差断言要验的是「**这个组件实际用的那一对**够不够 3:1」。
+  /// 断言里把 token 再抄一遍的话，它验的是「某一对 token 的反差」——
+  /// 组件改用别的 token 时，那条断言**照旧绿着**，因为它根本不知道
+  /// 组件改了。这一版第一稿就是那样写的，评审追问「金标与断言的分工」
+  /// 时才发现：断言与组件之间没有任何连接。
+  ///
+  /// 拿出来之后，两边读的是同一处，断言才真的跟着组件走。
+  static Color blobOf(AppSemanticColors colors) => colors.sunken;
+
+  /// 线条用哪个 token。见 [blobOf]。
+  static Color inkOf(AppSemanticColors colors) => colors.brandGraphic;
+
   @override
   Widget build(BuildContext context) {
     final colors = context.appColors;
@@ -97,8 +113,13 @@ class EmptyIllustration extends StatelessWidget {
           //    浅色下只有 **2.85:1** —— `primaryGraphic` 自己对白底才 3.35，
           //    再拿它的淡色版当底，怎么调 alpha 都挤不出 3:1。
           //    那次是反差断言拦下的，不是眼睛。
-          blob: colors.sunken,
-          ink: colors.brandGraphic,
+          //
+          // 事后把 `blobOf` 改回 `brandFill` 重跑过：**两个主题都红**
+          // （浅色 1.94、深色 1.0）。当时金标只让深色那张显出问题，
+          // 浅色那张 1.94 看着完全正常 —— 所以第一次翻车之所以是金标
+          // 抓到的，只是因为那时这几条断言还不存在。
+          blob: blobOf(colors),
+          ink: inkOf(colors),
         ),
       ),
     );
