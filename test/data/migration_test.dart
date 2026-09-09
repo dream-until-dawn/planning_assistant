@@ -74,7 +74,7 @@ void main() {
     driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
   });
 
-  test('当前表定义与 v1 快照逐列一致', () async {
+  test('FR-DATA-05 当前表定义与 v1 快照逐列一致', () async {
     final fromCode = AppDatabase(NativeDatabase.memory());
     final fromSnapshot = AppDatabase(await verifier.startAt(1));
     addTearDown(fromCode.close);

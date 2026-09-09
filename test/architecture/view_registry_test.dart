@@ -20,7 +20,7 @@ import 'package:planning_assistant/features/settings/application/registry.dart';
 import 'package:planning_assistant/features/views/shared/application/view_kind.dart';
 
 void main() {
-  group('每个视图都有明确归属', () {
+  group('NFR-MAINT-03 每个视图都有明确归属', () {
     test('注册表 ∪ 未实现名单 = 全部枚举值', () {
       final accounted = {...viewRegistry.keys, ...unimplementedViews};
       final missing = ViewKind.values.toSet().difference(accounted);

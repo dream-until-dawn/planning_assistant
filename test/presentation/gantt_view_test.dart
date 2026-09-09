@@ -76,7 +76,7 @@ GanttPainter _painter(WidgetTester tester) =>
         as GanttPainter;
 
 void main() {
-  group('画出来的东西与布局对得上', () {
+  group('FR-VIEW-04 画出来的东西与布局对得上', () {
     testAppWidgets('一根条的矩形高度 = 跨度 × 比例', (tester) async {
       await _pump(tester, tasks: [_task('出差', to: 2)]);
       final painter = _painter(tester);

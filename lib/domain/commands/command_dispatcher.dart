@@ -7,7 +7,9 @@ library;
 
 import '../../core/patch/unset.dart';
 import '../../core/time/clock.dart';
+import '../../core/time/minute_of_day.dart';
 import '../../core/time/time_zone_resolver.dart';
+import '../entities/checklist_item.dart';
 import '../entities/occurrence.dart';
 import '../entities/occurrence_override.dart';
 import '../entities/stage.dart';
@@ -16,6 +18,8 @@ import '../entities/task.dart';
 import '../policies/task_lifecycle.dart';
 import '../recurrence/recurrence_engine.dart';
 import '../repositories/task_repository.dart';
+import '../services/all_day_conversion.dart';
+import '../services/recurrence_conversion.dart';
 import '../value_objects/occurrence_key.dart';
 import '../value_objects/recurrence.dart';
 import '../value_objects/task_status.dart';
@@ -97,6 +101,10 @@ final class CommandDispatcher {
         await _completeWithStages(command);
       case SetStageOccurrenceStatusCommand():
         await _setStageOccurrenceStatus(command);
+      case ReplaceChecklistCommand():
+        await _replaceChecklist(command);
+      case ConvertTaskAllDayModeCommand():
+        await _convertAllDayMode(command);
     }
   }
 
@@ -263,27 +271,49 @@ final class CommandDispatcher {
     final task = await _require(c.taskId);
     // 命令里的哨兵语义（不传 = 不改，显式 null = 清空）直接传给 copyWith，
     // 两边用的是同一套约定。
-    await _repo.saveTask(
-      task.copyWith(
-        title: c.title,
-        note: c.note,
-        categoryId: c.categoryId,
-        priority: c.priority,
-        planDate: c.planDate,
-        startMinute: c.startMinute,
-        endDate: c.endDate,
-        endMinute: c.endMinute,
-        // 规则串在这里规范化。哨兵原样透传 —— 命令与实体共用同一个 [unset]，
-        // 所以「不改」不需要在中间翻译一道。
-        recurrence: identical(c.recurrenceRule, unset)
-            ? unset
-            : (c.recurrenceRule == null
-                  ? null
-                  : Recurrence.parse(c.recurrenceRule! as String)),
-        colorArgb: c.colorArgb,
-        icon: c.icon,
-        sortOrder: c.sortOrder,
-      ),
+    final updated = task.copyWith(
+      title: c.title,
+      note: c.note,
+      categoryId: c.categoryId,
+      priority: c.priority,
+      planDate: c.planDate,
+      startMinute: c.startMinute,
+      endDate: c.endDate,
+      endMinute: c.endMinute,
+      // 规则串在这里规范化。哨兵原样透传 —— 命令与实体共用同一个 [unset]，
+      // 所以「不改」不需要在中间翻译一道。
+      recurrence: identical(c.recurrenceRule, unset)
+          ? unset
+          : (c.recurrenceRule == null
+                ? null
+                : Recurrence.parse(c.recurrenceRule! as String)),
+      colorArgb: c.colorArgb,
+      icon: c.icon,
+      sortOrder: c.sortOrder,
+    );
+
+    // **改重复规则会改变「阶段状态该读哪一份」**（FR-TASK-07）。
+    //
+    // 不重复看 `Stage.status`，重复看 `stage_occurrence_states` ——
+    // 于是 null ⇄ 非 null 那一刻，用户勾过的进度会**当场从界面上消失**
+    // （数据没丢，只是读路径改看另一张空表了）。
+    //
+    // 与 R-27 同一个模式：身份变了就显式迁移，不让读路径去猜。
+    final migration = convertRecurrenceMode(
+      updated,
+      was: task.isRecurring,
+      stages: await _repo.findStagesOfTask(c.taskId),
+      states: await _repo.findStageStatesOfTask(c.taskId),
+    );
+    if (migration == null) {
+      await _repo.saveTask(updated);
+      return;
+    }
+    // 一个事务：任务改了而阶段没迁的话，那段时间里读到的是空进度。
+    await _repo.applyRecurrenceConversion(
+      updated,
+      migration.stages,
+      migration.states,
     );
   }
 
@@ -294,6 +324,76 @@ final class CommandDispatcher {
     // 阶段任务标完成时必须连阶段一起处理，否则父子状态不一致。
     // 这里只处理「非完成」的迁移；完成走 CompleteTaskWithStagesCommand。
     await _repo.saveTask(updated);
+  }
+
+  /// 全天 ⇄ 定时切换（R-27）。
+  ///
+  /// 判断与迁移全在纯函数 `convertAllDayMode` 里，这里只负责取数与落盘。
+  /// **已经是那个形态时直接返回** —— 不是「无害地再写一遍」：
+  /// 再写一遍会把所有例外原地删了重建，白白产生一批墓碑与新行，
+  /// 而 V3 对端要为这些什么也没变的行做一轮合并。
+  Future<void> _convertAllDayMode(ConvertTaskAllDayModeCommand c) async {
+    final task = await _require(c.taskId);
+    if (task.isAllDay == c.toAllDay) return;
+
+    await _repo.applyAllDayConversion(
+      convertAllDayMode(
+        task,
+        toAllDay: c.toAllDay,
+        // **回落 00:00 的规则只有一处**：`Task.wallStart` 里那句
+        // `startMinute ?? MinuteOfDay.midnight`。定时任务不填时刻时，
+        // 引擎展开出来的 key 就是 `T00:00` —— 这里算迁移后的 key 时
+        // 必须用同一条，否则迁完的例外挂在一个不存在的时刻上。
+        startMinute: c.toAllDay
+            ? null
+            : (c.startMinute ?? MinuteOfDay.midnight),
+        overrides: await _repo.findOverridesOfTask(c.taskId),
+        stageStates: await _repo.findStageStatesOfTask(c.taskId),
+      ),
+    );
+  }
+
+  /// 整表替换清单项（FR-TASK-09）。
+  ///
+  /// 与 `_replaceStages` 同一个形状，**少一条约束**：清单没有
+  /// 「至少两项」的要求 —— 一项是完全正常的（「记得带伞」）。
+  /// 顺序仍然要求连续从 0 开始：断号的话「上移一位」这类操作
+  /// 会跳格，而那是界面看不出来的错。
+  Future<void> _replaceChecklist(ReplaceChecklistCommand c) async {
+    _requireContiguousChecklistOrder(c.items);
+    await _require(c.taskId);
+
+    final existing = await _repo.findChecklistOfTask(
+      c.taskId,
+      scope: TaskScope.all,
+    );
+    final incoming = {for (final i in c.items) i.id};
+
+    await _repo.saveChecklist(c.taskId, [
+      for (final i in c.items)
+        ChecklistItem(
+          id: i.id,
+          taskId: c.taskId,
+          title: i.title,
+          orderIndex: i.orderIndex,
+          isDone: i.isDone,
+        ),
+      // 不在新列表里的旧项打墓碑，不物理删（同阶段）。
+      for (final old in existing)
+        if (!incoming.contains(old.id) && old.deletedAt == null)
+          old.copyWith(deletedAt: _now()),
+    ]);
+  }
+
+  void _requireContiguousChecklistOrder(List<ChecklistItemSpec> items) {
+    final order = [for (final i in items) i.orderIndex]..sort();
+    for (var i = 0; i < order.length; i++) {
+      if (order[i] != i) {
+        throw DomainInvariantViolation(
+          '清单项的 orderIndex 必须是连续的 0..${items.length - 1}，实得 $order',
+        );
+      }
+    }
   }
 
   Future<void> _replaceStages(ReplaceStagesCommand c) async {
@@ -308,6 +408,21 @@ final class CommandDispatcher {
     final incoming = {for (final s in c.stages) s.id};
     final before = {for (final s in existing) s.id: s};
 
+    // **重复任务的 `Stage.status` 恒为 pending。**
+    //
+    // 那一列对重复任务没人读（状态按每一次存，判据见 `stageStatusFor`）。
+    // 让它带着 done 落库，就是留下一个能被写、写了没人看的字段 ——
+    // 而这种字段下一个人一定会去写它。
+    //
+    // **归一化而不是抛异常**：编辑器把一条已完成的单项任务改成重复时，
+    // 它手上那份草稿还带着 done（草稿是任务还不重复时读的），
+    // 抛的话这条最普通的编辑就存不下去。
+    // 那份 done **不会丢** —— `_updateFields` 里的
+    // `convertRecurrenceMode` 已经先把它搬到第一次发生上了，
+    // 而那条命令排在这一条之前。
+    TaskStatus statusOf(StageSpec s) =>
+        task.isRecurring ? TaskStatus.pending : s.status;
+
     final stages = <Stage>[
       for (final s in c.stages)
         Stage(
@@ -318,14 +433,14 @@ final class CommandDispatcher {
           startOffsetMinutes: s.startOffsetMinutes,
           durationMinutes: s.durationMinutes,
           colorArgb: s.colorArgb,
-          status: s.status,
+          status: statusOf(s),
           // **本来就完成着的，保留原来的完成时刻。**
           //
           // 一律盖成 `_now()` 的话，用户改一下任务标题，所有已完成阶段的
           // 完成时间都变成「刚刚」—— 而这条整表写回是每次保存都跑的。
           // 表现是「上周做完的事显示成刚做完」，没人会去查这个字段，
           // 但它是导出与将来同步时的真实数据。
-          completedAt: s.status == TaskStatus.done
+          completedAt: statusOf(s) == TaskStatus.done
               ? (before[s.id]?.status == TaskStatus.done
                     ? before[s.id]!.completedAt
                     : _now())

@@ -15,6 +15,7 @@ import '../../../core/patch/unset.dart';
 import '../../../core/time/minute_of_day.dart';
 import '../../../core/time/plan_date.dart';
 import '../../../domain/commands/task_command.dart';
+import '../../../domain/entities/checklist_item.dart';
 import '../../../domain/entities/stage.dart';
 import '../../../domain/entities/task.dart';
 import '../../../domain/value_objects/occurrence_key.dart';
@@ -33,6 +34,30 @@ import 'recurrence_draft.dart';
 /// 混用一个类型的话，每次增删都得立刻重排一遍 orderIndex，
 /// 而中间任何一步出错都会写出不连续的序号 —— 那是领域层会直接拒绝的。
 @immutable
+/// 编辑器里的一条清单项（FR-TASK-09）。
+///
+/// **比 [StageDraft] 少的东西就是它的定义**：没有时间偏移、没有时长。
+/// 清单项「不参与时间排布」（术语表），少这两个字段不是省略，
+/// 是它跟阶段的分界线 —— 哪天有人给它加上 `startOffsetMinutes`，
+/// 它就变成了第二种阶段。
+final class ChecklistDraft {
+  const ChecklistDraft({
+    required this.id,
+    this.title = '',
+    this.isDone = false,
+  });
+
+  final String id;
+  final String title;
+  final bool isDone;
+
+  ChecklistDraft copyWith({String? title, bool? isDone}) => ChecklistDraft(
+    id: id,
+    title: title ?? this.title,
+    isDone: isDone ?? this.isDone,
+  );
+}
+
 final class StageDraft {
   const StageDraft({
     required this.id,
@@ -105,7 +130,9 @@ final class TaskDraft {
     this.categoryId,
     this.priority = TaskPriority.normal,
     this.stages = const [],
+    this.checklist = const [],
     this.recurrence = const RecurrenceDraft(),
+    this.initialIsAllDay,
   });
 
   /// 正在编辑哪条任务。**null = 新建**。
@@ -168,6 +195,27 @@ final class TaskDraft {
   /// 与单项任务毫无区别。界面上由 [canSave] 挡住。
   final List<StageDraft> stages;
 
+  /// 清单项（FR-TASK-09）。
+  final List<ChecklistDraft> checklist;
+
+  /// 打开这张表单时任务是不是全天的。**新建时为 null。**
+  ///
+  /// 保存时用它判断要不要发 `ConvertTaskAllDayModeCommand`（R-27）——
+  /// 那条命令会把已有例外的 key 全部迁一遍，只在**真的换了形态**时发。
+  /// 拿 `isEditing` 当条件的话，每次保存都迁一遍，白白造一批墓碑。
+  final bool? initialIsAllDay;
+
+  /// 这次保存有没有换形态。
+  bool get allDayModeChanged =>
+      initialIsAllDay != null && initialIsAllDay != isAllDay;
+
+  /// 有效清单项：标题非空的那些。同 [filledStages] ——
+  /// 点了「加一项」还没打字的空行不该落库。
+  List<ChecklistDraft> get filledChecklist => [
+    for (final i in checklist)
+      if (i.title.trim().isNotEmpty) i,
+  ];
+
   /// 有效阶段：标题非空的那些。
   ///
   /// 空白行不算 —— 用户点了「加阶段」还没来得及打字，那不该算一个阶段。
@@ -180,6 +228,14 @@ final class TaskDraft {
 
   /// 重复规则（FR-TASK-03/04）。
   final RecurrenceDraft recurrence;
+
+  /// 这条任务重不重复。
+  ///
+  /// **界面表达不了的规则也算重复**（`unsupportedRecurrence`）——
+  /// 那条规则确实在，只是这个编辑器改不了它。
+  /// 漏掉它的话，一条 `BYSETPOS` 的重复任务会被当成不重复，
+  /// 于是又显示出那个对它没有意义的阶段勾选框。
+  bool get isRecurring => recurrence.enabled || unsupportedRecurrence != null;
 
   /// 重复任务**必须有日期**：RRULE 的展开以 DTSTART 为锚点，
   /// 没有起点就无从展开。与「非全天必须有日期」是同一类约束。
@@ -262,6 +318,8 @@ final class TaskDraft {
     Object? categoryId = unset,
     TaskPriority? priority,
     List<StageDraft>? stages,
+    List<ChecklistDraft>? checklist,
+    bool? initialIsAllDay,
     RecurrenceDraft? recurrence,
   }) => TaskDraft(
     editingTaskId: editingTaskId,
@@ -283,6 +341,8 @@ final class TaskDraft {
     categoryId: patch(categoryId, this.categoryId),
     priority: priority ?? this.priority,
     stages: stages ?? this.stages,
+    checklist: checklist ?? this.checklist,
+    initialIsAllDay: initialIsAllDay ?? this.initialIsAllDay,
     recurrence: recurrence ?? this.recurrence,
   );
 }
@@ -296,6 +356,7 @@ final class TaskDraft {
 TaskDraft draftFromTask(
   Task task,
   List<Stage> stages, {
+  List<ChecklistItem> checklist = const [],
   OccurrenceKey? splitAt,
 }) {
   final recurrence = task.recurrence;
@@ -330,7 +391,12 @@ TaskDraft draftFromTask(
           status: s.status,
         ),
     ],
+    checklist: [
+      for (final i in checklist)
+        ChecklistDraft(id: i.id, title: i.title, isDone: i.isDone),
+    ],
     recurrence: restored ?? const RecurrenceDraft(),
+    initialIsAllDay: task.isAllDay,
   );
 }
 
@@ -399,6 +465,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     return draftFromTask(
       task,
       ref.read(stagesByTaskProvider)[task.id] ?? const [],
+      checklist: ref.read(checklistByTaskProvider)[task.id] ?? const [],
       splitAt: ref.read(editingSplitAtProvider),
     );
   }
@@ -486,6 +553,35 @@ final class TaskEditorController extends Notifier<TaskDraft> {
   }
 
   /// 加一个空阶段行。
+  /// 加一条清单项（FR-TASK-09）。
+  void addChecklistItem() => state = state.copyWith(
+    checklist: [
+      ...state.checklist,
+      ChecklistDraft(id: ref.read(idGeneratorProvider).newId()),
+    ],
+  );
+
+  void setChecklistTitle(String id, String title) => state = state.copyWith(
+    checklist: [
+      for (final i in state.checklist)
+        if (i.id == id) i.copyWith(title: title) else i,
+    ],
+  );
+
+  void setChecklistDone(String id, bool done) => state = state.copyWith(
+    checklist: [
+      for (final i in state.checklist)
+        if (i.id == id) i.copyWith(isDone: done) else i,
+    ],
+  );
+
+  void removeChecklistItem(String id) => state = state.copyWith(
+    checklist: [
+      for (final i in state.checklist)
+        if (i.id != id) i,
+    ],
+  );
+
   void addStage() => state = state.copyWith(
     stages: [
       ...state.stages,
@@ -644,6 +740,60 @@ final class TaskEditorController extends Notifier<TaskDraft> {
         );
   }
 
+  /// 全天 ⇄ 定时的切换（R-27）。
+  ///
+  /// **形态变没变由 dispatcher 判，这里不判。**
+  /// 一度在这儿加了一道 `if (!draft.allDayModeChanged) return`，
+  /// 变异演练里去掉它测试全绿 —— 查下去发现它是**重复的判断**：
+  /// dispatcher 里那道 `task.isAllDay == c.toAllDay` 已经挡住了，
+  /// 而且它比这一道**更对**：它比的是库里当前的状态，
+  /// 这一道比的是打开表单那一刻的快照。
+  /// 两处判同一件事，迟早改了一处忘了另一处。
+  ///
+  /// （`draft.allDayModeChanged` 留着 —— 界面用它显示那句提示。）
+  ///
+  /// 时刻传 `draft.startMinute`，可能是 null —— 那时 dispatcher 回落到
+  /// 00:00，与 `Task.startWallTime` 里那条 `?? midnight` 是同一条规则。
+  Future<void> _convertAllDayMode(String taskId, TaskDraft draft) {
+    return ref
+        .read(taskCommandDispatcherProvider)
+        .dispatch(
+          ConvertTaskAllDayModeCommand(
+            taskId: taskId,
+            toAllDay: draft.isAllDay,
+            startMinute: draft.isAllDay ? null : draft.startMinute,
+          ),
+        );
+  }
+
+  /// 把清单整表写回（FR-TASK-09）。
+  ///
+  /// **编辑时也要发，而且没有项时要发一条空的** —— 与阶段同一个理由：
+  /// 用户把清单全删了，不发这条的话库里那些原地不动，
+  /// 界面显示没有、库里还有。
+  Future<void> _replaceChecklist(String taskId, TaskDraft draft) {
+    final items = draft.filledChecklist;
+    if (!draft.isEditing && items.isEmpty) {
+      return Future<void>.value();
+    }
+    return ref
+        .read(taskCommandDispatcherProvider)
+        .dispatch(
+          ReplaceChecklistCommand(
+            taskId: taskId,
+            items: [
+              for (final (i, item) in items.indexed)
+                ChecklistItemSpec(
+                  id: item.id,
+                  title: item.title.trim(),
+                  orderIndex: i,
+                  isDone: item.isDone,
+                ),
+            ],
+          ),
+        );
+  }
+
   /// 草稿里的重复规则 → 库里存的规范形串。
   ///
   /// **这个界面表达不了的规则原样带回去**：编辑一条
@@ -714,6 +864,21 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     }
 
     if (draft.isEditing) {
+      // **形态切换必须排在改字段之前**（R-27）。
+      //
+      // 两个理由，第二个是撞出来的：
+      //
+      //  1. 迁移 key 要按任务**当前**的形态去读旧例外。改字段先跑的话，
+      //     任务已经是新形态，而例外还挂着旧 key。
+      //  2. `UpdateTaskFieldsCommand` 会带上 `startMinute`，而库里那条
+      //     还是全天 —— 于是 `checkInvariants` 当场抛
+      //     「是全天任务却带 startMinute」。也就是说：**关掉「全天」、
+      //     选个时刻、保存**，这条最普通不过的编辑会直接崩。
+      //
+      // 第 2 条是 R-52 的用例撞出来的。R-27 自己那批测试没覆盖它：
+      // 它们要么只验开关能拨（没保存），要么直接发命令（没走编辑器
+      // 这条「改形态 + 改字段」同时发生的路）。
+      await _convertAllDayMode(id, draft);
       await ref
           .read(taskCommandDispatcherProvider)
           .dispatch(
@@ -733,6 +898,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
             ),
           );
       await _replaceStages(id, draft);
+      await _replaceChecklist(id, draft);
       return id;
     }
 
@@ -747,6 +913,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     // 而「建任务」与「设阶段」本来就是两件可以分别发生的事
     // （改已有任务的阶段时只发后一条）。
     await _replaceStages(id, draft);
+    await _replaceChecklist(id, draft);
 
     return id;
   }

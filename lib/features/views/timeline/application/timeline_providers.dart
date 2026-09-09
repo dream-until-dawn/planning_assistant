@@ -52,6 +52,7 @@ final timelineOccurrencesProvider = Provider<List<TaskOccurrence>>((ref) {
         window: DateRange(date, date),
         // 阶段进来算有效跨度（§4.7）—— 四视图共用同一个答案。
         stagesByTask: ref.watch(stagesByTaskProvider),
+        stageStatesByTask: ref.watch(stageStatesByTaskProvider),
         engine: RecurrenceEngine(ref.watch(timeZoneResolverProvider)),
         // 跳过的那次默认不出现（FR-TASK-05），显式筛「已跳过」才现身。
         includeSkipped: filter.statuses.contains(TaskStatus.skipped),

@@ -71,6 +71,9 @@ sealed class TaskCommand {
         CompleteTaskWithStagesCommand.fromJson(json),
       SetStageOccurrenceStatusCommand.kType =>
         SetStageOccurrenceStatusCommand.fromJson(json),
+      ReplaceChecklistCommand.kType => ReplaceChecklistCommand.fromJson(json),
+      ConvertTaskAllDayModeCommand.kType =>
+        ConvertTaskAllDayModeCommand.fromJson(json),
       _ => throw UnknownCommandException(type),
     };
   }
@@ -91,6 +94,8 @@ sealed class TaskCommand {
     MoveOccurrenceCommand.kType,
     SplitRecurringTaskCommand.kType,
     SetStageOccurrenceStatusCommand.kType,
+    ReplaceChecklistCommand.kType,
+    ConvertTaskAllDayModeCommand.kType,
   ];
 }
 
@@ -764,5 +769,119 @@ final class SetStageOccurrenceStatusCommand extends TaskCommand {
         stageId: json['stageId']! as String,
         occurrenceKey: OccurrenceKey.parse(json['occurrenceKey']! as String),
         status: TaskStatus.fromWireName(json['status']! as String),
+      );
+}
+
+/// 整表替换一条任务的清单项（FR-TASK-09）。
+///
+/// 与 [ReplaceStagesCommand] 同一个形状：编辑器一次提交整份清单，
+/// 不在新列表里的旧项**打墓碑而不是物理删** —— 物理删的话，
+/// V3 对端只会看到「这条还在」。
+///
+/// **没有「至少两项」那条约束。** 阶段有（一个阶段的阶段事项与单项
+/// 任务没有区别），而清单一项是完全正常的：「记得带伞」。
+final class ReplaceChecklistCommand extends TaskCommand {
+  const ReplaceChecklistCommand({required this.taskId, required this.items});
+
+  static const kType = 'replaceChecklist';
+
+  final String taskId;
+  final List<ChecklistItemSpec> items;
+
+  @override
+  String get type => kType;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'type': kType,
+    'taskId': taskId,
+    'items': [for (final i in items) i.toJson()],
+  };
+
+  static ReplaceChecklistCommand fromJson(Map<String, Object?> json) =>
+      ReplaceChecklistCommand(
+        taskId: json['taskId']! as String,
+        items: [
+          for (final i in json['items']! as List)
+            ChecklistItemSpec.fromJson(i as Map<String, Object?>),
+        ],
+      );
+}
+
+/// 命令载荷里的一条清单项。
+///
+/// 与实体分开是因为命令要能**序列化往返**（FR-AI-01：V4 的 Agent
+/// 构造同一批命令）—— 墓碑、时间戳这些是仓库那一侧的事。
+final class ChecklistItemSpec {
+  const ChecklistItemSpec({
+    required this.id,
+    required this.title,
+    required this.orderIndex,
+    this.isDone = false,
+  });
+
+  final String id;
+  final String title;
+  final int orderIndex;
+  final bool isDone;
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'title': title,
+    'orderIndex': orderIndex,
+    'isDone': isDone,
+  };
+
+  static ChecklistItemSpec fromJson(Map<String, Object?> json) =>
+      ChecklistItemSpec(
+        id: json['id']! as String,
+        title: json['title']! as String,
+        orderIndex: json['orderIndex']! as int,
+        isDone: json['isDone']! as bool,
+      );
+}
+
+/// 全天 ⇄ 定时的切换（R-27、data-model §4.6）。
+///
+/// **不放进 [UpdateTaskFieldsCommand]，是故意的。** 那条命令是「改几个
+/// 字段」，而这件事是「改一个字段 + 重写另外两张表的主键」——
+/// `occurrenceKey` 的形态跟着 `isAllDay` 走，切换时已有的例外与阶段状态
+/// 都要在同一事务里迁移 key，否则它们全部失联。
+/// 混进那条命令的话，任何一条改标题的路径都得顺带考虑 key 迁移。
+///
+/// 迁移规则与撞车检查是纯函数 `convertAllDayMode`。
+final class ConvertTaskAllDayModeCommand extends TaskCommand {
+  const ConvertTaskAllDayModeCommand({
+    required this.taskId,
+    required this.toAllDay,
+    this.startMinute,
+  });
+
+  static const kType = 'convertTaskAllDayMode';
+
+  final String taskId;
+  final bool toAllDay;
+
+  /// 转成定时时的新开始时刻；转成全天时必须为 null。
+  final MinuteOfDay? startMinute;
+
+  @override
+  String get type => kType;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'type': kType,
+    'taskId': taskId,
+    'toAllDay': toAllDay,
+    'startMinute': startMinute?.value,
+  };
+
+  static ConvertTaskAllDayModeCommand fromJson(Map<String, Object?> json) =>
+      ConvertTaskAllDayModeCommand(
+        taskId: json['taskId']! as String,
+        toAllDay: json['toAllDay']! as bool,
+        startMinute: json['startMinute'] == null
+            ? null
+            : MinuteOfDay(json['startMinute']! as int),
       );
 }

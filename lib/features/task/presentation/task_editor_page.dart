@@ -29,6 +29,7 @@ import '../../../domain/entities/task.dart';
 import '../../archive/application/archive_providers.dart';
 import '../../trash/application/trash_providers.dart';
 import '../../views/shared/application/category_providers.dart';
+import '../../views/shared/application/task_providers.dart';
 import '../application/recurrence_draft.dart';
 import '../application/stage_time.dart';
 import '../application/task_editor_controller.dart';
@@ -93,6 +94,14 @@ class TaskEditorPage extends ConsumerStatefulWidget {
   /// 阶段区。
   static const Key stageSectionKey = ValueKey('editor-stages');
   static const Key addStageKey = ValueKey('editor-add-stage');
+
+  /// 清单区（FR-TASK-09）。
+  static const Key checklistSectionKey = ValueKey('editor-checklist');
+  static const Key addChecklistKey = ValueKey('editor-add-checklist');
+
+  static Key checklistFieldKey(String id) => ValueKey('editor-check-$id');
+  static Key checklistDoneKey(String id) => ValueKey('editor-check-done-$id');
+  static Key checklistRemoveKey(String id) => ValueKey('editor-check-del-$id');
 
   /// 「为什么不能存」那句提示。
   static const Key blockedReasonKey = ValueKey('editor-blocked');
@@ -280,6 +289,23 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
 
   @override
   Widget build(BuildContext context) {
+    // **必须先等清单流吐一次值，再让控制器建草稿。**
+    //
+    // 控制器的 `build()` 用 `read` 取初值（那是对的 —— 用 `watch`
+    // 的话，库里任何一次推送都会把用户填到一半的东西冲掉）。
+    // 而 `read` 一个还没人订阅过的 `StreamProvider` 拿到的是
+    // AsyncLoading，回落是**空清单** —— 于是编辑一条有清单的任务，
+    // 清单区是空的，一保存就把它整表清掉了。
+    //
+    // 阶段没这个毛病纯属**巧合**：列表上的卡片要算进度，
+    // 一直 watch 着 `allStagesProvider`，进编辑器时它早就热了。
+    // 清单不上任何视图（FR-TASK-09），没人替它保温。
+    //
+    // 本地库首帧通常一帧内就来，所以这里不转圈，与回收站同一个做法。
+    if (ref.watch(allChecklistItemsProvider).isLoading) {
+      return const SizedBox.shrink();
+    }
+
     final draft = ref.watch(taskEditorProvider);
     final controller = ref.read(taskEditorProvider.notifier);
     final colors = context.appColors;
@@ -359,16 +385,16 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
               key: TaskEditorPage.allDaySwitchKey,
               contentPadding: EdgeInsets.zero,
               title: const Text('全天'),
-              // **编辑时禁用。** 全天 ⇄ 定时会改变 occurrenceKey 的形态，
-              // 已有的单次例外要在同一事务里迁移 key
-              // （data-model §4.6、R-27），那需要一条专门的命令，
-              // roadmap 排在 M3。在那之前让它能拨却存不下去，
-              // 就是又一个「改了没反应」的开关。
-              subtitle: draft.isEditing
-                  ? Text('建好之后暂时改不了', style: text.bodySmall)
+              // **编辑时一度是禁用的**：全天 ⇄ 定时会改变 occurrenceKey
+              // 的形态，已有的单次例外要在同一事务里迁移 key
+              // （data-model §4.6、R-27）。没有那条命令之前，
+              // 让它能拨却存不下去就是又一个「改了没反应」的开关。
+              // `ConvertTaskAllDayModeCommand` 做出来了，于是放开。
+              subtitle: draft.allDayModeChanged
+                  ? Text('保存时会把这条任务的单次例外一并迁移', style: text.bodySmall)
                   : null,
               value: draft.isAllDay,
-              onChanged: draft.isEditing ? null : controller.setAllDay,
+              onChanged: controller.setAllDay,
             ),
             if (!draft.isAllDay)
               _TimeRow(
@@ -430,6 +456,8 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
               today: _today(),
               controller: controller,
             ),
+            const SizedBox(height: Spacing.xl),
+            _ChecklistSection(draft: draft, controller: controller),
             const SizedBox(height: Spacing.xxxl),
           ],
         ),
@@ -1017,22 +1045,53 @@ class _StageSection extends StatelessWidget {
                   children: [
                     // 勾完成。序号让位给它 —— 序号在时间按钮那一行
                     // 也能看出来（第几个），而「做完没有」没有别处可看。
-                    Semantics(
-                      label: '第 ${i + 1} 个阶段完成',
-                      child: Checkbox(
-                        key: TaskEditorPage.stageDoneKey(stage.id),
-                        value: stage.isDone,
-                        onChanged: (v) =>
-                            controller.setStageDone(stage.id, v ?? false),
+                    //
+                    // **重复任务这里不给勾**（FR-TASK-07）：编辑器编的是
+                    // 整条任务，而重复任务的阶段状态是**按每一次**存的。
+                    // 在这儿勾写进的是 `Stage.status`，那一列对重复任务
+                    // 没人读 —— 勾了没反应，比没有这个框更糟。
+                    // 它的正确位置是单次动作弹层（view-specs §4.3）。
+                    if (draft.isRecurring)
+                      SizedBox(
+                        width: 48,
+                        child: Center(
+                          child: Text('${i + 1}', style: text.bodySmall),
+                        ),
+                      )
+                    else
+                      Semantics(
+                        label: '第 ${i + 1} 个阶段完成',
+                        child: Checkbox(
+                          key: TaskEditorPage.stageDoneKey(stage.id),
+                          value: stage.isDone,
+                          onChanged: (v) =>
+                              controller.setStageDone(stage.id, v ?? false),
+                        ),
                       ),
-                    ),
                     Expanded(
                       child: TextField(
                         key: TaskEditorPage.stageFieldKey(stage.id),
                         decoration: const InputDecoration(hintText: '这一步做什么'),
+                        // **编辑模式必须有 controller。**
+                        //
+                        // 页面开头那段注释早就写明了这件事（标题与备注
+                        // 因此各有一个 controller），而阶段这一行漏了 ——
+                        // 于是打开一条已有的阶段事项，几行阶段全是空的，
+                        // 看起来像内容丢了。存下去倒是不丢（草稿里还在），
+                        // 但用户看到的是一张空表单。
+                        //
+                        // 一直没被发现，是因为没有任何一条用例断言过
+                        // 「重新打开时阶段标题显示出来」—— 勾选、排序、
+                        // 时间那几条都只按 Key 找控件，不看里面的字。
+                        controller: TextEditingController(text: stage.title)
+                          ..selection = TextSelection.collapsed(
+                            offset: stage.title.length,
+                          ),
                         // 划掉是**辅助**，不是唯一标记 —— 勾选框自己
                         // 就带着状态（§8.1 那条原则）。
-                        style: stage.isDone
+                        // 重复任务不显示划掉 —— 那个 `isDone` 对它
+                        // 没有意义（状态按每一次存）。
+                        style: !draft.isRecurring && stage.isDone
                             ? TextStyle(
                                 decoration: TextDecoration.lineThrough,
                                 color: context.appColors.disabledText,
@@ -1479,4 +1538,92 @@ class _ChipRow extends StatelessWidget {
         ),
     ],
   );
+}
+
+/// 清单区（FR-TASK-09）。
+///
+/// ## 与阶段区并排放，靠内容自己区分
+///
+/// 两者在编辑器里长得像 —— 都是一列可增删的行。区别写在标题下那句话上，
+/// 也写在**控件本身**：清单项没有「加时间」那个按钮。
+/// 术语表把清单定义成「不参与时间排布」，给它一个时间入口
+/// 就等于把它变成第二种阶段。
+///
+/// 顺序用的是列表顺序（保存时按下标写 `orderIndex`），
+/// 没做上下移 —— 阶段有上下移是因为阶段的先后是**语义**（第一步第二步），
+/// 而清单是一把待办，顺序只是录入顺序。要排序的话那是另一件事。
+class _ChecklistSection extends StatelessWidget {
+  const _ChecklistSection({required this.draft, required this.controller});
+
+  final TaskDraft draft;
+  final TaskEditorController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final colors = context.appColors;
+
+    return Column(
+      key: TaskEditorPage.checklistSectionKey,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('清单（可选）', style: text.bodySmall),
+        const SizedBox(height: Spacing.xs),
+        // 说清它跟阶段的差别。不说的话，两个长得差不多的区摆在一起，
+        // 用户只能靠试出来。
+        // **不套 `disabledText`。** 那个色是唯一豁免对比度门槛的
+        // （app_theme 里写着「只许出现在禁用态」），拿它写说明文字
+        // 等于让一句要读的话低于 4.5:1。
+        const Text('随手记几件要做的小事。不排时间，也不上时间轴和甘特。'),
+        const SizedBox(height: Spacing.sm),
+        for (final item in draft.checklist)
+          Padding(
+            padding: const EdgeInsets.only(bottom: Spacing.xs),
+            child: Row(
+              children: [
+                Semantics(
+                  label: '清单项完成',
+                  child: Checkbox(
+                    key: TaskEditorPage.checklistDoneKey(item.id),
+                    value: item.isDone,
+                    onChanged: (v) =>
+                        controller.setChecklistDone(item.id, v ?? false),
+                  ),
+                ),
+                Expanded(
+                  child: TextField(
+                    key: TaskEditorPage.checklistFieldKey(item.id),
+                    decoration: const InputDecoration(hintText: '要做的小事'),
+                    // 划掉是**辅助**，勾选框自己带着状态（§8.1）。
+                    style: item.isDone
+                        ? TextStyle(
+                            decoration: TextDecoration.lineThrough,
+                            color: colors.disabledText,
+                          )
+                        : null,
+                    controller: TextEditingController(text: item.title)
+                      ..selection = TextSelection.collapsed(
+                        offset: item.title.length,
+                      ),
+                    onChanged: (v) => controller.setChecklistTitle(item.id, v),
+                  ),
+                ),
+                IconButton(
+                  key: TaskEditorPage.checklistRemoveKey(item.id),
+                  icon: const Icon(Icons.close),
+                  tooltip: '删掉这一项',
+                  onPressed: () => controller.removeChecklistItem(item.id),
+                ),
+              ],
+            ),
+          ),
+        AppButton(
+          key: TaskEditorPage.addChecklistKey,
+          label: draft.checklist.isEmpty ? '加个清单' : '再加一项',
+          variant: AppButtonVariant.secondary,
+          onPressed: controller.addChecklistItem,
+        ),
+      ],
+    );
+  }
 }

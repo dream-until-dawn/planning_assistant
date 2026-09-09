@@ -128,8 +128,38 @@
 | `taskId` | TEXT NOT NULL FK CASCADE | |
 | `title` | TEXT NOT NULL | |
 | `isDone` | BOOL NOT NULL DEFAULT 0 | |
-| `orderIndex` | INT NOT NULL | |
+| `orderIndex` | INT NOT NULL | **连续从 0 开始**，由命令层校验 |
 | **同步信封** | | |
+
+#### 实现（M3）
+
+与 `stage_occurrence_states` 一样，这张表和 DAO 从 M1 就在、导出也带着它，
+**领域层以上直到 M3 末尾才接上**。写入走 `ReplaceChecklistCommand`
+（整表替换 + 打墓碑），与 `ReplaceStagesCommand` 同一个形状，
+**少一条约束**：清单没有「至少两项」的要求 —— 一项是正常的（「记得带伞」）。
+
+**清单不按发生分。** 论证在需求里，不在 schema 里：术语表把
+`ChecklistItem` 定义成「任务详情内的**轻量**勾选项，**不参与时间排布**」——
+它是挂在**任务**上的便笺；而 FR-TASK-07 明文要求阶段状态**按发生**独立。
+两者的不对称本来就写在需求里，`stage_occurrence_states` 有而清单没有
+只是这件事的结果，不是它的理由。
+
+> ### 已知代价（V2 决策点）
+>
+> **重复任务的清单勾上就一直勾着，等于一次性的。**
+> 「每周买菜」配一张购物清单，第二周打开全是勾。
+>
+> 这不是 bug，是上面那个定义的必然结果。要改的话是**加一张表 +
+> 一条判据**（照 `stage_occurrence_states` 的样子），
+> 别在这张表上偷偷塞一个 `occurrenceKey` —— 那会让「轻量」这个定位失效，
+> 清单就变成了第二种阶段。
+
+> **编辑器必须等这条流吐值再建草稿。** 控制器用 `read` 取初值（对的 ——
+> `watch` 会把用户填到一半的东西冲掉），而 `read` 一个没人订阅过的
+> `StreamProvider` 拿到的是 loading，回落是**空清单**：
+> 编辑一条有清单的任务，清单区是空的，一保存就整表清掉。
+> 阶段没这毛病纯属巧合 —— 列表卡片要算进度，一直 watch 着它。
+> 清单不上任何视图（FR-TASK-09），没人替它保温。
 
 ### 3.4 `occurrence_overrides`
 
@@ -170,6 +200,27 @@
 **唯一索引**：`(stageId, occurrenceKey)`
 
 > 只有被交互过的 (阶段, 发生) 才落行 —— 未触碰的阶段视为 `pending`，不占存储。
+
+> ### 重复任务的 `Stage.status` 恒为 `pending`
+>
+> 重复任务的阶段状态存在这张表里，`Stage.status` 那一列**没人读**
+> （判据见 `stageStatusFor`）。留着一个能被写、写了没人看的字段，
+> 下一个人一定会去写它 —— 所以三面都堵上了：
+>
+> | 面 | 守卫 |
+> |---|---|
+> | 读 | 视图侧 lint：`stage.status` 只许出现在 `stageStatusFor` 与 `TaskOccurrence` 里 |
+> | 写（界面） | 编辑器对重复任务不显示阶段勾选框 |
+> | 写（命令） | `ReplaceStagesCommand` 对重复任务**归一化为 `pending`** —— 导入、V3 同步、V4 的 Agent 走的都是这条 |
+>
+> **归一化而不是抛异常**：编辑器把一条已完成的单项任务改成重复时，
+> 它手上那份草稿还带着 `done`，抛的话这条最普通的编辑就存不下去。
+> 那份 `done` 不会丢 —— `convertRecurrenceMode` 已经先把它搬到
+> **第一次发生**上了（见 `recurrence_conversion.dart`），
+> 而那条命令排在写阶段之前。
+>
+> 这与 `tasks.status` 对重复任务恒为 `pending`（§4.3）是同一个形状；
+> 那一条用抛异常守，是因为那里没有「合法但带着旧值」的调用方。
 
 #### 实现（M3）
 

@@ -95,6 +95,19 @@ final _samples = <TaskCommand>[
     occurrenceKey: _key,
     status: TaskStatus.done,
   ),
+  ConvertTaskAllDayModeCommand(
+    taskId: 'task-1',
+    toAllDay: false,
+    startMinute: MinuteOfDay.of(9, 30),
+  ),
+  const ConvertTaskAllDayModeCommand(taskId: 'task-1', toAllDay: true),
+  const ReplaceChecklistCommand(
+    taskId: 'task-1',
+    items: [
+      ChecklistItemSpec(id: 'c0', title: '带伞', orderIndex: 0, isDone: true),
+      ChecklistItemSpec(id: 'c1', title: '买菜', orderIndex: 1),
+    ],
+  ),
   MoveOccurrenceCommand(
     taskId: 'task-1',
     occurrenceKey: _key,

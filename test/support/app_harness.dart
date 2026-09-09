@@ -27,6 +27,7 @@ import 'package:planning_assistant/data/repositories/task_repository_impl.dart';
 import 'package:planning_assistant/domain/commands/command_dispatcher.dart';
 import 'package:planning_assistant/domain/entities/category.dart';
 import 'package:planning_assistant/domain/entities/stage.dart';
+import 'package:planning_assistant/domain/entities/stage_occurrence_state.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/features/settings/application/settings_providers.dart';
 import 'package:planning_assistant/features/views/shared/application/category_providers.dart';
@@ -191,6 +192,9 @@ List<Override> viewPipelineOverrides({
   List<Task> tasks = const [],
   List<Category> categories = const [],
   List<Stage> stages = const [],
+
+  /// 「这一次的这一步做完没有」（FR-TASK-07）。
+  List<StageOccurrenceState> stageStates = const [],
   Map<String, Object?> settings = const {},
   // 下面两个是**替换**用的口子，不是另加一条 override ——
   // 同一个 provider 在一个容器里只许覆盖一次，追加会撞上
@@ -219,6 +223,7 @@ List<Override> viewPipelineOverrides({
     categoriesProvider.overrideWith((ref) => Stream.value(categories)),
     allOverridesProvider.overrideWith((ref) => Stream.value(const [])),
     allStagesProvider.overrideWith((ref) => Stream.value(stages)),
+    allStageStatesProvider.overrideWith((ref) => Stream.value(stageStates)),
     // **心跳掐掉。** 真的那个每分钟响一次，而它在用例结束时
     // 还剩着一个最多 60 秒的定时器 —— binding 判「树都拆了还有定时器在」，
     // 报的是「Pending timers」，与被测的行为毫无关系。
@@ -262,6 +267,7 @@ Future<void> settleViewPipeline(ProviderContainer container) async {
   keep(visibleTasksProvider);
   keep(allOverridesProvider);
   keep(allStagesProvider);
+  keep(allStageStatesProvider);
   keep(categoriesProvider);
   keep(rawSettingsProvider);
   await pumpEventQueue();
@@ -314,7 +320,18 @@ Future<void> tapVisible(WidgetTester tester, Key key) async {
     //
     // 撞见过一次：设置页加了两个配置项之后，「分类管理」那一行被挤出
     // cacheExtent，**七条与设置毫无关系的用例一起红**。
-    await tester.scrollUntilVisible(finder, 200);
+    // **必须指定滚哪个** —— 不指定时它要求全树只有一个 `Scrollable`，
+    // 而每个 `TextField` 自己带一个（`EditableText` 里的）。
+    // 表单里有输入框时就会炸成「Bad state: Too many elements」，
+    // 而那句话跟「控件在屏幕外」一点关系都没有。
+    //
+    // 取 `.first`：`find.byType` 是深度优先，表单的 `ListView` 是那些
+    // 输入框的祖先，所以它排在前面。
+    await tester.scrollUntilVisible(
+      finder,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
   }
   await tester.ensureVisible(finder);

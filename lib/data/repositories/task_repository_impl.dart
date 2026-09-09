@@ -12,16 +12,19 @@ library;
 import 'package:drift/drift.dart';
 
 import '../../core/time/clock.dart';
+import '../../domain/entities/checklist_item.dart';
 import '../../domain/entities/occurrence_override.dart';
 import '../../domain/entities/stage.dart';
 import '../../domain/entities/stage_occurrence_state.dart';
 import '../../domain/entities/task.dart';
 import '../../domain/policies/task_lifecycle.dart';
 import '../../domain/repositories/task_repository.dart';
+import '../../domain/services/all_day_conversion.dart';
 import '../../domain/value_objects/occurrence_key.dart';
 import '../database/app_database.dart';
 import '../database/dao/synced_dao.dart';
 import '../database/dao/table_daos.dart';
+import '../mappers/checklist_item_mapper.dart';
 import '../mappers/occurrence_override_mapper.dart';
 import '../mappers/stage_occurrence_state_mapper.dart';
 import '../mappers/task_mapper.dart';
@@ -32,6 +35,7 @@ final class DriftTaskRepository implements TaskRepository {
       _stages = StageDao(_db, writer, clock),
       _overrides = OccurrenceOverrideDao(_db, writer, clock),
       _stageStates = StageOccurrenceStateDao(_db, writer, clock),
+      _checklist = ChecklistItemDao(_db, writer, clock),
       _clock = clock;
 
   final AppDatabase _db;
@@ -39,6 +43,7 @@ final class DriftTaskRepository implements TaskRepository {
   final StageDao _stages;
   final OccurrenceOverrideDao _overrides;
   final StageOccurrenceStateDao _stageStates;
+  final ChecklistItemDao _checklist;
   final Clock _clock;
 
   /// 三个可见性谓词翻译成 SQL 的**唯一出处**。
@@ -165,6 +170,90 @@ final class DriftTaskRepository implements TaskRepository {
   @override
   Future<void> saveStageState(StageOccurrenceState state) =>
       _stageStates.upsert(stageStateToCompanion(state));
+
+  @override
+  Stream<List<ChecklistItem>> watchAllChecklistItems() =>
+      (_db.select(_db.checklistItems)
+            ..where((t) => t.deletedAt.isNull())
+            ..orderBy([(t) => OrderingTerm(expression: t.orderIndex)]))
+          .watch()
+          .map((rows) => rows.map(checklistItemFromRow).toList());
+
+  @override
+  Future<List<ChecklistItem>> findChecklistOfTask(
+    String taskId, {
+    TaskScope scope = TaskScope.active,
+  }) async {
+    final q = _db.select(_db.checklistItems)
+      ..where((t) => t.taskId.equals(taskId))
+      ..orderBy([(t) => OrderingTerm(expression: t.orderIndex)]);
+    if (scope != TaskScope.all) {
+      q.where((t) => t.deletedAt.isNull());
+    }
+    return (await q.get()).map(checklistItemFromRow).toList();
+  }
+
+  @override
+  Future<List<StageOccurrenceState>> findStageStatesOfTask(
+    String taskId,
+  ) async {
+    final rows = await (_db.select(
+      _db.stageOccurrenceStates,
+    )..where((t) => t.taskId.equals(taskId) & t.deletedAt.isNull())).get();
+    return rows.map(stageStateFromRow).toList();
+  }
+
+  @override
+  Future<void> applyRecurrenceConversion(
+    Task task,
+    List<Stage> stages,
+    List<StageOccurrenceState> states,
+  ) async {
+    task.checkInvariants();
+    await _db.transaction(() async {
+      await _tasks.upsert(task.toCompanion());
+      for (final s in stages) {
+        await _stages.upsert(s.toCompanion());
+      }
+      for (final s in states) {
+        await _stageStates.upsert(stageStateToCompanion(s));
+      }
+    });
+  }
+
+  @override
+  Future<void> applyAllDayConversion(AllDayConversion conversion) async {
+    // **一个事务**：任务改了而例外的 key 没迁，那些例外就永久失联 ——
+    // 库里还在、界面上再也挂不上任何一次发生，而且没有任何报错。
+    await _db.transaction(() async {
+      await _tasks.upsert(conversion.task.toCompanion());
+      for (final moved in conversion.movedOverrides) {
+        // 顺序要紧：**先写新行再删旧行**。反过来的话，中途失败会留下
+        // 「旧的没了、新的还没写」—— 而事务回滚救得了，
+        // 唯独救不了「两边都指着同一条例外」那一瞬的唯一索引冲突。
+        // 这里两个 id 必然不同（key 变了才会进这张表），所以不冲突。
+        await _overrides.upsert(occurrenceOverrideToCompanion(moved.to));
+        await _overrides.softDelete(overrideRowId(moved.to.taskId, moved.from));
+      }
+      for (final moved in conversion.movedStageStates) {
+        await _stageStates.upsert(stageStateToCompanion(moved.to));
+        await _stageStates.softDelete(
+          StageOccurrenceState.idFor(moved.to.stageId, moved.from),
+        );
+      }
+    });
+  }
+
+  @override
+  Future<void> saveChecklist(String taskId, List<ChecklistItem> items) async {
+    // 整表写回必须原子：写到一半的话，界面上会短暂出现
+    // 「删掉的那条还在、新加的那条没有」这种谁也解释不了的中间态。
+    await _db.transaction(() async {
+      for (final i in items) {
+        await _checklist.upsert(checklistItemToCompanion(i));
+      }
+    });
+  }
 
   @override
   Future<void> saveTask(Task task) async {

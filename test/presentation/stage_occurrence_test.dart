@@ -216,6 +216,134 @@ void main() {
     expect(states.single.completedAt, isNull);
   });
 
+  testAppWidgets('**编辑器里不给重复任务勾阶段** —— 那一列没人读', (tester) async {
+    // `Stage.status` 对重复任务是**死数据**：状态按每一次存
+    // （data-model §3.2 的「死数据」那一段）。编辑器编的是整条任务，
+    // 在那儿勾写进的是那一列 —— 勾了没反应，比没有这个框更糟。
+    //
+    // 序号顶上原来那个框的位置（它本来就是让位给勾选框的）。
+    final harness = await _pumpApp(tester);
+    await _createRecurringStaged(tester);
+    final stages = await _stageIds(harness);
+
+    await tester.tap(find.byType(TaskCard).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(OccurrenceSheetKeys.editSeries));
+    await tester.pumpAndSettle();
+
+    // **先滚到阶段区。** 不滚的话它压根没建出来，
+    // 下面那句 `findsNothing` 就是自证（§1.11 那族）。
+    await tester.scrollUntilVisible(
+      find.byKey(TaskEditorPage.stageSectionKey),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('热身'), findsOneWidget, reason: '阶段区没渲染，下面那条就是自证');
+
+    for (final id in stages) {
+      expect(
+        find.byKey(TaskEditorPage.stageDoneKey(id)),
+        findsNothing,
+        reason: '重复任务的编辑器里出现了阶段勾选框 —— 勾了不会有任何效果',
+      );
+    }
+  });
+
+  testAppWidgets('对照组：不重复的阶段任务里，编辑器照常给勾', (tester) async {
+    // 少了这条，一个「一律不显示勾选框」的实现能让上面绿 ——
+    // 而那会把不重复任务的阶段完成入口一起端掉（那是 M3 补过的债）。
+    final harness = await _pumpApp(tester);
+    await tester.tap(find.byKey(AppShell.fabKey));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
+    await tester.pump();
+    for (final name in ['打包', '搬运']) {
+      await tapVisible(tester, TaskEditorPage.addStageKey);
+      final fields = find.descendant(
+        of: find.byKey(TaskEditorPage.stageSectionKey),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(fields.last, name);
+      await tester.pump();
+    }
+    await tapVisible(tester, TaskEditorPage.saveButtonKey);
+
+    await tester.tap(find.byType(TaskCard).first);
+    await tester.pumpAndSettle();
+
+    final ids = await _stageIds(harness);
+    await tester.scrollUntilVisible(
+      find.byKey(TaskEditorPage.stageSectionKey),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(TaskEditorPage.stageDoneKey(ids.first)), findsOneWidget);
+  });
+
+  testAppWidgets('**把单项任务改成重复，勾过的进度不会消失**', (tester) async {
+    // 阶段状态有两个存储位置（不重复看 `Stage.status`，重复看那张表），
+    // 于是改重复规则会改变「该读哪一份」。不迁移的话，用户勾过的进度
+    // **当场从界面上消失** —— 数据一条没丢，只是读路径改看另一张空表。
+    // 这类「没丢但看不见」比真丢更难查：没有任何报错。
+    final harness = await _pumpApp(tester);
+
+    // 建一条不重复的两阶段任务，勾掉第一步。
+    await tester.tap(find.byKey(AppShell.fabKey));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
+    await tester.pump();
+    for (final name in ['打包', '搬运']) {
+      await tapVisible(tester, TaskEditorPage.addStageKey);
+      final fields = find.descendant(
+        of: find.byKey(TaskEditorPage.stageSectionKey),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(fields.last, name);
+      await tester.pump();
+    }
+    await tapVisible(tester, TaskEditorPage.saveButtonKey);
+
+    final ids = await _stageIds(harness);
+    await tester.tap(find.byType(TaskCard).first);
+    await tester.pumpAndSettle();
+    await tapVisible(tester, TaskEditorPage.stageDoneKey(ids.first));
+    await tapVisible(tester, TaskEditorPage.saveButtonKey);
+    expect(find.textContaining('阶段 1/2'), findsOneWidget, reason: '前提：勾上了');
+
+    // 改成每天重复。
+    await tester.tap(find.byType(TaskCard).first);
+    await tester.pumpAndSettle();
+    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+    await tapVisible(
+      tester,
+      TaskEditorPage.frequencyKey(RecurrenceFrequency.daily),
+    );
+    await tapVisible(tester, TaskEditorPage.saveButtonKey);
+
+    // **界面上仍然是 1/2** —— 进度搬到了第一次发生上。
+    expect(
+      find.textContaining('阶段 1/2'),
+      findsOneWidget,
+      reason: '改成重复之后勾过的进度不见了',
+    );
+
+    // 落库形态：阶段那一列归零，状态搬进了那张表。
+    final stageRows = await harness.db.select(harness.db.stages).get();
+    expect(
+      stageRows.where((r) => r.status == 'done'),
+      isEmpty,
+      reason: '`Stage.status` 对重复任务是死数据，不该还留着 done',
+    );
+    final states = await harness.db
+        .select(harness.db.stageOccurrenceStates)
+        .get();
+    expect(states, hasLength(1));
+    expect(states.single.stageId, ids.first);
+    expect(states.single.status, 'done');
+  });
+
   testAppWidgets('对照组：不重复的阶段任务不弹这个弹层', (tester) async {
     // 它没有「某一次」，阶段状态就在阶段自己身上 ——
     // 勾选仍在编辑器里（`stage_done_test.dart` 验那条路）。

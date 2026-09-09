@@ -241,7 +241,7 @@ void main() {
     exportedAt: _exportedAt,
   );
 
-  group('导出的形状', () {
+  group('FR-DATA-04 / FR-CFG-06 导出的形状', () {
     test('顶层字段齐全，counts 与实际条数一致', () async {
       await seed();
       final bundle = await exportNow();

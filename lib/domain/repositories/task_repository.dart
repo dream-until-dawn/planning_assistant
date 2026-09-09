@@ -6,10 +6,12 @@
 /// 方法签名里**不出现任何 Drift 类型**，架构守卫会检查这一点。
 library;
 
+import '../entities/checklist_item.dart';
 import '../entities/occurrence_override.dart';
 import '../entities/stage.dart';
 import '../entities/stage_occurrence_state.dart';
 import '../entities/task.dart';
+import '../services/all_day_conversion.dart';
 import '../value_objects/occurrence_key.dart';
 
 /// 查询任务时的可见性范围（task-lifecycle §1.1 的三个谓词）。
@@ -100,6 +102,43 @@ abstract interface class TaskRepository {
 
   /// 写一条阶段状态。同一个 (stageId, occurrenceKey) 覆盖写。
   Future<void> saveStageState(StageOccurrenceState state);
+
+  /// 全部清单项（FR-TASK-09）。与 [watchAllStages] 同一个理由：
+  /// 一次取全再索引，不按 taskId 逐条订阅。
+  Stream<List<ChecklistItem>> watchAllChecklistItems();
+
+  /// 一条任务的清单项。[scope] 决定要不要带上墓碑 ——
+  /// 整表替换时必须看得见墓碑，否则会把已删的又「新建」回来。
+  Future<List<ChecklistItem>> findChecklistOfTask(
+    String taskId, {
+    TaskScope scope = TaskScope.active,
+  });
+
+  /// 整表写回一条任务的清单项（含墓碑）。
+  Future<void> saveChecklist(String taskId, List<ChecklistItem> items);
+
+  /// 一条任务全部发生的阶段状态（R-27 迁移 key 时要取全，含墓碑与否由
+  /// 调用方无关 —— 这里只给活着的，墓碑不需要迁移）。
+  Future<List<StageOccurrenceState>> findStageStatesOfTask(String taskId);
+
+  /// 全天 ⇄ 定时切换的落盘（R-27）。
+  ///
+  /// **必须原子**：任务改了而例外的 key 没迁，那些例外就永久失联了 ——
+  /// 库里还在、界面上再也挂不上任何一次发生。
+  ///
+  /// [movedOverrides] / [movedStageStates] 的 `from` 是旧 key：
+  /// 旧行打墓碑，新行另起（主键是从 key 派生的，见 `all_day_conversion`）。
+  Future<void> applyAllDayConversion(AllDayConversion conversion);
+
+  /// 单项 ⇄ 重复切换的落盘（FR-TASK-07）。
+  ///
+  /// **必须原子**：任务改了而阶段状态没迁，那段时间里用户看到的是
+  /// 「我做完的东西没了」——数据其实还在，只是读路径改看另一张表。
+  Future<void> applyRecurrenceConversion(
+    Task task,
+    List<Stage> stages,
+    List<StageOccurrenceState> states,
+  );
 
   /// 写入任务及其阶段（同一事务）。
   ///

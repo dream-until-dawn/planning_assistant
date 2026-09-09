@@ -52,6 +52,12 @@ EXEMPT = {
     'FR-CFG-08': 'M5 导入导出（隐藏项要在导出 JSON 里可见）',
     'FR-DATA-01': 'M5「App 强杀不丢已提交写入」要的是真机集成测试',
     'NFR-PERF-01': 'M5 冷启动打点，真机',
+    # **这一条是收窄匹配之后才露出来的。** 收窄前它「有覆盖」——
+    # 因为 `view_layout_benchmark_test.dart` 的注释里提到了它。
+    # 而那个基准量的是**排布函数的耗时**，不是**掉帧率**：
+    # 一个 O(n²) 的排布可能仍然不掉帧，一个 O(n) 的排布配上过度重建
+    # 也可能掉帧。两者不是一回事，模拟器的帧时间也不充数。
+    'NFR-PERF-02': 'M5 真机 profile 模式量掉帧率 —— 基准测的是排布耗时，不是掉帧',
     'NFR-PERF-03': 'M5 写入到 UI 更新计时，真机',
     'NFR-REL-02': 'M5 迁移失败保留升级前副本 —— v1 还没有上一版可迁',
 
@@ -62,8 +68,8 @@ EXEMPT = {
     # roadmap 里各有一条记着。
     # FR-TASK-07 当晚就补完了，所以不在这张表里 —— 它现在由
     # stage_occurrence_state_test.dart 与 stage_occurrence_test.dart 点名。
-    'FR-TASK-09': '**欠账**：子任务清单（checklist）。'
-    '表和导出都有了，界面上一个入口都没有',
+    # FR-TASK-09 也补完了 —— 现在由 checklist_test.dart 点名。
+    # 这张表里于是**一条真缺口都不剩**，剩下的全是排在后面的里程碑。
 }
 
 
@@ -87,13 +93,30 @@ def requirements():
 # 一条会喊狼来了的门禁，下一个人只会学会无视它。
 MENTION = re.compile(r'((?:FR|NFR)-[A-Z]+)-(\d+(?:/\d+)*)')
 
+# **只看 `test(...)` / `group(...)` 的描述，不扫全文。**
+#
+# 扫全文的话，一条注释就能让一条需求变绿 —— 而注释不会执行。
+# 文件头写一句「本文件对应 FR-XX」很容易，它和「真有一条用例在验它」
+# 是两回事。
+#
+# 收窄之后这条门禁与 `lint_tests.dart` **复合**：后者拒绝没有断言的
+# 测试，于是「被一个 test 点名」+「那个 test 有断言」，
+# 比单独任何一条都强。
+CASE = re.compile(
+    r'(?:test|group|testWidgets|testAppWidgets)\s*\(\s*'
+    r'([\'"])(.*?)\1',
+    re.S,
+)
 
-def mentioned(text: str) -> set:
-    """一段源码里点了名的需求编号，展开缩写形式。"""
-    out = set()
-    for prefix, tail in MENTION.findall(text):
-        for num in tail.split('/'):
-            out.add(f'{prefix}-{num}')
+
+def mentioned(text: str) -> dict:
+    """用例描述里点了名的需求编号 → 点它的那条描述。展开缩写形式。"""
+    out = {}
+    for case in CASE.finditer(text):
+        desc = case.group(2)
+        for prefix, tail in MENTION.findall(desc):
+            for num in tail.split('/'):
+                out.setdefault(f'{prefix}-{num}', desc.strip())
     return out
 
 
@@ -110,51 +133,126 @@ def _self_test() -> int:
      · 真缺的时候会红 —— 否则它就只是个复读机。
     """
     cases = [
-        ('FR-VIEW-05/06 都算数', 'FR-VIEW-05/06', {'FR-VIEW-05', 'FR-VIEW-06'}),
-        ('单个编号', '见 FR-TASK-03 验收栏', {'FR-TASK-03'}),
-        ('三连缩写', 'R-50 与 NFR-REL-01/02/03', {
-            'NFR-REL-01', 'NFR-REL-02', 'NFR-REL-03',
-        }),
-        ('不是编号的不认', 'FR-TASK 与 ABC-1', set()),
+        ('FR-VIEW-05/06 都算数',
+         "test('FR-VIEW-05/06 切视图', () {});",
+         {'FR-VIEW-05', 'FR-VIEW-06'}),
+        ('单个编号',
+         "group('见 FR-TASK-03 验收栏', () {});", {'FR-TASK-03'}),
+        ('三连缩写',
+         "test('R-50 与 NFR-REL-01/02/03', () {});",
+         {'NFR-REL-01', 'NFR-REL-02', 'NFR-REL-03'}),
+        ('不是编号的不认',
+         "test('FR-TASK 与 ABC-1', () {});", set()),
+        # ── 下面四条钉的是「收窄到用例描述」这件事本身 ──────────
+        ('注释里的不算', '/// 本文件对应 FR-TASK-01', set()),
+        ('文件头 library 注释里的也不算',
+         '/// FR-CFG-02 主题配置\nlibrary;', set()),
+        ('双引号的描述也认得出',
+         'test("FR-DATA-04 导出", () {});', {'FR-DATA-04'}),
+        # 这一条是**给正则本身**的：`\b` 写成普通串会变成退格符，
+        # 那样 CASE 一个都匹配不上、整条门禁空转着报绿。
+        # 同样的escape 坑今天栽过三次（endDate lint 也是），所以钉住。
+        ('testAppWidgets 也认',
+         "testAppWidgets('FR-VIEW-07 长按新建', (t) async {});",
+         {'FR-VIEW-07'}),
     ]
     bad = 0
     for name, text, want in cases:
-        got = mentioned(text)
+        got = set(mentioned(text))
         if got != want:
             print(f'  自检失败：{name} —— 期望 {want}，实得 {got}')
             bad += 1
+
+    # ── 第 9 类：**端到端，而且成对** ────────────────────────
+    #
+    # 上面那些验的全是提取函数 `mentioned()`。而这条工具的存在理由是
+    # 「**缺了会红**」—— 在补这一段之前，那一半一条都没验过。
+    # 提取得再准，如果缺了不会红，整条工具还是摆设。
+    #
+    # **必须成对**：只验「缺一条会红」的话，一个 `return 1` 的实现
+    # 也能过。这与 R-27 撞车那里配的对照组是同一个动作。
+    reqs = [('FR-ZZ-01', 'V1'), ('FR-ZZ-02', 'V1'), ('FR-ZZ-09', 'V2')]
+    full = [
+        ('a_test.dart', "test('FR-ZZ-01 甲', () {});"),
+        ('b_test.dart', "group('FR-ZZ-02 乙', () {});"),
+    ]
+    pairs = [
+        ('缺一条 → 报出来', full[:1], ['FR-ZZ-02']),
+        ('一条不缺 → 不报', full, []),
+        # V2 的不算数：它本来就还没实现，报它等于每次都红。
+        ('V2 的不参与', full, []),
+        # 豁免的也不算 —— 但豁免表是**另一份声明**，
+        # 不该顺手让「点了名」这件事也失效。
+        ('豁免的不报', [], ['FR-ZZ-02']),
+    ]
+    for name, corpus, want in pairs:
+        exempt = {'FR-ZZ-01'} if name == '豁免的不报' else set()
+        missing, _, _ = evaluate(reqs, corpus, exempt)
+        if missing != want:
+            print(f'  自检失败：{name} —— 期望缺 {want}，实得缺 {missing}')
+            bad += 1
+
     if bad:
         print(f'自检没过（{bad} 条）—— 校验结果不予采信')
         return 1
-    print(f'自检通过（{len(cases)} 条）')
+    print(f'自检通过（{len(cases)} 条提取 + {len(pairs)} 条端到端）')
     return 0
+
+
+def evaluate(reqs, corpus, exempt):
+    """(缺的, 被谁点了名) —— **不碰 IO**，好让自检能喂合成语料。
+
+    抽出来是为了让「真缺的时候会红」可测。在此之前这一段长在 `main`
+    里，于是自检只能验提取函数 `mentioned()`；
+    而这条工具的**存在理由**是「缺了会红」，那一半一条都没验过 ——
+    docstring 承诺了两件事，机制只兑现一件。
+    """
+    where = {}
+    for name, text in corpus:
+        for rid, desc in mentioned(text).items():
+            where.setdefault(rid, (name, desc))
+
+    missing, covered = [], []
+    for rid, phase in reqs:
+        if phase != 'V1' or rid in exempt:
+            continue
+        # 要的是**一条用例**点名。只在注释里出现不算 ——
+        # 那是实现在自称完成，不是有人验过。
+        (covered if rid in where else missing).append(rid)
+    return missing, covered, where
 
 
 def main(argv: list) -> int:
     if '--self-test' in argv and _self_test() != 0:
         return 1
 
-    seen = set()
-    for path in (ROOT / 'test').rglob('*.dart'):
-        seen |= mentioned(path.read_text(encoding='utf-8'))
+    corpus = [
+        (p.relative_to(ROOT).as_posix(), p.read_text(encoding='utf-8'))
+        for p in (ROOT / 'test').rglob('*.dart')
+    ]
+    missing, covered, where = evaluate(requirements(), corpus, EXEMPT)
 
-    missing, total = [], 0
-    for rid, phase in requirements():
-        if phase != 'V1' or rid in EXEMPT:
-            continue
-        total += 1
-        # 要的是**测试**点名。只在 lib/ 的注释里出现不算 ——
-        # 那是实现在自称完成，不是有人验过。
-        if rid not in seen:
-            missing.append(rid)
-
+    total = len(covered) + len(missing)
     print(f'V1 需求 {total} 条，豁免 {len(EXEMPT)} 条')
+
+    # **把每条是在哪儿被点名的打出来**（`--verbose`）。
+    #
+    # 这条门禁很弱（点名 ≠ 测到），而对付「虚假安全感」的办法不是把匹配
+    # 做强，是把它的弱点**做成可见的**：一眼扫过去就能看出哪条需求
+    # 只是被一个名字里带编号的用例蹭了一下。
+    if '--verbose' in argv:
+        for rid in sorted(covered):
+            rel, desc = where[rid]
+            print(f'  {rid:<14} {rel}')
+            print(f'  {"":<14}   {desc}')
+
     if missing:
-        print(f'没有任何测试点名的 {len(missing)} 条：')
+        print(f'没有任何用例点名的 {len(missing)} 条：')
         for rid in missing:
             print(f'  · {rid}')
+        print('（编号要写在 test(...) / group(...) 的描述里，注释里不算）')
         return 1
-    print('每条都有测试点名')
+    print("每条都有用例点名")
     return 0
 
 

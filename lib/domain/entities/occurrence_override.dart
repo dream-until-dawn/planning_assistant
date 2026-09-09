@@ -74,6 +74,24 @@ final class OccurrenceOverride {
   final PlanDate? endDateOverride;
   final MinuteOfDay? endMinuteOverride;
 
+  /// 换一个 key，其余原样（R-27）。
+  ///
+  /// **这不是「改一行」，是「另起一行」**：行 id 由
+  /// `taskId#occurrenceKey` 派生，key 变了身份就变了。
+  /// 旧的那行要打墓碑，见 `all_day_conversion.dart` 开头那段。
+  OccurrenceOverride withKey(OccurrenceKey newKey) => OccurrenceOverride(
+    taskId: taskId,
+    key: newKey,
+    action: action,
+    status: status,
+    titleOverride: titleOverride,
+    noteOverride: noteOverride,
+    planDateOverride: planDateOverride,
+    startMinuteOverride: startMinuteOverride,
+    endDateOverride: endDateOverride,
+    endMinuteOverride: endMinuteOverride,
+  );
+
   bool get isSkip => action == OverrideAction.skip;
 
   /// 是否改变了发生的时间位置。

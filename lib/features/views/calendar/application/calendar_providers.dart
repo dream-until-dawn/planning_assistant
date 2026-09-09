@@ -89,6 +89,7 @@ final calendarOccurrencesProvider = Provider<List<TaskOccurrence>>((ref) {
         window: DateRange(weeks.first.first.date, weeks.last.last.date),
         // 阶段进来算有效跨度（§4.7）—— 四视图共用同一个答案。
         stagesByTask: ref.watch(stagesByTaskProvider),
+        stageStatesByTask: ref.watch(stageStatesByTaskProvider),
         engine: RecurrenceEngine(ref.watch(timeZoneResolverProvider)),
         includeSkipped: filter.statuses.contains(TaskStatus.skipped),
       ),

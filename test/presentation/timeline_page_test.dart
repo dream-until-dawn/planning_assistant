@@ -114,7 +114,7 @@ Rect _blockRect(WidgetTester tester, String rowId) =>
     tester.getRect(find.byKey(TimelinePage.blockKey(rowId)));
 
 void main() {
-  group('块的位置由时刻决定', () {
+  group('FR-VIEW-01 块的位置由时刻决定', () {
     testAppWidgets('顶边 = 开始分钟 × 比例', (tester) async {
       await _pump(
         tester,

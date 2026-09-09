@@ -31,6 +31,7 @@ import '../../../../domain/entities/occurrence.dart';
 import '../../../../domain/entities/stage.dart';
 import '../../../../domain/entities/task.dart';
 import '../../../../domain/services/effective_span.dart';
+import '../../../../domain/services/stage_occurrence_status.dart';
 import '../../../../domain/value_objects/occurrence_key.dart';
 import '../../../../domain/value_objects/task_status.dart';
 
@@ -39,6 +40,7 @@ final class TaskOccurrence {
     required this.task,
     this.occurrence,
     this.stages = const [],
+    this.stageStates = const {},
   });
 
   final Task task;
@@ -50,8 +52,39 @@ final class TaskOccurrence {
   /// 所以旧的调用点行为不变。
   final List<Stage> stages;
 
+  /// **这一次**的阶段状态，按 stageId 索引（FR-TASK-07）。
+  ///
+  /// 不重复的行用不上它 —— 那时状态在 `Stage.status` 上，
+  /// 分流写在 [stageStatus] 里。
+  final StageStatesOfOccurrence stageStates;
+
   /// null = 这一行就是任务本身（不重复，或没有日期）。
   final Occurrence? occurrence;
+
+  /// **这一行的这个阶段做完没有 —— 全项目问这件事的唯一入口。**
+  ///
+  /// 分流（不重复看 `Stage.status`、重复看这一次的状态）只写在这里。
+  /// 甘特一度自己读 `stage.status` 算进度与分段着色，
+  /// 于是重复任务在列表上显示「1/2」、在甘特上显示「0/2」——
+  /// 两个视图对同一条任务说了两句话，而且都不报错。
+  ///
+  /// 所以有一条 lint 盯着：`stage.status` 只许出现在
+  /// `stage_occurrence_status.dart` 与这里。
+  TaskStatus stageStatus(Stage stage) => stageStatusFor(
+    stage,
+    // `key == null` 就是「这一行不是某一次」。
+    occurrenceStates: key == null ? null : stageStates,
+  );
+
+  /// 这一行的阶段进度（已完成 / 总数）。没有阶段时 null。
+  ({int done, int total})? get stageProgress {
+    if (stages.isEmpty) return null;
+    var done = 0;
+    for (final s in stages) {
+      if (stageStatus(s) == TaskStatus.done) done++;
+    }
+    return (done: done, total: stages.length);
+  }
 
   bool get isOccurrence => occurrence != null;
 

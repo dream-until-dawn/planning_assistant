@@ -52,6 +52,16 @@ final class StageOccurrenceState {
   static String idFor(String stageId, OccurrenceKey key) =>
       '$stageId#${key.value}';
 
+  /// 换一个 key，其余原样（R-27）。id 跟着重算 —— 它是派生的。
+  StageOccurrenceState withKey(OccurrenceKey newKey) => StageOccurrenceState(
+    id: StageOccurrenceState.idFor(stageId, newKey),
+    taskId: taskId,
+    stageId: stageId,
+    occurrenceKey: newKey,
+    status: status,
+    completedAt: completedAt,
+  );
+
   StageOccurrenceState copyWith({
     TaskStatus? status,
     DateTime? completedAt,

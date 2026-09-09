@@ -12,6 +12,8 @@ import '../../../../domain/entities/occurrence_override.dart';
 import '../../../../domain/entities/stage.dart';
 import '../../../../domain/entities/task.dart';
 import '../../../../domain/recurrence/recurrence_engine.dart';
+import '../../../../domain/services/stage_occurrence_status.dart';
+import '../../../../domain/value_objects/occurrence_key.dart';
 import 'task_occurrence.dart';
 
 /// 列表的展开窗口，相对「今天」。
@@ -82,6 +84,8 @@ List<TaskOccurrence> expandForList({
   /// 末阶段可能排到 `endDate` 之后，那时跨度以阶段为准。
   /// 不传就是「没有阶段」，跨度退回存储的那一段。
   Map<String, List<Stage>> stagesByTask = const {},
+  Map<String, Map<OccurrenceKey, StageStatesOfOccurrence>> stageStatesByTask =
+      const {},
 }) {
   final byTask = _indexOverrides(overrides);
   final out = <TaskOccurrence>[];
@@ -128,6 +132,7 @@ List<TaskOccurrence> expandForList({
               task: task,
               occurrence: o,
               stages: stagesByTask[task.id] ?? const [],
+              stageStates: stageStatesByTask[task.id]?[o.key] ?? const {},
             ),
           );
         case OccurrenceStatus.done:
@@ -137,6 +142,7 @@ List<TaskOccurrence> expandForList({
                 task: task,
                 occurrence: o,
                 stages: stagesByTask[task.id] ?? const [],
+                stageStates: stageStatesByTask[task.id]?[o.key] ?? const {},
               ),
             );
           }
@@ -148,6 +154,7 @@ List<TaskOccurrence> expandForList({
                 task: task,
                 occurrence: o,
                 stages: stagesByTask[task.id] ?? const [],
+                stageStates: stageStatesByTask[task.id]?[o.key] ?? const {},
               ),
             );
           } else if (!hasNext) {
@@ -157,6 +164,7 @@ List<TaskOccurrence> expandForList({
                 task: task,
                 occurrence: o,
                 stages: stagesByTask[task.id] ?? const [],
+                stageStates: stageStatesByTask[task.id]?[o.key] ?? const {},
               ),
             );
           }
@@ -181,6 +189,7 @@ List<TaskOccurrence> expandForList({
             task: task,
             occurrence: o,
             stages: stagesByTask[task.id] ?? const [],
+            stageStates: stageStatesByTask[task.id]?[o.key] ?? const {},
           ),
         );
         break;
@@ -220,6 +229,8 @@ List<TaskOccurrence> expandInWindow({
   /// 末阶段可能排到 `endDate` 之后，那时跨度以阶段为准。
   /// 不传就是「没有阶段」，跨度退回存储的那一段。
   Map<String, List<Stage>> stagesByTask = const {},
+  Map<String, Map<OccurrenceKey, StageStatesOfOccurrence>> stageStatesByTask =
+      const {},
 }) {
   final byTask = _indexOverrides(overrides);
   final out = <TaskOccurrence>[];
@@ -257,6 +268,7 @@ List<TaskOccurrence> expandInWindow({
         task: task,
         occurrence: o,
         stages: stagesByTask[task.id] ?? const [],
+        stageStates: stageStatesByTask[task.id]?[o.key] ?? const {},
       );
       final start = row.planDate;
       if (start == null) continue;

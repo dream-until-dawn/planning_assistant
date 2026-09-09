@@ -204,10 +204,15 @@ void main() {
       expect(task.recurrenceRule, isNotNull, reason: '只改标题不该把重复规则弄丢');
     });
 
-    testAppWidgets('编辑时不许改「全天」', (tester) async {
-      // 全天 ⇄ 定时会改变 occurrenceKey 的形态，已有例外要迁移 key
-      // （data-model §4.6、R-27），那条命令排在 M3。
-      // 让它能拨却存不下去，就是又一个「改了没反应」的开关。
+    testAppWidgets('编辑时改得了「全天」了（R-27）', (tester) async {
+      // **这条测试原来断言的是反面**：那时全天 ⇄ 定时会改变
+      // occurrenceKey 的形态而没有迁移 key 的命令，所以开关是禁用的 ——
+      // 让它能拨却存不下去，是又一个「改了没反应」的开关。
+      //
+      // `ConvertTaskAllDayModeCommand` 做出来之后这条**该变红**，
+      // 于是改成钉住新行为。迁移本身在
+      // `test/domain/all_day_conversion_test.dart` 与
+      // `test/data/convert_all_day_test.dart` 里验。
       await _pumpApp(tester);
       await _create(tester, '晨会', recurring: true);
 
@@ -219,7 +224,7 @@ void main() {
       final sw = tester.widget<SwitchListTile>(
         find.byKey(TaskEditorPage.allDaySwitchKey),
       );
-      expect(sw.onChanged, isNull);
+      expect(sw.onChanged, isNotNull, reason: '开关又被禁掉了');
     });
   });
 

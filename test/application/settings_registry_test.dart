@@ -11,7 +11,7 @@ import 'package:planning_assistant/features/settings/application/registry.dart';
 import 'package:planning_assistant/features/settings/domain/setting_spec.dart';
 
 void main() {
-  group('§1.2 的五条', () {
+  group('FR-CFG-01 §1.2 的五条', () {
     test('key 全局唯一', () {
       final keys = settingsRegistry.map((s) => s.key).toList();
       expect(keys.toSet(), hasLength(keys.length), reason: '有重复的 key：$keys');
