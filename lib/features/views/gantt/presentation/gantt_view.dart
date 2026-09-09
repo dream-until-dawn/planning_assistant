@@ -53,6 +53,10 @@ class GanttView extends ConsumerStatefulWidget {
   static const Key emptyKey = ValueKey('gantt-empty');
   static const Key errorKey = ValueKey('gantt-error');
   static const Key laneHeaderKey = ValueKey('gantt-lane-header');
+
+  /// 时间粒度切换（FR-VIEW-04「可缩放时间粒度（日/周/月）」）。
+  static Key granularityKey(TimeGranularity g) =>
+      ValueKey('gantt-granularity-${g.name}');
   static const Key scrollKey = ValueKey('gantt-scroll');
 
   /// 某条泳道的表头。
@@ -105,6 +109,7 @@ class _GanttViewState extends ConsumerState<GanttView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const _GranularityToggle(),
         _LaneHeader(key: GanttView.laneHeaderKey, layout: layout),
         Expanded(
           child: SingleChildScrollView(
@@ -284,4 +289,66 @@ class _DayLabel extends StatelessWidget {
           : style,
     ),
   );
+}
+
+/// 时间粒度（FR-VIEW-04 验收里那句「可缩放时间粒度（日/周/月）」）。
+///
+/// ## 补它之前，「日」是一扇单向门
+///
+/// `TimeGranularity` 有三档，`ganttWindowDays` 三档都算了（14/35/90 天），
+/// 甘特的窗口也确实跟着它变。而**界面上唯一能设它的地方是日历那个
+/// 月/周切换**，只有两档。
+///
+/// `day` 是默认值，所以它不是死代码 —— 它是**回不去的起点**：
+/// 用户在日历上点一下「月」或「周」，甘特的窗口就再也回不到 14 天。
+/// 这与 M2 那条「选了『到某天为止』却没地方选日期」是一对镜像：
+/// 那条是走进去出不来，这条是出去了回不来。
+///
+/// 而 FR-VIEW-04 的验收原话是「**可缩放**时间粒度（日/周/月）」——
+/// 一个只能单向走的切换不叫可缩放。
+///
+/// 又是「模型有旋钮、界面够不着」，这次漏的是**验收栏里的一款** ——
+/// 可追溯性门禁看不见这种，它只知道 FR-VIEW-04 被某条用例点过名。
+///
+/// ## 与日历共用同一份状态（§0.1）
+///
+/// 甘特自己存一份的话，从日历切过来两边对不上。
+/// 日历只有月/周两档 —— 它的「周」那一档在 `day` 下也是选中的，
+/// 因为日历本来就没有「日视图」（view-specs §3.3 只定义了月与周）。
+class _GranularityToggle extends ConsumerWidget {
+  const _GranularityToggle();
+
+  static const _labels = {
+    TimeGranularity.day: '日',
+    TimeGranularity.week: '周',
+    TimeGranularity.month: '月',
+  };
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final current = ref.watch(viewSharedStateProvider).granularity;
+    final shared = ref.read(viewSharedStateProvider.notifier);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        Spacing.pageHorizontal,
+        Spacing.sm,
+        Spacing.pageHorizontal,
+        0,
+      ),
+      child: Row(
+        children: [
+          for (final g in TimeGranularity.values) ...[
+            SelectableChip(
+              key: GanttView.granularityKey(g),
+              label: _labels[g]!,
+              selected: current == g,
+              onSelected: (_) => shared.setGranularity(g),
+            ),
+            const SizedBox(width: Spacing.sm),
+          ],
+        ],
+      ),
+    );
+  }
 }

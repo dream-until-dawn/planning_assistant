@@ -14,9 +14,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
+import 'package:planning_assistant/design/components/app_chip.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
 import 'package:planning_assistant/domain/entities/category.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
+import 'package:planning_assistant/features/views/gantt/application/gantt_providers.dart';
 import 'package:planning_assistant/features/views/gantt/presentation/gantt_metrics.dart';
 import 'package:planning_assistant/features/views/gantt/presentation/gantt_painter.dart';
 import 'package:planning_assistant/features/views/gantt/presentation/gantt_view.dart';
@@ -76,6 +78,95 @@ GanttPainter _painter(WidgetTester tester) =>
         as GanttPainter;
 
 void main() {
+  group('FR-VIEW-04 可缩放时间粒度（日/周/月）', () {
+    // 验收原话里的一款。补它之前，「日」是一扇**单向门**：
+    // 它是默认值（所以不是死代码），而界面上唯一能设粒度的地方是
+    // 日历那个月/周切换 —— 只有两档。用户点一下「月」，
+    // 甘特的窗口就再也回不到 14 天。
+    //
+    // 与 M2 那条「选了『到某天为止』却没地方选日期」是一对镜像：
+    // 那条是走进去出不来，这条是出去了回不来。
+    // 而验收原话是「**可缩放**」—— 单向的切换不叫可缩放。
+    //
+    // 可追溯性门禁看不见这种：它只知道 FR-VIEW-04 被某条用例点过名。
+    // 这是「点名 ≠ 测到」在**一条需求内部**的版本。
+
+    testAppWidgets('三档给的窗口各不相同 —— 不是个装饰', (tester) async {
+      await _pump(tester, tasks: [_task('a', from: 0, to: 1)]);
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(GanttView)),
+      );
+
+      final spans = <int>[];
+      for (final g in TimeGranularity.values) {
+        await tapVisible(tester, GanttView.granularityKey(g));
+        final w = container.read(ganttWindowProvider);
+        spans.add(w.start.differenceInDays(w.end).abs());
+      }
+      expect(spans.toSet(), hasLength(3), reason: '三档给出同样长的窗口，这个切换就是个装饰');
+    });
+
+    testAppWidgets('**「日」回得去** —— 补它之前那是一扇单向门', (tester) async {
+      // 「日」是默认值，所以问题不是「设不上」，是**出去了回不来**：
+      // 日历那个切换只有月/周，点过之后甘特再也回不到 14 天窗口。
+      await _pump(tester, tasks: [_task('a', from: 0, to: 1)]);
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(GanttView)),
+      );
+      expect(
+        container.read(viewSharedStateProvider).granularity,
+        TimeGranularity.day,
+        reason: '前提：默认就是「日」',
+      );
+
+      // 模拟用户在日历上点了「月」。
+      container
+          .read(viewSharedStateProvider.notifier)
+          .setGranularity(TimeGranularity.month);
+      await tester.pumpAndSettle();
+
+      await tapVisible(tester, GanttView.granularityKey(TimeGranularity.day));
+      expect(
+        container.read(viewSharedStateProvider).granularity,
+        TimeGranularity.day,
+        reason: '回不到「日」—— 那扇门还是单向的',
+      );
+    });
+
+    testAppWidgets('三档都设得上', (tester) async {
+      await _pump(tester, tasks: [_task('a', from: 0, to: 1)]);
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(GanttView)),
+      );
+
+      for (final g in TimeGranularity.values) {
+        await tapVisible(tester, GanttView.granularityKey(g));
+        expect(
+          container.read(viewSharedStateProvider).granularity,
+          g,
+          reason: '${g.name} 这一档设不上',
+        );
+      }
+    });
+
+    testAppWidgets('与日历共用同一份粒度（§0.1）', (tester) async {
+      // 甘特自己存一份的话，从日历切过来两边对不上。
+      await _pump(tester, tasks: [_task('a', from: 0, to: 1)]);
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(GanttView)),
+      );
+      container
+          .read(viewSharedStateProvider.notifier)
+          .setGranularity(TimeGranularity.week);
+      await tester.pumpAndSettle();
+
+      final chip = tester.widget<SelectableChip>(
+        find.byKey(GanttView.granularityKey(TimeGranularity.week)),
+      );
+      expect(chip.selected, isTrue, reason: '甘特没跟着共享状态走');
+    });
+  });
+
   group('FR-VIEW-04 画出来的东西与布局对得上', () {
     testAppWidgets('一根条的矩形高度 = 跨度 × 比例', (tester) async {
       await _pump(tester, tasks: [_task('出差', to: 2)]);
