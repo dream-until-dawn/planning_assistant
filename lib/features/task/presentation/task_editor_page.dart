@@ -20,24 +20,53 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app_providers.dart';
 import '../../../core/time/minute_of_day.dart';
 import '../../../core/time/plan_date.dart';
+import '../../../core/time/weekday.dart';
 import '../../../design/components/app_button.dart';
 import '../../../design/components/app_chip.dart';
 import '../../../design/theme/app_theme.dart';
 import '../../../design/tokens/dimensions.dart';
+import '../../../domain/entities/task.dart';
+import '../../archive/application/archive_providers.dart';
+import '../../trash/application/trash_providers.dart';
 import '../../views/shared/application/category_providers.dart';
 import '../application/recurrence_draft.dart';
 import '../application/stage_time.dart';
 import '../application/task_editor_controller.dart';
 
 class TaskEditorPage extends ConsumerStatefulWidget {
-  const TaskEditorPage({this.onSaved, super.key});
+  const TaskEditorPage({
+    this.onSaved,
+    this.onDeleted,
+    this.onArchived,
+    super.key,
+  });
 
   /// 保存成功后调用，参数是新任务的 ID。由组合根接上返回上一页。
   final void Function(String taskId)? onSaved;
 
+  /// 删除之后调用。为 null 时不显示删除入口 ——
+  /// 一个点了没反应的删除按钮比没有更糟。
+  final VoidCallback? onDeleted;
+
+  /// 归档之后调用。同上，为 null 时那个入口不出现。
+  final VoidCallback? onArchived;
+
   static const Key titleFieldKey = ValueKey('editor-title');
   static const Key noteFieldKey = ValueKey('editor-note');
   static const Key saveButtonKey = ValueKey('editor-save');
+
+  /// 删除（FR-TASK-08）。**只在编辑已有任务时出现** ——
+  /// 新建页上删什么都没有。
+  ///
+  /// 这个入口是补出来的：`DeleteTaskCommand` 在领域层一直都在、也测过，
+  /// 而界面上**没有任何地方能删一条任务**。
+  static const Key deleteButtonKey = ValueKey('editor-delete');
+
+  /// 归档（FR-TASK-08 的另一半）。同样只在编辑已有任务时出现。
+  ///
+  /// 与删除并排放：两者都是「从列表里拿走」，用户在做决定时
+  /// 正需要看见另一个选项 —— 只给删除的话，想留着的人只能删。
+  static const Key archiveButtonKey = ValueKey('editor-archive');
   static const Key allDaySwitchKey = ValueKey('editor-all-day');
   static const Key dateFieldKey = ValueKey('editor-date');
   static const Key timeFieldKey = ValueKey('editor-time');
@@ -52,6 +81,14 @@ class TaskEditorPage extends ConsumerStatefulWidget {
 
   /// 分类选择区。每个选项的 Key 见 [categoryChipKey]。
   static const Key categoryPickerKey = ValueKey('editor-category');
+
+  /// 优先级选择区。每个选项的 Key 见 [priorityChipKey]。
+  ///
+  /// **这一区是补出来的。** `priority` 在模型、命令、筛选里都有，
+  /// 唯独界面上没有 —— 于是所有任务恒为「普通」，
+  /// 而筛选条那一维筛出来的永远只有那一档。
+  /// 又是一次「模型上有旋钮，界面上够不着」（testing-strategy §1.6）。
+  static const Key priorityPickerKey = ValueKey('editor-priority');
 
   /// 阶段区。
   static const Key stageSectionKey = ValueKey('editor-stages');
@@ -75,6 +112,23 @@ class TaskEditorPage extends ConsumerStatefulWidget {
   static Key endModeKey(RecurrenceEndMode m) =>
       ValueKey('editor-repeat-end-${m.name}');
 
+  /// 「每月」那三个档位与它们各自的输入（FR-TASK-03 的
+  /// 「每月 15 号」「每月最后一个周五」）。
+  static Key monthlyModeKey(MonthlyMode m) =>
+      ValueKey('editor-repeat-monthly-${m.name}');
+  static Key monthOrdinalKey(int ordinal) =>
+      ValueKey('editor-repeat-ordinal-$ordinal');
+
+  /// **与 [weekdayKey] 分开。** 两处选的不是一件事（一个是集合、一个是单选），
+  /// 共用 Key 的话测试里「点周二」会指向两个不同的语义。
+  static Key monthWeekdayKey(Weekday d) =>
+      ValueKey('editor-repeat-monthday-${d.name}');
+  static const Key lastDayOfMonthKey = ValueKey('editor-repeat-lastday');
+
+  /// 「29/30/31 号的月份会跳过」那句提醒。
+  static const Key monthSkipHintKey = ValueKey('editor-repeat-skip-hint');
+  static const String monthDayStepper = 'editor-repeat-monthday';
+
   /// 间隔（每 N 天/周/…）与次数的加减器，以及「到某天为止」的日期。
   ///
   /// 这三个一度**只存在于模型里，界面上够不着** —— `interval` 恒为 1、
@@ -94,6 +148,14 @@ class TaskEditorPage extends ConsumerStatefulWidget {
       ValueKey('editor-stage-remove-$stageId');
   static Key stageUpKey(String stageId) => ValueKey('editor-stage-up-$stageId');
 
+  /// 阶段的完成勾选。
+  ///
+  /// **这个也是补出来的。** `Stage.status` 与 `StageSpec.status` 一直都在，
+  /// 甘特图还按它画进度 —— 而界面上**没有任何地方能勾**。
+  /// 与优先级是同一族（testing-strategy §1.6）。
+  static Key stageDoneKey(String stageId) =>
+      ValueKey('editor-stage-done-$stageId');
+
   /// 某个阶段的时间段按钮（FR-TASK-02：每阶段有独立时间段）。
   static Key stageTimeKey(String stageId) =>
       ValueKey('editor-stage-time-$stageId');
@@ -107,6 +169,9 @@ class TaskEditorPage extends ConsumerStatefulWidget {
   static const Key stageTimeClearKey = ValueKey('stage-time-clear');
 
   /// 某个分类选项的 Key。`null` 是「未分类」那一项。
+  static Key priorityChipKey(TaskPriority p) =>
+      ValueKey('editor-priority-${p.name}');
+
   static Key categoryChipKey(String? categoryId) =>
       ValueKey('editor-category-${categoryId ?? 'none'}');
 
@@ -156,6 +221,50 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
     }
   }
 
+  /// 删掉这条任务（FR-TASK-08）。
+  ///
+  /// **软删除 + 一条撤销** —— 删除是最需要反悔的操作，
+  /// 而「再点一次删除」不是撤销。撤销闭包由动作本身给出
+  /// （同列表那几个滑动动作），界面层不自己算怎么恢复。
+  ///
+  /// 不弹「确定要删吗」的二次确认：有撤销就不需要拦一道，
+  /// 拦一道反而让日常操作多一次点击。
+  Future<void> _delete(TaskDraft draft) async {
+    final id = draft.editingTaskId;
+    if (id == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final undo = await ref.read(trashActionsProvider).delete(id);
+    widget.onDeleted?.call();
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: const Text('已移到回收站'),
+          action: SnackBarAction(label: '撤销', onPressed: undo),
+        ),
+      );
+  }
+
+  /// 归档这条任务（FR-TASK-08）。
+  ///
+  /// 与删除同一个做法：动作给撤销闭包，界面不自己算怎么还原 ——
+  /// 取消归档要把归档前的 `status` 还原回来，而那个快照只有领域层知道。
+  Future<void> _archive(TaskDraft draft) async {
+    final id = draft.editingTaskId;
+    if (id == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final undo = await ref.read(archiveActionsProvider).archive(id);
+    widget.onArchived?.call();
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: const Text('已归档'),
+          action: SnackBarAction(label: '撤销', onPressed: undo),
+        ),
+      );
+  }
+
   /// 「今天」经时钟 + 时区换算器拿，**不用 `DateTime.now()`**。
   ///
   /// 分层守卫只扫 domain 与 feature application，presentation 不在射程内，
@@ -183,6 +292,22 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         title: Text(draft.isEditing ? '编辑任务' : '新建任务'),
+        actions: [
+          if (draft.isEditing && widget.onArchived != null)
+            IconButton(
+              key: TaskEditorPage.archiveButtonKey,
+              icon: const Icon(Icons.inventory_2_outlined),
+              tooltip: '归档',
+              onPressed: () => _archive(draft),
+            ),
+          if (draft.isEditing && widget.onDeleted != null)
+            IconButton(
+              key: TaskEditorPage.deleteButtonKey,
+              icon: const Icon(Icons.delete_outline),
+              tooltip: '删除',
+              onPressed: () => _delete(draft),
+            ),
+        ],
       ),
       body: SafeArea(
         child: ListView(
@@ -213,6 +338,11 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
             _CategoryPicker(
               selectedId: draft.categoryId,
               onSelected: controller.setCategory,
+            ),
+            const SizedBox(height: Spacing.xl),
+            _PriorityPicker(
+              selected: draft.priority,
+              onSelected: controller.setPriority,
             ),
             const SizedBox(height: Spacing.xl),
             _DateRow(
@@ -805,6 +935,45 @@ class _CategoryPicker extends ConsumerWidget {
   );
 }
 
+/// 优先级选择区（FR-TASK-01）。
+///
+/// 顺序按 [TaskPriority.byImportance]（紧急 → … → 无），
+/// 与列表的「按优先级」分组、筛选条用的是**同一份顺序** ——
+/// 各写一遍的话，三处的次序迟早对不上。
+class _PriorityPicker extends StatelessWidget {
+  const _PriorityPicker({required this.selected, required this.onSelected});
+
+  final TaskPriority selected;
+  final ValueChanged<TaskPriority> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+
+    return Column(
+      key: TaskEditorPage.priorityPickerKey,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('优先级', style: text.bodySmall),
+        const SizedBox(height: Spacing.xs),
+        Wrap(
+          spacing: Spacing.sm,
+          runSpacing: Spacing.xs,
+          children: [
+            for (final p in TaskPriority.byImportance)
+              SelectableChip(
+                key: TaskEditorPage.priorityChipKey(p),
+                label: p.label,
+                selected: p == selected,
+                onSelected: (_) => onSelected(p),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
 /// 阶段区（FR-TASK-02）。
 ///
 /// **默认不出现任何阶段行** —— 大多数任务是单项的（FR-TASK-01 的基调），
@@ -846,16 +1015,29 @@ class _StageSection extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    // 序号跟着**列表位置**走，不是 orderIndex —— 编辑期间
-                    // 后者还没算出来（保存时才转成连续的）。
-                    SizedBox(
-                      width: Spacing.xxl,
-                      child: Text('${i + 1}.', style: text.bodySmall),
+                    // 勾完成。序号让位给它 —— 序号在时间按钮那一行
+                    // 也能看出来（第几个），而「做完没有」没有别处可看。
+                    Semantics(
+                      label: '第 ${i + 1} 个阶段完成',
+                      child: Checkbox(
+                        key: TaskEditorPage.stageDoneKey(stage.id),
+                        value: stage.isDone,
+                        onChanged: (v) =>
+                            controller.setStageDone(stage.id, v ?? false),
+                      ),
                     ),
                     Expanded(
                       child: TextField(
                         key: TaskEditorPage.stageFieldKey(stage.id),
                         decoration: const InputDecoration(hintText: '这一步做什么'),
+                        // 划掉是**辅助**，不是唯一标记 —— 勾选框自己
+                        // 就带着状态（§8.1 那条原则）。
+                        style: stage.isDone
+                            ? TextStyle(
+                                decoration: TextDecoration.lineThrough,
+                                color: context.appColors.disabledText,
+                              )
+                            : null,
                         onChanged: (v) => controller.setStageTitle(stage.id, v),
                       ),
                     ),
@@ -940,6 +1122,7 @@ class _RecurrenceSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final colors = context.appColors;
 
     // 界面表达不了的规则：**只读一行，不给动**。
     //
@@ -1001,6 +1184,97 @@ class _RecurrenceSection extends StatelessWidget {
             onChanged: (v) =>
                 controller.setRecurrence(draft.copyWith(interval: v)),
           ),
+          if (draft.frequency == RecurrenceFrequency.monthly) ...[
+            const SizedBox(height: Spacing.sm),
+            Text('每月哪一天', style: text.bodySmall),
+            const SizedBox(height: Spacing.xs),
+            _ChipRow(
+              options: [
+                for (final m in MonthlyMode.values)
+                  (
+                    TaskEditorPage.monthlyModeKey(m),
+                    m.label,
+                    draft.monthlyMode == m,
+                    () => controller.setRecurrence(
+                      draft.copyWith(monthlyMode: m),
+                    ),
+                  ),
+              ],
+            ),
+            // 与结束条件同一个做法：选中哪档就只给哪档的输入。
+            if (draft.monthlyMode == MonthlyMode.onDate) ...[
+              const SizedBox(height: Spacing.xs),
+              _ChipRow(
+                options: [
+                  (
+                    TaskEditorPage.lastDayOfMonthKey,
+                    '最后一天',
+                    draft.monthDay == lastDayOfMonth,
+                    () => controller.setRecurrence(
+                      draft.copyWith(
+                        // 再点一次回到 1 号 —— 不给「取消选中但没有号数」
+                        // 这种状态，那会让保存按钮灰着而看不出原因。
+                        monthDay: draft.monthDay == lastDayOfMonth
+                            ? 1
+                            : lastDayOfMonth,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (draft.monthDay != lastDayOfMonth)
+                _Stepper(
+                  name: TaskEditorPage.monthDayStepper,
+                  label: '几号',
+                  display: monthDayLabel(draft.monthDay),
+                  value: draft.monthDay,
+                  max: 31,
+                  onChanged: (v) =>
+                      controller.setRecurrence(draft.copyWith(monthDay: v)),
+                ),
+              // 29/30/31 号在短月份是**跳过**，不是夹到月末（RFC 5545）。
+              // 不说的话，选了 31 号的人要到三月才发现二月没提醒。
+              if (draft.monthDay >= 29)
+                Padding(
+                  key: TaskEditorPage.monthSkipHintKey,
+                  padding: const EdgeInsets.only(top: Spacing.xs),
+                  child: Text(
+                    '没有 ${draft.monthDay} 号的月份会跳过。想每月月末，选「最后一天」。',
+                    style: text.bodySmall?.copyWith(color: colors.dangerText),
+                  ),
+                ),
+            ],
+            if (draft.monthlyMode == MonthlyMode.onWeekday) ...[
+              const SizedBox(height: Spacing.xs),
+              _ChipRow(
+                options: [
+                  for (final o in monthOrdinals)
+                    (
+                      TaskEditorPage.monthOrdinalKey(o),
+                      monthOrdinalLabel(o),
+                      draft.monthOrdinal == o,
+                      () => controller.setRecurrence(
+                        draft.copyWith(monthOrdinal: o),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: Spacing.xs),
+              _ChipRow(
+                options: [
+                  for (final d in Weekday.values)
+                    (
+                      TaskEditorPage.monthWeekdayKey(d),
+                      '周${d.label}',
+                      draft.monthWeekday == d,
+                      () => controller.setRecurrence(
+                        draft.copyWith(monthWeekday: d),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ],
           if (draft.frequency == RecurrenceFrequency.weekly) ...[
             const SizedBox(height: Spacing.sm),
             Text('周几（不选＝跟开始日期同一天）', style: text.bodySmall),
@@ -1109,7 +1383,7 @@ class _UntilRow extends StatelessWidget {
 /// 非数字、粘进来的负号 —— 那些 [RecurrenceDraft.blockedReason] 里都有兜底，
 /// 但让用户先打错再看红字，不如根本打不错。
 ///
-/// 上界 [_max] 是**控件的**限制，不是模型的：RRULE 的 COUNT 可以很大，
+/// 上界 [max] 是**控件的**限制，不是模型的：RRULE 的 COUNT 可以很大，
 /// 同步下来一条 `COUNT=500` 照样正常展开。真要重复很多次的场景
 /// （「今年每天」），「到某天为止」才是顺手的控件。
 class _Stepper extends StatelessWidget {
@@ -1119,10 +1393,15 @@ class _Stepper extends StatelessWidget {
     required this.display,
     required this.value,
     required this.onChanged,
+    this.max = 99,
   });
 
   static const int _min = 1;
-  static const int _max = 99;
+
+  /// 上界跟着用途走：间隔与次数是 99，而「几号」是 31。
+  /// 一律 99 的话，加号能一路点到 45 号 —— 一条编得出来、
+  /// 但一次都不会发生的规则。
+  final int max;
 
   /// Key 前缀，见 [TaskEditorPage.stepperValueKey]。
   final String name;
@@ -1141,7 +1420,7 @@ class _Stepper extends StatelessWidget {
     // 到头了就禁用按钮，而不是点了没反应 —— 后者与「界面卡住了」
     // 在用户看来一模一样。
     final canDec = value > _min;
-    final canInc = value < _max;
+    final canInc = value < max;
 
     return Padding(
       padding: const EdgeInsets.only(top: Spacing.sm),

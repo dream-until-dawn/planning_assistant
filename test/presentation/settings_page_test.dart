@@ -1,4 +1,9 @@
-/// 设置页（settings-spec §4、FR-CFG-07）。
+/// 设置页（settings-spec §4、FR-CFG-07、NFR-MAINT-04）。
+///
+/// FR-CFG-07 与 NFR-MAINT-04 说的是同一件事的两面：
+/// 「新增一个配置项只需加一条声明，UI 自动渲染」＝「新增一个配置项
+/// ≤ 1 处改动」。下面那条「每个暴露项都出现」是它的验收 ——
+/// 页面**遍历注册表**渲染，注册表里多一条就自动多一行。
 ///
 /// 最要紧的一条不是「页面画出来了」，而是**改了真的生效**：
 /// 一个改完没反应的开关比没有更糟。所以这里走真库、真路由，
@@ -88,7 +93,16 @@ void main() {
           .map((s) => s.group)
           .toSet();
       for (final group in used) {
-        expect(find.text(group!.title), findsOneWidget);
+        final finder = find.text(group!.title);
+        // 同上：靠后的分组要先滚出来才建得出来。
+        //
+        // 这条一度是**直接断言**的，于是「视图」组多加一个配置项之后，
+        // 「行为」被挤出 cacheExtent，报的是「找不到『行为』」——
+        // 看起来像分组渲染坏了，实际上只是没滚到。
+        // `tapVisible` 的注释里记的是同一个坑的另一副面孔。
+        await tester.scrollUntilVisible(finder, 200);
+        await tester.pumpAndSettle();
+        expect(finder, findsOneWidget);
       }
     });
 

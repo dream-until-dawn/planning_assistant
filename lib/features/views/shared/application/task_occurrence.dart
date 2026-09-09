@@ -24,17 +24,31 @@
 /// 列表却还把它排在周一」。所以在这里定义一次。
 library;
 
+import '../../../../core/time/date_and_minute.dart';
 import '../../../../core/time/minute_of_day.dart';
 import '../../../../core/time/plan_date.dart';
 import '../../../../domain/entities/occurrence.dart';
+import '../../../../domain/entities/stage.dart';
 import '../../../../domain/entities/task.dart';
+import '../../../../domain/services/effective_span.dart';
 import '../../../../domain/value_objects/occurrence_key.dart';
 import '../../../../domain/value_objects/task_status.dart';
 
 final class TaskOccurrence {
-  const TaskOccurrence({required this.task, this.occurrence});
+  const TaskOccurrence({
+    required this.task,
+    this.occurrence,
+    this.stages = const [],
+  });
 
   final Task task;
+
+  /// 这条任务的阶段。**只为算有效跨度**（data-model §4.7）——
+  /// 末阶段可能排到 `endDate` 之后，那时跨度以阶段为准。
+  ///
+  /// 默认空表：不带阶段时 [effectiveEndDate] 与 [endDate] 一致，
+  /// 所以旧的调用点行为不变。
+  final List<Stage> stages;
 
   /// null = 这一行就是任务本身（不重复，或没有日期）。
   final Occurrence? occurrence;
@@ -79,6 +93,41 @@ final class TaskOccurrence {
     if (o == null) return task.isAllDay ? null : task.endMinute;
     if (o.isAllDay) return null;
     return o.end?.minuteOfDay;
+  }
+
+  /// **有效**结束 —— 存储的结束与各阶段结束里靠后的那个（§4.7）。
+  ///
+  /// 四个视图一律用它，不得各自计算：甘特自行「扩展到末阶段」而时间轴
+  /// 按 `endDate` 画的话，同一条任务在两个视图里跨度不同，
+  /// 而那正是「四视图共享同一份数据源」要排除的。
+  EffectiveSpan? get span {
+    final date = planDate;
+    if (date == null) return null;
+    return effectiveSpan(
+      start: DateAndMinute(date, startMinute ?? MinuteOfDay.midnight),
+      // **走这一行自己的结束**，不是任务的 —— 重复任务的每一次
+      // 各有各的结束（被例外挪过的那一次尤其）。
+      end: storedEnd(endDate: endDate, endMinute: endMinute),
+      stages: stages,
+    );
+  }
+
+  /// [span] 的结束日期。没有日期的行为 null。
+  PlanDate? get effectiveEndDate {
+    final s = span;
+    if (s == null) return null;
+    // 存储侧与阶段侧都没给出结束时，跨度是零长 —— 那时**不谎报一个
+    // 结束日期**，与 `endDate` 一样返回 null。有阶段撑开时才有值。
+    if (s.end == s.start && endDate == null) return null;
+    return s.end.date;
+  }
+
+  /// [span] 的结束时刻。全天任务没有。
+  MinuteOfDay? get effectiveEndMinute {
+    if (isAllDay) return null;
+    final s = span;
+    if (s == null || (s.end == s.start && endDate == null)) return null;
+    return s.end.minute;
   }
 
   /// 生效的标题。例外可以只改某一次的标题（FR-TASK-05）。

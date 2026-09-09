@@ -28,39 +28,47 @@ final timelineDateProvider = Provider<PlanDate>(
   (ref) => ref.watch(viewSharedStateProvider).focusedDate,
 );
 
-/// 这一天窗口里的全部发生。
+/// 这一天要显示的发生，**已筛选**。
+///
+/// 筛选放在这里而不是下游：日历那侧的同名 provider 就是「已筛选」的意思，
+/// 两个形状一样的名字表示不同的东西，是下一个 bug 的温床。
+/// 有一条测试盯着三个视图对同一份筛选的反应（FR-VIEW-05）。
 final timelineOccurrencesProvider = Provider<List<TaskOccurrence>>((ref) {
   final date = ref.watch(timelineDateProvider);
-  final statuses = ref.watch(viewSharedStateProvider).filter.statuses;
+  final filter = ref.watch(viewSharedStateProvider).filter;
 
   return switch (ref.watch(visibleTasksProvider)) {
-    AsyncData(:final value) => expandInWindow(
-      tasks: value,
-      // 例外还没读出来时先按「没有例外」展开 —— 下一帧到了自动重算。
-      // 抛或者卡住的话，首帧会是一屏错误，而它其实只是还没读完。
-      overrides: switch (ref.watch(allOverridesProvider)) {
-        AsyncData(:final value) => value,
-        _ => const [],
-      },
-      // **只要这一天。** 跨天任务由 `expandInWindow` 按覆盖区间捞回来，
-      // 不需要在这里把窗口撑宽 —— 撑宽多少才够是个没有答案的问题。
-      window: DateRange(date, date),
-      engine: RecurrenceEngine(ref.watch(timeZoneResolverProvider)),
-      // 跳过的那次默认不出现（FR-TASK-05），显式筛「已跳过」才现身。
-      includeSkipped: statuses.contains(TaskStatus.skipped),
+    AsyncData(:final value) => applyFilter(
+      expandInWindow(
+        tasks: value,
+        // 例外还没读出来时先按「没有例外」展开 —— 下一帧到了自动重算。
+        // 抛或者卡住的话，首帧会是一屏错误，而它其实只是还没读完。
+        overrides: switch (ref.watch(allOverridesProvider)) {
+          AsyncData(:final value) => value,
+          _ => const [],
+        },
+        // **只要这一天。** 跨天任务由 `expandInWindow` 按覆盖区间捞回来，
+        // 不需要在这里把窗口撑宽 —— 撑宽多少才够是个没有答案的问题。
+        window: DateRange(date, date),
+        // 阶段进来算有效跨度（§4.7）—— 四视图共用同一个答案。
+        stagesByTask: ref.watch(stagesByTaskProvider),
+        engine: RecurrenceEngine(ref.watch(timeZoneResolverProvider)),
+        // 跳过的那次默认不出现（FR-TASK-05），显式筛「已跳过」才现身。
+        includeSkipped: filter.statuses.contains(TaskStatus.skipped),
+      ),
+      filter,
     ),
     _ => const [],
   };
 });
 
-/// 筛完之后，摆到这一天上的块与「随时」区。
-final timelineDayProvider = Provider<TimelineDay>((ref) {
-  final filter = ref.watch(viewSharedStateProvider).filter;
-  return timelineDayFor(
-    applyFilter(ref.watch(timelineOccurrencesProvider), filter),
+/// 摆到这一天上的块与「随时」区。
+final timelineDayProvider = Provider<TimelineDay>(
+  (ref) => timelineDayFor(
+    ref.watch(timelineOccurrencesProvider),
     ref.watch(timelineDateProvider),
-  );
-});
+  ),
+);
 
 /// 块的左右排布（§1.2「同时段 N 个任务等宽并排」）。
 ///

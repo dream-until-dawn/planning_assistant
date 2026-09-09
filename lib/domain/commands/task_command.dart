@@ -69,6 +69,8 @@ sealed class TaskCommand {
       ),
       CompleteTaskWithStagesCommand.kType =>
         CompleteTaskWithStagesCommand.fromJson(json),
+      SetStageOccurrenceStatusCommand.kType =>
+        SetStageOccurrenceStatusCommand.fromJson(json),
       _ => throw UnknownCommandException(type),
     };
   }
@@ -88,6 +90,7 @@ sealed class TaskCommand {
     SkipOccurrenceCommand.kType,
     MoveOccurrenceCommand.kType,
     SplitRecurringTaskCommand.kType,
+    SetStageOccurrenceStatusCommand.kType,
   ];
 }
 
@@ -712,3 +715,54 @@ PlanDate? _parseDate(Object? raw) =>
 
 MinuteOfDay? _parseMinute(Object? raw) =>
     raw == null ? null : MinuteOfDay(raw as int);
+
+/// 改「某一次里某个阶段」的状态（FR-TASK-07）。
+///
+/// ## 与 [ReplaceStagesCommand] 的分工
+///
+/// | | 改的是 | 从哪来 |
+/// |---|---|---|
+/// | [ReplaceStagesCommand] | **整条任务**的阶段（增删改、顺序、标题） | 编辑器 |
+/// | 本命令 | **这一次**的第 N 步做完没有 | 视图里就地勾（view-specs §4.3） |
+///
+/// 混用的后果是具体的：在编辑器里勾一个阶段，改的是整条重复任务，
+/// 于是**每一周**的那一步都成了已完成。
+final class SetStageOccurrenceStatusCommand extends TaskCommand {
+  const SetStageOccurrenceStatusCommand({
+    required this.taskId,
+    required this.stageId,
+    required this.occurrenceKey,
+    required this.status,
+  });
+
+  static const kType = 'setStageOccurrenceStatus';
+
+  final String taskId;
+  final String stageId;
+
+  /// **原始**发生时刻的标识（§4.2）——
+  /// 这一次即使被挪到别的日期，它仍然是同一次。
+  final OccurrenceKey occurrenceKey;
+
+  final TaskStatus status;
+
+  @override
+  String get type => kType;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'type': kType,
+    'taskId': taskId,
+    'stageId': stageId,
+    'occurrenceKey': occurrenceKey.value,
+    'status': status.wireName,
+  };
+
+  static SetStageOccurrenceStatusCommand fromJson(Map<String, Object?> json) =>
+      SetStageOccurrenceStatusCommand(
+        taskId: json['taskId']! as String,
+        stageId: json['stageId']! as String,
+        occurrenceKey: OccurrenceKey.parse(json['occurrenceKey']! as String),
+        status: TaskStatus.fromWireName(json['status']! as String),
+      );
+}

@@ -181,16 +181,36 @@ TaskStatus? deriveStatusFromStages(
   );
 }
 
-/// 是否已过回收站保留期，可以物理清理（§6、用例 L-09）。
+/// 距离「可以被清掉」还有多久（§6、用例 L-09）。未删除的返回 null。
 ///
-/// **边界日不清**：恰好到期的那天仍然保留。用 `>` 而不是 `>=` ——
-/// 差这一天的后果是用户在最后一天打开回收站发现东西已经没了。
-bool isPurgeable(
+/// 已经过期的返回**负值** —— 清理发生在下次启动，所以「早就该清了」
+/// 是一个真实存在的状态，不该压成 0。
+///
+/// ## 为什么这条要单独暴露出去
+///
+/// 回收站界面要写「还剩几天」。那句话若自己拿 `inDays` 算一遍，
+/// 就与下面这条判据分了叉：删除 29 天 20 小时时它算出「还剩 1 天」，
+/// 而清理判的是「差值 > 30 天」—— 今晚一过就真清了，
+/// 用户看到的却是还有一天。差半天不算大事，但它是**同一个问题的
+/// 两套答案**，而两套答案里迟早有一套会被改坏。
+Duration? timeUntilPurge(
   Task task, {
   required DateTime now,
   required int retentionDays,
 }) {
   final deletedAt = task.deletedAt;
-  if (deletedAt == null) return false;
-  return now.difference(deletedAt) > Duration(days: retentionDays);
+  if (deletedAt == null) return null;
+  return deletedAt.add(Duration(days: retentionDays)).difference(now);
 }
+
+/// 是否已过回收站保留期，可以物理清理（§6、用例 L-09）。
+///
+/// **边界日不清**：恰好到期的那一刻仍然保留 —— 剩余为 0 时 `isNegative`
+/// 是 false。差这一天的后果是用户在最后一天打开回收站发现东西已经没了。
+bool isPurgeable(
+  Task task, {
+  required DateTime now,
+  required int retentionDays,
+}) =>
+    timeUntilPurge(task, now: now, retentionDays: retentionDays)?.isNegative ??
+    false;

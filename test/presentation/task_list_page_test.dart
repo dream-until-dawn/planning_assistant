@@ -1,4 +1,4 @@
-/// 列表视图的分组渲染与折叠（view-specs §2.1、§2.4）。
+/// 列表视图的分组渲染与折叠（view-specs §2.1、§2.4、FR-VIEW-02）。
 ///
 /// 不接库、不拍图：覆盖数据源，断言渲染出来的结构。
 /// 分组规则本身在 `application/task_grouping_test.dart` 验，

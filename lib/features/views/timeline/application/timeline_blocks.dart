@@ -130,16 +130,18 @@ TimelineDay timelineDayFor(List<TaskOccurrence> rows, PlanDate date) {
 ///   而屏幕上只会表现为「跨天任务莫名其妙不跨天」。
 /// * 两者都有 → 就是它。
 int _endOffset(TaskOccurrence row, PlanDate date, int startOffset) {
-  final endDate = row.endDate;
+  // **有效**结束（data-model §4.7）：末阶段可能排到 endDate 之后。
+  // 四视图一律用它，不得各自计算。
+  final endDate = row.effectiveEndDate;
   if (endDate == null) return startOffset;
   final dayStart = endDate.differenceInDays(date) * minutesPerDay;
-  final endMinute = row.endMinute;
+  final endMinute = row.effectiveEndMinute;
   return dayStart + (endMinute?.value ?? minutesPerDay - 1);
 }
 
 /// 这一行有没有覆盖到 [date]（含跨天）。
 bool _coversDay(TaskOccurrence row, PlanDate date) {
   final start = row.planDate!;
-  final end = row.endDate ?? start;
+  final end = row.effectiveEndDate ?? start;
   return !date.isBefore(start) && !date.isAfter(end);
 }

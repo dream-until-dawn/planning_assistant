@@ -5,6 +5,8 @@
 /// 而「一小时有多高」这件事同时被刻度、块、当前时刻线三处用到。
 library;
 
+import '../../../../core/time/minute_of_day.dart';
+
 /// 一天有多少分钟。与 `timeline_blocks.dart` 里的同名常量是同一个数，
 /// 这里再写一遍是为了让 presentation 不必为一个整数去 import application。
 const int _minutesPerDay = 1440;
@@ -39,6 +41,22 @@ abstract final class TimelineMetrics {
   /// 「+N」那一格的宽度。有折叠时从可用宽里**先扣掉它**，
   /// 不然它会盖在第三列的标题上 —— 而那正是「+N」本该避免的事。
   static const double pillWidth = 44;
+
+  /// 画布上某个纵坐标是**哪一刻**，向下对齐到刻度（FR-VIEW-07）。
+  ///
+  /// **向下取整到整格**，不是取最近的一格：需求原话是
+  /// 「在时间轴 14:00 处长按新增，新任务默认时间为 14:00」——
+  /// 手指落在 14:00 那一格里的任何位置，用户说的都是 14 点。
+  /// 取最近的话，按在格子下半部会跳到 15:00，
+  /// 而他明明是对着「14:00」那行字按的。
+  ///
+  /// 越界一律夹回当天：滚动区高度就是一天，理论上超不出去，
+  /// 但 `MinuteOfDay` 越界会抛，而这条路径上抛异常等于长按崩溃。
+  static MinuteOfDay minuteAt(double dy, int tickMinutes) {
+    final raw = dy / pixelsPerMinute(tickMinutes);
+    final snapped = (raw ~/ tickMinutes) * tickMinutes;
+    return MinuteOfDay(snapped.clamp(0, MinuteOfDay.maxValue));
+  }
 
   /// 首次进入时滚到哪里（§1.2「滚动到当前时刻前 1 小时」）。
   ///

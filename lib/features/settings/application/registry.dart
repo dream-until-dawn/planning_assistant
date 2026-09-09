@@ -17,7 +17,10 @@
 /// 每接一个功能，把它对应的那条搬进来。
 library;
 
+import '../../../core/time/weekday.dart';
 import '../../../design/tokens/dimensions.dart';
+import '../../views/calendar/application/calendar_split.dart';
+import '../../views/gantt/application/gantt_layout.dart';
 import '../../views/shared/application/view_kind.dart';
 import '../../views/task_list/application/task_grouping.dart';
 import '../domain/setting_spec.dart';
@@ -73,10 +76,15 @@ SettingSpec<T> _enumSpec<T>({
 final List<SettingSpecBase> settingsRegistry = [
   themeMode,
   cornerStyle,
+  reduceMotion,
   defaultView,
   listGroupBy,
   listSortBy,
   timelineTickMinutes,
+  firstDayOfWeek,
+  calendarSplitRatio,
+  ganttLaneBy,
+  trashRetentionDays,
   defaultCategoryId,
   swipeRight,
   swipeLeft,
@@ -92,6 +100,22 @@ final SettingSpec<ThemeModeSetting> themeMode = _enumSpec(
   fromStorageKey: ThemeModeSetting.fromStorageKey,
   group: SettingGroup.appearance,
   label: '主题',
+);
+
+/// 关掉动效（design-system §7、NFR-A11Y）。
+///
+/// **与系统设置取「或」**，不是取代它 —— 打开系统的「减少动态效果」
+/// 之后还要再来应用里关一次，那等于没有响应系统设置。
+/// 取「或」的那一步在 `reducedMotionProvider` 里，这里只是应用内这一半。
+final SettingSpec<bool> reduceMotion = SettingSpec<bool>(
+  key: 'theme.reduceMotion',
+  defaultValue: false,
+  exposure: SettingExposure.exposed,
+  group: SettingGroup.appearance,
+  label: '减少动态效果',
+  description: '关掉切换与过渡动画；系统开了这项时自动生效',
+  encode: (v) => v,
+  decode: (json) => json is bool ? json : false,
 );
 
 final SettingSpec<CornerStyle> cornerStyle = _enumSpec(
@@ -120,6 +144,7 @@ final SettingSpec<CornerStyle> cornerStyle = _enumSpec(
 enum SwipeAction {
   complete('complete', '完成'),
   postpone('postpone', '推迟一天'),
+  delete('delete', '删除'),
   none('none', '不做事');
 
   const SwipeAction(this.storageKey, this.label);
@@ -129,10 +154,13 @@ enum SwipeAction {
 
   /// **只列做得出来的那几个。**
   ///
-  /// settings-spec 里还写了 `delete`。没放进来是因为「滑一下就把整条
-  /// 重复任务删了」在误触时代价太大，而撤销目前只是一条 Snackbar ——
-  /// 等回收站的入口做出来（M3）再加。摆一个删不掉的「删除」选项，
-  /// 比没有这个选项更糟。
+  /// `delete` 一度不在这里：「滑一下就把整条重复任务删了」在误触时
+  /// 代价太大，而当时唯一的退路是一条 Snackbar —— 划走了就找不回来。
+  /// 回收站做出来之后这个理由消失了：删除是软删除，进回收站，
+  /// 随时能恢复。所以补上。
+  ///
+  /// 这条注释留着是因为它记的是**判据**，不是当时的结论：
+  /// 一个动作能不能放进滑动手势，看的是「误触之后有没有回头路」。
   static SwipeAction fromStorageKey(String? key) {
     for (final v in values) {
       if (v.storageKey == key) return v;
@@ -224,6 +252,78 @@ final SettingSpec<ListGroupBy> listGroupBy = _enumSpec(
   fromStorageKey: ListGroupBy.fromStorageKey,
   group: SettingGroup.view,
   label: '列表分组',
+);
+
+/// 一周从周几起（view-specs §3.2，日历与甘特都用）。
+///
+/// 只给三个选项，不是七个：周一（ISO / 多数地区）、周日（北美等）、
+/// 周六（部分中东地区）。剩下四个在现实里没有哪个地区用作周起始日，
+/// 列出来只会让这个选择器变长。
+final SettingSpec<Weekday> firstDayOfWeek = _enumSpec(
+  key: 'view.firstDayOfWeek',
+  defaultValue: Weekday.monday,
+  options: const [
+    (Weekday.monday, '周一'),
+    (Weekday.sunday, '周日'),
+    (Weekday.saturday, '周六'),
+  ],
+  storageKeyOf: (v) => v.storageKey,
+  fromStorageKey: Weekday.fromStorageKey,
+  group: SettingGroup.view,
+  label: '一周从哪天开始',
+  description: '影响日历的排列',
+);
+
+/// 回收站保留期（task-lifecycle §6）。
+///
+/// 超过它的墓碑会在下次启动时被物理清理（L-09）。
+///
+/// **给的是几个档位，不是任意数字**：一个能填 0 的输入框意味着
+/// 「删了立刻永久消失」，那与回收站的意义正相反。
+final SettingSpec<int> trashRetentionDays = SettingSpec<int>(
+  key: 'data.trashRetentionDays',
+  defaultValue: 30,
+  exposure: SettingExposure.exposed,
+  group: SettingGroup.data,
+  editor: SettingEditor.select,
+  label: '回收站保留',
+  description: '超过这个天数的已删任务会在下次启动时清理掉',
+  options: const [(7, '7 天'), (30, '30 天'), (90, '90 天')],
+  encode: (v) => v,
+  // 认不出的值回落到默认。**必须显式列出合法值** ——
+  // 配置文件被手改成 0 的话，「删了立刻永久消失」就成了默认行为。
+  decode: (json) => json is int && const [7, 30, 90].contains(json) ? json : 30,
+);
+
+/// 甘特的泳道按什么分（view-specs §4.3）。
+///
+/// 规格里还列了 `tag`，**没做** —— 模型里没有标签这个东西
+/// （`domain/entities/` 下没有 tag）。列上去的话用户能选一个
+/// 选了没反应的维度，比没有这个选项更糟（同「默认视图」那条）。
+final SettingSpec<GanttLaneBy> ganttLaneBy = _enumSpec(
+  key: 'view.ganttLaneBy',
+  defaultValue: GanttLaneBy.category,
+  options: const [(GanttLaneBy.category, '按分类'), (GanttLaneBy.task, '按任务')],
+  storageKeyOf: (v) => v.storageKey,
+  fromStorageKey: GanttLaneBy.fromStorageKey,
+  group: SettingGroup.view,
+  label: '甘特泳道',
+  description: '甘特图按什么分列',
+);
+
+/// 日历上下两半的比例（view-specs §3.1「比例可拖拽，记住用户选择」）。
+///
+/// **隐藏项**：它由拖拽产生，不由设置页产生。摆一个数字输入框让人填
+/// 「0.58」，比没有这个选项更糟。
+final SettingSpec<double> calendarSplitRatio = SettingSpec<double>(
+  key: 'view.calendarSplitRatio',
+  defaultValue: CalendarSplit.byDefault,
+  encode: (v) => v,
+  // 存进来的值可能来自手改的配置文件。**夹回合法区间**而不是照单全收：
+  // 0 或 1 会让某一半压成零高，而那一半再也拖不回来。
+  decode: (json) => json is num
+      ? CalendarSplit.clamp(json.toDouble())
+      : CalendarSplit.byDefault,
 );
 
 /// 时间轴的刻度粒度（view-specs §1.2）。

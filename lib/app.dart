@@ -20,13 +20,18 @@
 /// 经过与结论记在 module-map §1。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'core/time/minute_of_day.dart';
+import 'core/time/plan_date.dart';
 import 'design/theme/app_theme.dart';
 import 'domain/value_objects/occurrence_key.dart';
+import 'features/archive/presentation/archive_page.dart';
 import 'features/settings/application/registry.dart';
 import 'features/settings/application/settings_providers.dart';
 import 'features/settings/presentation/category_manager_page.dart';
@@ -34,7 +39,13 @@ import 'features/settings/presentation/settings_page.dart';
 import 'features/shell/presentation/app_shell.dart';
 import 'features/task/application/task_editor_controller.dart';
 import 'features/task/presentation/task_editor_page.dart';
+import 'features/trash/application/trash_purge.dart';
+import 'features/trash/presentation/trash_page.dart';
+import 'features/views/calendar/presentation/calendar_page.dart';
+import 'features/views/gantt/presentation/gantt_view.dart';
+import 'features/views/shared/application/create_task_at.dart';
 import 'features/views/shared/application/view_kind.dart';
+import 'features/views/shared/application/view_shared_state.dart';
 import 'features/views/shared/presentation/filter_bar.dart';
 import 'features/views/task_list/presentation/task_list_page.dart';
 import 'features/views/timeline/presentation/timeline_page.dart';
@@ -47,7 +58,7 @@ import 'features/views/timeline/presentation/timeline_page.dart';
 /// 未实装的项由 `test/architecture/view_registry_test.dart` 盯着：
 /// 要么在这里，要么在那份「已知未实现」名单里，
 /// 不允许**两处都没有**（那会是一个点了没反应的按钮）。
-final Map<ViewKind, Widget Function(BuildContext, VoidCallback?)> viewRegistry =
+final Map<ViewKind, Widget Function(BuildContext, CreateTaskAt?)> viewRegistry =
     {
       ViewKind.list: (context, onCreateTask) => TaskListPage(
         onCreateTask: onCreateTask,
@@ -56,6 +67,16 @@ final Map<ViewKind, Widget Function(BuildContext, VoidCallback?)> viewRegistry =
             context.go(AppRoutes.editTask(id, from: from)),
       ),
       ViewKind.timeline: (context, onCreateTask) => TimelinePage(
+        onCreateTask: onCreateTask,
+        onEditTask: (id, {from}) =>
+            context.go(AppRoutes.editTask(id, from: from)),
+      ),
+      ViewKind.calendar: (context, onCreateTask) => CalendarPage(
+        onCreateTask: onCreateTask,
+        onEditTask: (id, {from}) =>
+            context.go(AppRoutes.editTask(id, from: from)),
+      ),
+      ViewKind.gantt: (context, onCreateTask) => GanttView(
         onCreateTask: onCreateTask,
         onEditTask: (id, {from}) =>
             context.go(AppRoutes.editTask(id, from: from)),
@@ -86,6 +107,12 @@ abstract final class AppRoutes {
   /// 返回手势该回到设置，不是回到列表。
   static const String categories = '/settings/categories';
 
+  /// 回收站（FR-TASK-08）。同样是设置页的二级页。
+  static const String trash = '/settings/trash';
+
+  /// 归档列表。
+  static const String archive = '/settings/archive';
+
   /// 编辑一条已有任务。
   ///
   /// [from] 非空时是「本次及以后」的分割点（FR-TASK-06）——
@@ -93,9 +120,24 @@ abstract final class AppRoutes {
   /// 不是另一个页面。
   static String editTask(String id, {String? from}) =>
       from == null ? '/task/$id/edit' : '/task/$id/edit?from=$from';
+
+  /// 新建，可带上一个「在哪一天、哪一刻」（FR-VIEW-07）。
+  ///
+  /// 与 [editTask] 的 `from` 同一个做法：改的是同一个页面的初值，
+  /// 不是另一个页面，所以用查询参数而不是另开一条路由。
+  static String newTaskAt({PlanDate? date, MinuteOfDay? minute}) {
+    final q = <String>[
+      if (date != null) 'date=$date',
+      if (minute != null) 'minute=${minute.value}',
+    ];
+    return q.isEmpty ? newTask : '$newTask?${q.join('&')}';
+  }
 }
 
-GoRouter buildAppRouter() => GoRouter(
+/// [initialLocation] 只给测试用：从任意路由起步，
+/// 免得每条用例都得先在界面上点到那一页。
+GoRouter buildAppRouter({String? initialLocation}) => GoRouter(
+  initialLocation: initialLocation,
   routes: [
     GoRoute(
       path: AppRoutes.shell,
@@ -105,11 +147,21 @@ GoRouter buildAppRouter() => GoRouter(
           path: 'settings',
           builder: (context, state) => SettingsPage(
             onOpenCategories: () => context.go(AppRoutes.categories),
+            onOpenTrash: () => context.go(AppRoutes.trash),
+            onOpenArchive: () => context.go(AppRoutes.archive),
           ),
           routes: [
             GoRoute(
               path: 'categories',
               builder: (context, state) => const CategoryManagerPage(),
+            ),
+            GoRoute(
+              path: 'trash',
+              builder: (context, state) => const TrashPage(),
+            ),
+            GoRoute(
+              path: 'archive',
+              builder: (context, state) => const ArchivePage(),
             ),
           ],
         ),
@@ -134,17 +186,30 @@ GoRouter buildAppRouter() => GoRouter(
                   from == null ? null : OccurrenceKey.parse(from),
                 ),
               ],
-              child: TaskEditorPage(onSaved: (_) => context.pop()),
+              child: TaskEditorPage(
+                onSaved: (_) => context.pop(),
+                // 删完也回上一页。撤销的 Snackbar 由编辑页自己弹 ——
+                // 它拿的是 pop 之前的 messenger，所以弹得出来。
+                onDeleted: context.pop,
+                onArchived: context.pop,
+              ),
             );
           },
         ),
         GoRoute(
           path: 'task/new',
-          builder: (context, state) => TaskEditorPage(
-            // 存完就回列表。**用 pop 而不是 go('/')**：
-            // go 会把编辑器从栈上换掉，返回手势会直接退出应用；
-            // pop 保留「从哪来回哪去」。
-            onSaved: (_) => context.pop(),
+          builder: (context, state) => ProviderScope(
+            overrides: [
+              newTaskSeedProvider.overrideWithValue(
+                _seedFrom(state.uri.queryParameters),
+              ),
+            ],
+            child: TaskEditorPage(
+              // 存完就回列表。**用 pop 而不是 go('/')**：
+              // go 会把编辑器从栈上换掉，返回手势会直接退出应用；
+              // pop 保留「从哪来回哪去」。
+              onSaved: (_) => context.pop(),
+            ),
           ),
         ),
       ],
@@ -152,7 +217,7 @@ GoRouter buildAppRouter() => GoRouter(
   ],
 );
 
-class PlanningAssistantApp extends ConsumerWidget {
+class PlanningAssistantApp extends ConsumerStatefulWidget {
   PlanningAssistantApp({super.key, GoRouter? router})
     : _router = router ?? buildAppRouter();
 
@@ -160,7 +225,33 @@ class PlanningAssistantApp extends ConsumerWidget {
   final GoRouter _router;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PlanningAssistantApp> createState() =>
+      _PlanningAssistantAppState();
+}
+
+class _PlanningAssistantAppState extends ConsumerState<PlanningAssistantApp> {
+  @override
+  void initState() {
+    super.initState();
+    // 启动时清一遍过期的回收站（task-lifecycle §6「物理清理由启动时的
+    // 一次后台任务执行」）。
+    //
+    // **不 await，也不拦住首帧**：清理是维护性的，清不掉下次再清，
+    // 而为它多等一次 IO 会直接顶到 NFR-PERF-01 的 1.5 秒。
+    //
+    // 放 `addPostFrameCallback` 而不是直接调：initState 里读 provider
+    // 会在首帧构建过程中触发库查询，那是「构建期间改 provider」那一类
+    // 麻烦的来源。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // 失败只当没清成。这里没有用户在等一个结果，
+      // 弹一条错误提示只会在冷启动时吓人一跳。
+      unawaited(ref.read(trashPurgeProvider)().catchError((_) => 0));
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     // 明暗与圆角档位都是配置项 —— 根必须监听它们，
     // 否则在设置页改完要重启才生效。
     final corners = ref.setting(cornerStyle);
@@ -193,7 +284,7 @@ class PlanningAssistantApp extends ConsumerWidget {
         ThemeModeSetting.light => ThemeMode.light,
         ThemeModeSetting.dark => ThemeMode.dark,
       },
-      routerConfig: _router,
+      routerConfig: widget._router,
     );
   }
 }
@@ -210,7 +301,33 @@ class _ShellRoute extends ConsumerStatefulWidget {
   ConsumerState<_ShellRoute> createState() => _ShellRouteState();
 }
 
-void _openEditor(BuildContext context) => context.go(AppRoutes.newTask);
+void _openEditor(BuildContext context, {PlanDate? date, MinuteOfDay? minute}) =>
+    context.go(AppRoutes.newTaskAt(date: date, minute: minute));
+
+/// 查询参数 → 新建初值。**读不懂的参数一律当没给**。
+///
+/// 抛异常的话，一个手敲错的链接会让应用打不开新建页；
+/// 而「初值没带上」的后果只是用户自己再选一次日期。
+NewTaskSeed? _seedFrom(Map<String, String> query) {
+  PlanDate? date;
+  MinuteOfDay? minute;
+  final rawDate = query['date'];
+  if (rawDate != null) {
+    try {
+      date = PlanDate.parse(rawDate);
+    } on FormatException {
+      date = null;
+    }
+  }
+  final rawMinute = int.tryParse(query['minute'] ?? '');
+  if (rawMinute != null &&
+      rawMinute >= 0 &&
+      rawMinute <= MinuteOfDay.maxValue) {
+    minute = MinuteOfDay(rawMinute);
+  }
+  if (date == null && minute == null) return null;
+  return (date: date, minute: minute);
+}
 
 class _ShellRouteState extends ConsumerState<_ShellRoute> {
   /// 用户在本次会话里手动切过的视图。
@@ -242,12 +359,22 @@ class _ShellRouteState extends ConsumerState<_ShellRoute> {
         if (builder == null) {
           return Center(child: Text('「${kind.label}」还没做好'));
         }
-        return builder(context, () => _openEditor(context));
+        return builder(
+          context,
+          ({date, minute}) => _openEditor(context, date: date, minute: minute),
+        );
       },
       // 筛选条由组合根提供 —— 它属于 views feature，外壳不该认识它
       // （module-map §3）。同 viewBuilder。
       header: const FilterBar(),
-      onCreateTask: () => _openEditor(context),
+      // 加号带上**当前聚焦的那一天**，但只在对着某一天的视图里
+      // （FR-VIEW-07，判据见 `ViewKind.anchorsToDay`）。
+      onCreateTask: () => _openEditor(
+        context,
+        date: current.anchorsToDay
+            ? ref.watch(viewSharedStateProvider).focusedDate
+            : null,
+      ),
       onOpenSettings: () => context.go(AppRoutes.settings),
     );
   }

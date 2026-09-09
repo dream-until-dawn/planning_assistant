@@ -31,6 +31,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
+import 'package:planning_assistant/core/time/weekday.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/task/application/recurrence_draft.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
@@ -110,6 +111,60 @@ final List<_Probe> _probes = [
     },
     rule: contains('BYDAY=TU'),
   ),
+  // ── 「每月」那三个档位（FR-TASK-03 的「每月 15 号」「每月最后一个周五」）──
+  //
+  // 四条各拨一个字段，期望值**互不相同**：都写成 `BYDAY=1MO` 的话，
+  // 序号与星期几各自没接上也看不出来。
+  (
+    field: 'monthlyMode',
+    drive: (t) async {
+      await tapVisible(
+        t,
+        TaskEditorPage.frequencyKey(RecurrenceFrequency.monthly),
+      );
+      await tapVisible(t, TaskEditorPage.monthlyModeKey(MonthlyMode.onWeekday));
+    },
+    rule: contains('BYDAY=1MO'),
+  ),
+  (
+    field: 'monthDay',
+    // 加两下：1 → 3。与默认值差一位，「加减器没接上」时立刻露馅。
+    drive: (t) async {
+      await tapVisible(
+        t,
+        TaskEditorPage.frequencyKey(RecurrenceFrequency.monthly),
+      );
+      await tapVisible(t, TaskEditorPage.monthlyModeKey(MonthlyMode.onDate));
+      final inc = TaskEditorPage.stepperIncKey(TaskEditorPage.monthDayStepper);
+      await tapVisible(t, inc);
+      await tapVisible(t, inc);
+    },
+    rule: contains('BYMONTHDAY=3'),
+  ),
+  (
+    field: 'monthOrdinal',
+    drive: (t) async {
+      await tapVisible(
+        t,
+        TaskEditorPage.frequencyKey(RecurrenceFrequency.monthly),
+      );
+      await tapVisible(t, TaskEditorPage.monthlyModeKey(MonthlyMode.onWeekday));
+      await tapVisible(t, TaskEditorPage.monthOrdinalKey(3));
+    },
+    rule: contains('BYDAY=3MO'),
+  ),
+  (
+    field: 'monthWeekday',
+    drive: (t) async {
+      await tapVisible(
+        t,
+        TaskEditorPage.frequencyKey(RecurrenceFrequency.monthly),
+      );
+      await tapVisible(t, TaskEditorPage.monthlyModeKey(MonthlyMode.onWeekday));
+      await tapVisible(t, TaskEditorPage.monthWeekdayKey(Weekday.friday));
+    },
+    rule: contains('BYDAY=1FR'),
+  ),
   (
     field: 'endMode',
     drive: (t) =>
@@ -161,6 +216,54 @@ void main() {
         expect(await _saveAndReadRule(tester, harness), probe.rule);
       });
     }
+
+    testAppWidgets('「最后一天」这一档也够得着', (tester) async {
+      // 它不是一个独立字段（走的还是 monthDay），所以完备性守卫盯不到它 ——
+      // 而它恰恰是这批里最要紧的一档：想月末的人选 31 号会漏掉 5 个月。
+      final harness = await _pumpEditor(tester);
+      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+      await tapVisible(
+        tester,
+        TaskEditorPage.frequencyKey(RecurrenceFrequency.monthly),
+      );
+      await tapVisible(
+        tester,
+        TaskEditorPage.monthlyModeKey(MonthlyMode.onDate),
+      );
+      await tapVisible(tester, TaskEditorPage.lastDayOfMonthKey);
+
+      expect(
+        await _saveAndReadRule(tester, harness),
+        contains('BYMONTHDAY=-1'),
+      );
+    });
+
+    testAppWidgets('选到 29 号以上会说「这些月份会跳过」', (tester) async {
+      // RFC 5545 里短月份是**跳过**，不是夹到月末（实测 2026 年
+      // `BYMONTHDAY=31` 只命中 7 次）。不说的话，选 31 号的人
+      // 要到三月才发现二月没提醒 —— 而那时他会以为是应用坏了。
+      await _pumpEditor(tester);
+      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+      await tapVisible(
+        tester,
+        TaskEditorPage.frequencyKey(RecurrenceFrequency.monthly),
+      );
+      await tapVisible(
+        tester,
+        TaskEditorPage.monthlyModeKey(MonthlyMode.onDate),
+      );
+      expect(
+        find.byKey(TaskEditorPage.monthSkipHintKey),
+        findsNothing,
+        reason: '1 号不会跳过任何月份，不该吓唬用户',
+      );
+
+      final inc = TaskEditorPage.stepperIncKey(TaskEditorPage.monthDayStepper);
+      for (var i = 1; i < 29; i++) {
+        await tapVisible(tester, inc);
+      }
+      expect(find.byKey(TaskEditorPage.monthSkipHintKey), findsOneWidget);
+    });
 
     testAppWidgets('对照组：开关不打开就没有规则', (tester) async {
       // 少了这条，一个「永远写死一条 RRULE」的实现能让上面七条全绿。

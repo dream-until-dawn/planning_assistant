@@ -14,6 +14,7 @@ import 'package:drift/drift.dart';
 import '../../core/time/clock.dart';
 import '../../domain/entities/occurrence_override.dart';
 import '../../domain/entities/stage.dart';
+import '../../domain/entities/stage_occurrence_state.dart';
 import '../../domain/entities/task.dart';
 import '../../domain/policies/task_lifecycle.dart';
 import '../../domain/repositories/task_repository.dart';
@@ -22,6 +23,7 @@ import '../database/app_database.dart';
 import '../database/dao/synced_dao.dart';
 import '../database/dao/table_daos.dart';
 import '../mappers/occurrence_override_mapper.dart';
+import '../mappers/stage_occurrence_state_mapper.dart';
 import '../mappers/task_mapper.dart';
 
 final class DriftTaskRepository implements TaskRepository {
@@ -29,12 +31,14 @@ final class DriftTaskRepository implements TaskRepository {
     : _tasks = TaskDao(_db, writer, clock),
       _stages = StageDao(_db, writer, clock),
       _overrides = OccurrenceOverrideDao(_db, writer, clock),
+      _stageStates = StageOccurrenceStateDao(_db, writer, clock),
       _clock = clock;
 
   final AppDatabase _db;
   final TaskDao _tasks;
   final StageDao _stages;
   final OccurrenceOverrideDao _overrides;
+  final StageOccurrenceStateDao _stageStates;
   final Clock _clock;
 
   /// 三个可见性谓词翻译成 SQL 的**唯一出处**。
@@ -152,6 +156,17 @@ final class DriftTaskRepository implements TaskRepository {
       _overrides.softDelete(overrideRowId(taskId, key));
 
   @override
+  Stream<List<StageOccurrenceState>> watchAllStageStates() =>
+      (_db.select(_db.stageOccurrenceStates)
+            ..where((t) => t.deletedAt.isNull()))
+          .watch()
+          .map((rows) => rows.map(stageStateFromRow).toList());
+
+  @override
+  Future<void> saveStageState(StageOccurrenceState state) =>
+      _stageStates.upsert(stageStateToCompanion(state));
+
+  @override
   Future<void> saveTask(Task task) async {
     // **写库前校验**：坏数据一旦落盘，后面每一次读取都要带着它，
     // 而修复要写迁移。在这里拦下的代价只是一次异常。
@@ -185,6 +200,23 @@ final class DriftTaskRepository implements TaskRepository {
         await _stages.upsert(s.toCompanion());
       }
     });
+  }
+
+  @override
+  Future<int> purgeDeleted(Iterable<String> taskIds) async {
+    var purged = 0;
+    await _db.transaction(() async {
+      for (final id in taskIds) {
+        // 子实体交给外键的 `ON DELETE CASCADE`（`app_database.dart` 里
+        // 开了 `PRAGMA foreign_keys`）。
+        //
+        // 这里**只删墓碑**（`purgeTombstone` 那句 WHERE），所以级联删掉的
+        // 也一定是墓碑的子行 —— 软删除本来就是级联打墓碑的
+        // （`softDeleteTaskCascade`），父是墓碑时子不可能还活着。
+        purged += await _tasks.purgeTombstone(id);
+      }
+    });
+    return purged;
   }
 
   @override

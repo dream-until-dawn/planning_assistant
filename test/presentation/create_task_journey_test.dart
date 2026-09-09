@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
+import 'package:planning_assistant/core/time/weekday.dart';
 import 'package:planning_assistant/design/components/app_chip.dart';
 import 'package:planning_assistant/design/components/empty_state.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
@@ -173,8 +174,7 @@ void main() {
         find.byKey(TaskEditorPage.categoryChipKey('cat-default-briefcase')),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       final stored = await harness.db.select(harness.db.tasks).get();
       expect(stored.single.categoryId, 'cat-default-briefcase');
@@ -230,8 +230,7 @@ void main() {
         reason: '「未分类」没被选中',
       );
 
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       final stored = await harness.db.select(harness.db.tasks).get();
       expect(stored.single.categoryId, isNull);
@@ -255,8 +254,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '买菜');
       await tester.pump();
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       final stored = await harness.db.select(harness.db.tasks).get();
       expect(stored.single.categoryId, isNull);
@@ -297,8 +295,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // 关掉全天 → 自动补今天 → 清除按钮应当消失。
-      await tester.tap(find.byKey(TaskEditorPage.allDaySwitchKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
 
       expect(
         find.descendant(
@@ -317,10 +314,8 @@ void main() {
       await tester.pumpAndSettle();
 
       // 全天状态下先关再开，让日期被补上又保留（关时补今天，开时不清日期）。
-      await tester.tap(find.byKey(TaskEditorPage.allDaySwitchKey));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(TaskEditorPage.allDaySwitchKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
 
       expect(
         find.descendant(
@@ -342,10 +337,8 @@ void main() {
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '写季度总结');
       await tester.pump();
 
-      await tester.tap(find.byKey(TaskEditorPage.addStageKey));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(TaskEditorPage.addStageKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.addStageKey);
+      await tapVisible(tester, TaskEditorPage.addStageKey);
 
       final fields = find.byWidgetPredicate(
         (w) => w is TextField && w.decoration?.hintText == '这一步做什么',
@@ -355,8 +348,7 @@ void main() {
       await tester.enterText(fields.at(1), '定稿');
       await tester.pump();
 
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       // 卡片上的进度是**文字**（design-system §8.1：不靠颜色单独承载）。
       expect(find.textContaining('0/2'), findsOneWidget);
@@ -378,8 +370,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '写季度总结');
       await tester.pump();
-      await tester.tap(find.byKey(TaskEditorPage.addStageKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.addStageKey);
 
       final field = find.byWidgetPredicate(
         (w) => w is TextField && w.decoration?.hintText == '这一步做什么',
@@ -388,8 +379,7 @@ void main() {
       await tester.pump();
 
       expect(find.byKey(TaskEditorPage.blockedReasonKey), findsOneWidget);
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       expect(find.byType(TaskEditorPage), findsOneWidget, reason: '不该保存成功');
       expect(await harness.db.select(harness.db.tasks).get(), isEmpty);
@@ -452,8 +442,7 @@ void main() {
       await tester.tap(find.byKey(TaskEditorPage.stageTimeConfirmKey));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       final stages = await harness.db.select(harness.db.stages).get();
       expect(stages, hasLength(2));
@@ -480,8 +469,7 @@ void main() {
       await tester.tap(find.byKey(TaskEditorPage.stageTimeClearKey));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       final stage = (await harness.db.select(harness.db.stages).get())
           .firstWhere((s) => s.id == ids[0]);
@@ -544,8 +532,7 @@ void main() {
       await tester.tap(find.text('确定'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       final task = (await harness.db.select(harness.db.tasks).get()).single;
       expect(task.endDate, isNotNull, reason: '结束日期该跟着落库');
@@ -561,8 +548,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
       await tester.pump();
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       final task = (await harness.db.select(harness.db.tasks).get()).single;
       expect(task.endDate, isNull);
@@ -586,8 +572,7 @@ void main() {
       // 再切回全天。
       await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
 
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       // 存下去了（没被不变量拒），而且时刻确实没了。
       expect(find.byType(TaskEditorPage), findsNothing, reason: '应当存成功并返回');
@@ -617,8 +602,7 @@ void main() {
         await tapVisible(tester, TaskEditorPage.weekdayKey(d));
       }
 
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       final task = (await harness.db.select(harness.db.tasks).get()).single;
       expect(task.recurrenceRule, 'RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR');
@@ -636,8 +620,7 @@ void main() {
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
       await tester.pump();
       await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       // 图标 + 文字都有（§8.1：不靠图标单独承载）。
       //
@@ -670,8 +653,7 @@ void main() {
         );
       }
 
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       // **不止一张卡片**：重复任务现在在列表里展开成多次发生
       // （view-specs §0.2），每一次都带着同一句规则说明。
@@ -693,8 +675,7 @@ void main() {
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
       await tester.pump();
       await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       // **未来方向只展开一条**（view-specs §0.2.1）：新建的每日任务
       // 此刻只有「今天」这一次。
@@ -736,8 +717,7 @@ void main() {
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
       await tester.pump();
       await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       final done = find.byKey(TaskCard.doneButtonKey).first;
       await tester.tap(done);
@@ -761,8 +741,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '买菜');
       await tester.pump();
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       await tester.tap(find.byKey(TaskCard.doneButtonKey).first);
       await tester.pumpAndSettle();
@@ -782,8 +761,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '买菜');
       await tester.pump();
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       expect(find.byIcon(TaskCard.recurringIcon), findsNothing);
     });
@@ -803,8 +781,7 @@ void main() {
       );
 
       expect(find.byKey(TaskEditorPage.blockedReasonKey), findsOneWidget);
-      await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       expect(find.byType(TaskEditorPage), findsOneWidget);
       expect(await harness.db.select(harness.db.tasks).get(), isEmpty);

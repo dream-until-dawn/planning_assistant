@@ -95,6 +95,13 @@ final class FilterSpec {
   );
 
   /// 切换某个状态的勾选。
+  /// 切换某个优先级的勾选。
+  FilterSpec togglePriority(TaskPriority priority) => copyWith(
+    priorities: priorities.contains(priority)
+        ? (priorities.toSet()..remove(priority))
+        : (priorities.toSet()..add(priority)),
+  );
+
   FilterSpec toggleStatus(TaskStatus status) => copyWith(
     statuses: statuses.contains(status)
         ? (statuses.toSet()..remove(status))

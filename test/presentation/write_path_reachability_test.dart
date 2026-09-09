@@ -42,6 +42,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
 import 'package:planning_assistant/data/database/app_database.dart';
+import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 
@@ -134,12 +135,15 @@ final List<_Entry> _taskFields = [
   ),
   (
     field: 'priority',
-    kind: _Kind.deferred,
-    why:
-        '优先级还没有控件（M3）。FR-TASK-01 点了它的名，筛选条也有这一维 —— '
-        '在补上之前，那一维筛出来的永远只有「普通」这一档',
-    drive: null,
-    check: null,
+    kind: _Kind.reachable,
+    why: '',
+    // 拨到**非默认值**：默认是 normal，所以挑 urgent。
+    // 挑 normal 的话，一个「压根不读控件」的实现也能让断言通过。
+    drive: (t) =>
+        tapVisible(t, TaskEditorPage.priorityChipKey(TaskPriority.urgent)),
+    // 落库的是**数值**（data-model §3.1），不是枚举 ——
+    // 比枚举的话这里恒不相等。
+    check: (task, _) => expect(task.priority, TaskPriority.urgent.value),
   ),
   (
     field: 'isAllDay',
@@ -429,7 +433,6 @@ void main() {
         ..._stageFields,
       ].where((e) => e.kind == _Kind.deferred).map((e) => e.field).toList();
       expect(deferred, [
-        'priority',
         'colorArgb',
         'icon',
         'sortOrder',

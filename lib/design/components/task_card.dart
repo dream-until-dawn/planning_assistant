@@ -29,6 +29,7 @@ final class TaskCardData {
     this.isDone = false,
     this.isOverdue = false,
     this.isRecurring = false,
+    this.priorityLabel,
   });
 
   final String title;
@@ -46,6 +47,13 @@ final class TaskCardData {
 
   final bool isDone;
   final bool isOverdue;
+
+  /// 优先级。**「普通」时不显示** —— 大多数任务是普通，
+  /// 每张卡片都挂一个「普通」等于什么也没说，还占掉副信息的位置。
+  ///
+  /// 用**文字**而不是颜色或图标：§8.1 那条「颜色/图标不单独承载信息」
+  /// 在这里同样适用，而优先级恰恰是最容易被做成一个小红点的东西。
+  final String? priorityLabel;
 
   /// 这条任务会重复（FR-TASK-03）。
   ///
@@ -248,6 +256,7 @@ class _Body extends StatelessWidget {
 
     final subtitle = <String>[
       data.categoryName,
+      if (data.priorityLabel != null) data.priorityLabel!,
       if (data.stageProgress != null)
         '阶段 ${data.stageProgress!.$1}/${data.stageProgress!.$2}',
     ].join(' · ');

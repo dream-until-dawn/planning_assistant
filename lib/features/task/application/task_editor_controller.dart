@@ -19,6 +19,7 @@ import '../../../domain/entities/stage.dart';
 import '../../../domain/entities/task.dart';
 import '../../../domain/value_objects/occurrence_key.dart';
 import '../../../domain/value_objects/recurrence.dart';
+import '../../../domain/value_objects/task_status.dart';
 import '../../views/shared/application/category_providers.dart';
 import '../../views/shared/application/task_providers.dart';
 import 'recurrence_draft.dart';
@@ -38,6 +39,7 @@ final class StageDraft {
     this.title = '',
     this.startOffsetMinutes,
     this.durationMinutes,
+    this.status = TaskStatus.pending,
   });
 
   final String id;
@@ -55,18 +57,31 @@ final class StageDraft {
   /// 时长。null = 只有一个开始点，没有跨度。
   final int? durationMinutes;
 
+  /// 这个阶段做完了没有。
+  ///
+  /// **草稿必须带上它。** 一度没带 —— 于是编辑一条有已完成阶段的任务、
+  /// 什么都不改直接保存，`ReplaceStagesCommand` 会把整表换成
+  /// 默认的 `pending`，**用户的进度被静默清空**。
+  /// 而界面上看不出任何异常：保存成功，回到列表，卡片上的
+  /// 「阶段 1/3」变成「阶段 0/3」。
+  final TaskStatus status;
+
+  bool get isDone => status == TaskStatus.done;
+
   bool get hasTime => startOffsetMinutes != null;
 
   StageDraft copyWith({
     String? title,
     Object? startOffsetMinutes = unset,
     Object? durationMinutes = unset,
+    TaskStatus? status,
   }) => StageDraft(
     id: id,
     title: title ?? this.title,
     // 两个都要能清掉（「这个阶段其实不用定时间」），所以走哨兵。
     startOffsetMinutes: patch(startOffsetMinutes, this.startOffsetMinutes),
     durationMinutes: patch(durationMinutes, this.durationMinutes),
+    status: status ?? this.status,
   );
 }
 
@@ -88,6 +103,7 @@ final class TaskDraft {
     this.endDate,
     this.endMinute,
     this.categoryId,
+    this.priority = TaskPriority.normal,
     this.stages = const [],
     this.recurrence = const RecurrenceDraft(),
   });
@@ -140,6 +156,11 @@ final class TaskDraft {
   /// 分类。**null 就是「未分类」**（settings-spec §3.0），
   /// 不是「还没选」—— 库里没有「未分类」那一行，选它就是写 null。
   final String? categoryId;
+
+  /// 优先级（FR-TASK-01）。默认「普通」——
+  /// 与 `CreateTaskCommand` 的默认值一致，两处分叉的话
+  /// 「不选就是普通」这句话会在某条路径上不成立。
+  final TaskPriority priority;
 
   /// 阶段。空 = 单项任务（FR-TASK-01）；≥2 = 阶段事项（FR-TASK-02）。
   ///
@@ -239,6 +260,7 @@ final class TaskDraft {
     Object? endDate = unset,
     Object? endMinute = unset,
     Object? categoryId = unset,
+    TaskPriority? priority,
     List<StageDraft>? stages,
     RecurrenceDraft? recurrence,
   }) => TaskDraft(
@@ -259,6 +281,7 @@ final class TaskDraft {
     endDate: patch(endDate, this.endDate),
     endMinute: patch(endMinute, this.endMinute),
     categoryId: patch(categoryId, this.categoryId),
+    priority: priority ?? this.priority,
     stages: stages ?? this.stages,
     recurrence: recurrence ?? this.recurrence,
   );
@@ -296,6 +319,7 @@ TaskDraft draftFromTask(
     endDate: task.endDate,
     endMinute: task.endMinute,
     categoryId: task.categoryId,
+    priority: task.priority,
     stages: [
       for (final s in stages)
         StageDraft(
@@ -303,6 +327,7 @@ TaskDraft draftFromTask(
           title: s.title,
           startOffsetMinutes: s.startOffsetMinutes,
           durationMinutes: s.durationMinutes,
+          status: s.status,
         ),
     ],
     recurrence: restored ?? const RecurrenceDraft(),
@@ -323,6 +348,17 @@ final editingTaskIdProvider = Provider<String?>((ref) => null);
 /// 同 [editingTaskIdProvider]，由组合根在路由上覆盖注入。
 final editingSplitAtProvider = Provider<OccurrenceKey?>((ref) => null);
 
+/// 新建表单的初值：在哪一天、哪一刻（FR-VIEW-07）。
+///
+/// 同上，由组合根在 `/task/new` 那条路由上按查询参数覆盖。
+/// **走路由而不是构造参数**：视图只喊「在这儿新建」，
+/// 由组合根决定那句话变成什么路由 —— 视图不认识路由表（§7.2）。
+/// 顺带这条路由可以直接被外部唤起（将来的小组件、语音入口）。
+final newTaskSeedProvider = Provider<NewTaskSeed?>((ref) => null);
+
+/// 见 [newTaskSeedProvider]。两个分量都可缺。
+typedef NewTaskSeed = ({PlanDate? date, MinuteOfDay? minute});
+
 /// 表单控制器。
 final class TaskEditorController extends Notifier<TaskDraft> {
   /// 初值。**分类取配置里的默认**（settings-spec §2.4
@@ -339,7 +375,16 @@ final class TaskEditorController extends Notifier<TaskDraft> {
   TaskDraft build() {
     final editingId = ref.read(editingTaskIdProvider);
     if (editingId == null) {
-      return TaskDraft(categoryId: ref.read(defaultCategoryIdProvider));
+      final seed = ref.read(newTaskSeedProvider);
+      return TaskDraft(
+        categoryId: ref.read(defaultCategoryIdProvider),
+        planDate: seed?.date,
+        // 给了时刻就是一条定时任务；只给日期的仍是全天
+        // （默认值 true）—— 从日历翻到某天点加号，用户表达的是
+        // 「这一天」，不是「这一天的 00:00」。
+        isAllDay: seed?.minute == null,
+        startMinute: seed?.minute,
+      );
     }
     // **全程用 read，不用 watch。** watch 的话，库里任何一次推送
     // （别的任务变了、分类流来了一帧）都会重建 Notifier，
@@ -367,6 +412,9 @@ final class TaskEditorController extends Notifier<TaskDraft> {
   /// 选分类。**传 null 即「未分类」**，不是「不改」。
   void setCategory(String? categoryId) =>
       state = state.copyWith(categoryId: categoryId);
+
+  void setPriority(TaskPriority priority) =>
+      state = state.copyWith(priority: priority);
 
   /// 本地墙钟的今天。由 [todayProvider] 统一给出，
   /// **不用 `DateTime.now()`**（cross-cutting §1）。
@@ -442,6 +490,20 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     stages: [
       ...state.stages,
       StageDraft(id: ref.read(idGeneratorProvider).newId()),
+    ],
+  );
+
+  /// 勾/取消勾一个阶段。
+  ///
+  /// **只改草稿，保存时才落库** —— 与标题、时间同一条路径。
+  /// 就地写库的话，用户改了几个阶段又点返回，那几笔已经生效了。
+  void setStageDone(String stageId, bool done) => state = state.copyWith(
+    stages: [
+      for (final s in state.stages)
+        if (s.id == stageId)
+          s.copyWith(status: done ? TaskStatus.done : TaskStatus.pending)
+        else
+          s,
     ],
   );
 
@@ -533,6 +595,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     // null 即「未分类」（settings-spec §3.0）—— 库里没有那一行，
     // 所以这里原样传，不做任何「空则填默认分类」的转换。
     categoryId: draft.categoryId,
+    priority: draft.priority,
     // 存**规范形**：拼出来的串不保证是规范形，而 data-model
     // 要求库里存的是规范形（否则同一条规则可能有两种写法，
     // 往返与同步都会分叉）。
@@ -561,6 +624,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
         orderIndex: i,
         startOffsetMinutes: s.startOffsetMinutes,
         durationMinutes: s.durationMinutes,
+        status: s.status,
       ),
   ];
 
@@ -658,6 +722,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
               title: draft.title.trim(),
               note: draft.note.trim().isEmpty ? null : draft.note.trim(),
               categoryId: draft.categoryId,
+              priority: draft.priority,
               recurrenceRule: _canonicalRule(draft),
               planDate: planDate,
               startMinute: draft.isAllDay ? null : draft.startMinute,
@@ -699,8 +764,12 @@ final class TaskEditorController extends Notifier<TaskDraft> {
 /// editingTaskId 永远是 null，于是编辑页打开的是一张新建表单，
 /// 标题写着「新建任务」，改完还会多出一条任务。
 /// 而且它不报错：一切照常运行，只是作用域没生效。
+///
+/// [newTaskSeedProvider] 后来也进了这张表，症状一模一样：
+/// 长按 14:00 新建，表单打开、能保存，日期却是空的 ——
+/// 覆盖写在了子作用域，而这个 provider 还在根作用域解析。
 final taskEditorProvider =
     NotifierProvider.autoDispose<TaskEditorController, TaskDraft>(
       TaskEditorController.new,
-      dependencies: [editingTaskIdProvider],
+      dependencies: [editingTaskIdProvider, newTaskSeedProvider],
     );

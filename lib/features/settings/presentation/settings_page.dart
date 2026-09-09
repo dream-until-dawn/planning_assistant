@@ -17,7 +17,12 @@ import '../application/settings_providers.dart';
 import '../domain/setting_spec.dart';
 
 class SettingsPage extends ConsumerWidget {
-  const SettingsPage({this.onOpenCategories, super.key});
+  const SettingsPage({
+    this.onOpenCategories,
+    this.onOpenTrash,
+    this.onOpenArchive,
+    super.key,
+  });
 
   /// 打开分类管理。**由组合根接上路由**，页面本身不认识路由表 ——
   /// 与外壳的 `onOpenSettings` 同一个做法（module-map §1.1）。
@@ -30,6 +35,12 @@ class SettingsPage extends ConsumerWidget {
   /// 为 null 时那一行不出现 —— 一个点不动的入口比没有更糟。
   final VoidCallback? onOpenCategories;
 
+  /// 打开回收站（FR-TASK-08）。同上，为 null 时那一行不出现。
+  final VoidCallback? onOpenTrash;
+
+  /// 打开归档列表（FR-TASK-08）。
+  final VoidCallback? onOpenArchive;
+
   static const Key pageKey = ValueKey('settings-page');
 
   /// 某一项的 Key。
@@ -41,6 +52,8 @@ class SettingsPage extends ConsumerWidget {
 
   /// 通往二级页的入口行（分类管理等）。
   static const Key categoriesEntryKey = ValueKey('setting-entry-categories');
+  static const Key trashEntryKey = ValueKey('setting-entry-trash');
+  static const Key archiveEntryKey = ValueKey('setting-entry-archive');
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -70,6 +83,12 @@ class SettingsPage extends ConsumerWidget {
               // 挂在「行为」组之后 —— 那一组管的就是「默认怎么做」。
               if (group == SettingGroup.behavior && onOpenCategories != null)
                 _categoriesEntry(),
+              // 回收站挂在「数据」组之后 —— 它管的是数据的去留。
+              // 归档在回收站**前面**：它是更常用、也更温和的那个。
+              if (group == SettingGroup.data && onOpenArchive != null)
+                _archiveEntry(),
+              if (group == SettingGroup.data && onOpenTrash != null)
+                _trashEntry(),
             ],
           ],
         ),
@@ -85,6 +104,26 @@ class SettingsPage extends ConsumerWidget {
     subtitle: const Text('新建、改名、改色、排序、删除'),
     trailing: const Icon(Icons.chevron_right),
     onTap: onOpenCategories,
+  );
+
+  Widget _archiveEntry() => ListTile(
+    key: archiveEntryKey,
+    contentPadding: EdgeInsets.zero,
+    leading: const Icon(Icons.inventory_2_outlined),
+    title: const Text('已归档'),
+    subtitle: const Text('收起来但没删掉的任务'),
+    trailing: const Icon(Icons.chevron_right),
+    onTap: onOpenArchive,
+  );
+
+  Widget _trashEntry() => ListTile(
+    key: trashEntryKey,
+    contentPadding: EdgeInsets.zero,
+    leading: const Icon(Icons.delete_outline),
+    title: const Text('回收站'),
+    subtitle: const Text('删掉的任务在这里，可以恢复'),
+    trailing: const Icon(Icons.chevron_right),
+    onTap: onOpenTrash,
   );
 
   List<Widget> _groupSection(

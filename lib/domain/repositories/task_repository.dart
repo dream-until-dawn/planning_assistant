@@ -8,6 +8,7 @@ library;
 
 import '../entities/occurrence_override.dart';
 import '../entities/stage.dart';
+import '../entities/stage_occurrence_state.dart';
 import '../entities/task.dart';
 import '../value_objects/occurrence_key.dart';
 
@@ -56,6 +57,15 @@ abstract interface class TaskRepository {
   /// 写入任务。**会校验领域不变量**，违反时抛异常而不是写进库。
   Future<void> saveTask(Task task);
 
+  /// **物理删除**一条已打墓碑的任务及其子实体（task-lifecycle §6、L-09）。
+  ///
+  /// 只用于超期清理。**不接受活着的任务** —— 判「该不该清」是领域策略
+  /// （`isPurgeable`）的事，仓库这一侧只负责「只删墓碑」这条硬约束：
+  /// 调用方算错了，最坏也只是清早了，不会把活数据抹掉。
+  ///
+  /// 返回真正删掉了几条任务（子实体不计）。
+  Future<int> purgeDeleted(Iterable<String> taskIds);
+
   /// 全部单次例外，持续推送。
   ///
   /// **一次取全部，不按任务分**：列表要一次展开几十条重复任务，
@@ -79,6 +89,17 @@ abstract interface class TaskRepository {
   /// 后者会让「从没动过」与「动过又撤回」在库里长得不一样，
   /// 而它们对用户是同一件事。
   Future<void> removeOverride(String taskId, OccurrenceKey key);
+
+  /// 全部的阶段-发生状态（FR-TASK-07）。
+  ///
+  /// **一次取全再索引**，与 [watchAllStages] 同一个理由：
+  /// 视图一屏会显示好几条任务的好几次发生，逐条订阅等于一屏 N 次往返。
+  /// 这张表只在用户**真的勾过**某一次的某一步时才长出行来，
+  /// 上界远小于任务表本身。
+  Stream<List<StageOccurrenceState>> watchAllStageStates();
+
+  /// 写一条阶段状态。同一个 (stageId, occurrenceKey) 覆盖写。
+  Future<void> saveStageState(StageOccurrenceState state);
 
   /// 写入任务及其阶段（同一事务）。
   ///

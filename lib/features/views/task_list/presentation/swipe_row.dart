@@ -21,6 +21,7 @@ import '../../../../design/theme/app_theme.dart';
 import '../../../../design/tokens/dimensions.dart';
 import '../../../settings/application/registry.dart';
 import '../../../settings/application/settings_providers.dart';
+import '../../../trash/application/trash_providers.dart';
 import '../../shared/application/task_occurrence.dart';
 import '../application/task_list_actions.dart';
 
@@ -96,6 +97,13 @@ class SwipeRow extends ConsumerWidget {
           return;
         }
         _tell(messenger, '已推迟到明天', undo);
+      case SwipeAction.delete:
+        // 软删除，进回收站 —— 这个手势能存在，靠的就是这条退路
+        // （见 `SwipeAction.delete` 的注释）。
+        final undoDelete = await ref
+            .read(trashActionsProvider)
+            .delete(row.taskId);
+        _tell(messenger, '已移到回收站', undoDelete);
     }
   }
 
@@ -142,6 +150,7 @@ class _Background extends StatelessWidget {
     final (icon, label, fill) = switch (action) {
       SwipeAction.complete => (Icons.check, '完成', colors.doneFill),
       SwipeAction.postpone => (Icons.schedule, '推迟一天', colors.soonFill),
+      SwipeAction.delete => (Icons.delete_outline, '删除', colors.dangerFill),
       SwipeAction.none => (Icons.block, '', colors.sunken),
     };
 

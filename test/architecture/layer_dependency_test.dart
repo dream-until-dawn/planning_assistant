@@ -1,4 +1,4 @@
-/// 分层依赖守卫。
+/// 分层依赖守卫（NFR-MAINT-01：「分层依赖方向由自动化检查强制」）。
 ///
 /// 强制 docs/01-architecture/module-map.md §3 的依赖规则，以及
 /// docs/05-engineering/testing-strategy.md §6 的额外守卫。
@@ -610,6 +610,70 @@ import
         'package:planning_assistant/domain/z.dart',
       ], reason: '条件分支的 URI、跨行 URI 都要取到，注释里的不能取');
     });
+  });
+
+  test('视图侧不得直接读原始结束时刻（data-model §4.7）', () {
+    // ## 这条守的是什么
+    //
+    // §4.7 那句「有效跨度由领域层派生，**不得各自计算**」现在靠
+    // `shared_span_test` 钉着 —— 而那条守卫的作用域到 **provider 为止**：
+    // 三个视图的 provider 都走 `row.span`，它就绿。
+    // 将来某个 painter 直接读 `row.endDate` 画东西，它不会红。
+    //
+    // 后果是具体的：末阶段排到 `endDate` 之后的任务，
+    // 甘特画到阶段结束、时间轴画到存储的结束 —— 同一条任务两个长度。
+    //
+    // ## 它是名字启发式，不是类型分析
+    //
+    // **这一点必须写明。** `endMinute` 在视图层是个合法的字段名 ——
+    // `GanttBar.endMinute`、`TimelineBlock.endMinute` 都是视图自己的
+    // 值对象，跟任务的存储结束没关系。一律禁掉的话要挂几十条白名单，
+    // 而白名单是守卫的盲区。
+    //
+    // 所以只盯**接收者名字**：这个仓库里表示任务或发生的就是这几个。
+    // 够不着的写法是有的（`final x = row; x.endDate`）——
+    // 写在这儿是为了下一个人知道它的边界在哪，而不是以为它管全了。
+    const receivers = ['row', 'task', 'occurrence'];
+
+    // 白名单锚定确切文件名，每条写清理由。
+    const allowed = {
+      // 派生跨度的定义处：`endDate`/`endMinute` 的委托就在它身上。
+      'task_occurrence.dart',
+      // 展开时要把存储的起止算成原始跨度，那是 `span` 的**上游**。
+      'occurrence_expansion.dart',
+    };
+
+    // **必须用 raw 串拼**：普通串里的 `\b` 是退格符，不是单词边界 ——
+    // 那样的正则一个都匹配不上，这条守卫会**空转着报绿**。写这条时就踩了，
+    // 是「故意写一处违规看它红不红」这一步把它揪出来的（§1.4 那条规矩）。
+    final pattern = RegExp(
+      r'\b(' + receivers.join('|') + r')\.(endDate|endMinute)\b',
+    );
+    final violations = <String>[];
+    var scanned = 0;
+    for (final file in libFiles) {
+      final rel = _relToLib(file.path);
+      if (rel == null || !rel.startsWith('features/views/')) continue;
+      if (allowed.contains(rel.split('/').last)) continue;
+      scanned++;
+      final lines = file.readAsLinesSync();
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i].trim().startsWith('//')) continue;
+        if (pattern.hasMatch(lines[i])) {
+          violations.add('  - lib/$rel:${i + 1}  ${lines[i].trim()}');
+        }
+      }
+    }
+
+    // 自检：白名单把该扫的全排除掉的话，这条守卫就成了复读机。
+    expect(scanned, greaterThan(5), reason: '视图层只扫到 $scanned 个文件，守卫大概率失效了');
+    expect(
+      violations,
+      isEmpty,
+      reason:
+          '视图侧直接读了原始结束时刻，请改用 row.span / effectiveEnd：\n'
+          '${violations.join('\n')}',
+    );
   });
 
   test('lib/ 下有可供扫描的源码（守卫不能对着空目录报绿）', () {
