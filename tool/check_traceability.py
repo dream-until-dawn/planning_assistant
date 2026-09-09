@@ -73,6 +73,49 @@ EXEMPT = {
 }
 
 
+BASELINE = ROOT / 'tool' / 'traceability_baseline.txt'
+
+# 豁免的理由必须点名一个里程碑或版本 —— 「以后再说」不算理由。
+MILESTONE = re.compile(r'\b(M[0-9]|V[1-9])\b')
+
+
+def baseline():
+    """基线里允许的豁免编号。"""
+    out = set()
+    for line in BASELINE.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if line and not line.startswith('#'):
+            out.add(line)
+    return out
+
+
+def check_exemptions(exempt, allowed):
+    """豁免表的棘轮：只许缩短，而且每条都要写明由谁承担。
+
+    ## 为什么需要这条
+
+    豁免表本身是诚实的 —— 每条都写了理由。要防的是**它长得比覆盖快**：
+    那时它就从「记账」变成「仪式」，谁都可以往里加一行让门禁变绿，
+    而加的时候没有人会拦。
+
+    棘轮的做法是让「加一条豁免」变成一个**需要说出口的动作**：
+    得同时改两个文件，其中基线那个除了放行什么也不做。
+
+    与 `layer_dependency_test.dart` 里 lint 白名单的反僵尸守卫同源，
+    评审提的。
+    """
+    problems = []
+    for rid in sorted(set(exempt) - allowed):
+        problems.append(
+            f'  · {rid} 不在基线里 —— 新增豁免要同时改 '
+            f'{BASELINE.name}，那一步是故意的'
+        )
+    for rid, why in sorted(exempt.items()):
+        if not MILESTONE.search(why):
+            problems.append(f'  · {rid} 的豁免理由没点名里程碑：{why!r}')
+    return problems
+
+
 def requirements():
     """(编号, 期次) —— 期次列在第三格，V2+ 的跳过。"""
     out = []
@@ -192,10 +235,31 @@ def _self_test() -> int:
             print(f'  自检失败：{name} —— 期望缺 {want}，实得缺 {missing}')
             bad += 1
 
+    # ── 第 10 类：豁免表的棘轮 ────────────────────────────
+    #
+    # 同样**成对**：只验「越界会报」的话，一个「一律报」的实现也能过。
+    ratchets = [
+        ('基线内的豁免放行', {'FR-ZZ-01': 'M4 提醒'}, {'FR-ZZ-01'}, 0),
+        ('基线外的豁免拦住', {'FR-ZZ-02': 'M4 提醒'}, {'FR-ZZ-01'}, 1),
+        ('缩短随时可以', {}, {'FR-ZZ-01', 'FR-ZZ-02'}, 0),
+        ('理由不点名里程碑就拦住', {'FR-ZZ-01': '以后再说'}, {'FR-ZZ-01'}, 1),
+    ]
+    for name, exempt, allowed, want in ratchets:
+        got = len(check_exemptions(exempt, allowed))
+        if (got > 0) != (want > 0):
+            print(
+                f'  自检失败：{name} —— '
+                f'期望{"报" if want else "放行"}，实得 {got} 处'
+            )
+            bad += 1
+
     if bad:
         print(f'自检没过（{bad} 条）—— 校验结果不予采信')
         return 1
-    print(f'自检通过（{len(cases)} 条提取 + {len(pairs)} 条端到端）')
+    print(
+        f'自检通过（{len(cases)} 条提取 + {len(pairs)} 条端到端 '
+        f'+ {len(ratchets)} 条棘轮）'
+    )
     return 0
 
 
@@ -224,6 +288,13 @@ def evaluate(reqs, corpus, exempt):
 
 def main(argv: list) -> int:
     if '--self-test' in argv and _self_test() != 0:
+        return 1
+
+    ratchet = check_exemptions(EXEMPT, baseline())
+    if ratchet:
+        print(f'豁免表有 {len(ratchet)} 处问题：')
+        for line in ratchet:
+            print(line)
         return 1
 
     corpus = [
