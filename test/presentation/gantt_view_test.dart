@@ -9,6 +9,7 @@
 @TestOn('vm')
 library;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -395,6 +396,144 @@ void main() {
       await tester.pumpAndSettle();
       // 没崩就算过 —— 这条挡的是「回调为空时照样调」那种写法。
       expect(find.byKey(GanttView.canvasKey), findsOneWidget);
+    });
+  });
+
+  group('双指缩放换档（§4.3）', () {
+    /// 两指把间距推到大约 [factor] 倍。
+    ///
+    /// ## 触摸阈值要显式补偿
+    ///
+    /// `ScaleGestureRecognizer` 在**手势被接受的那一刻**才记下初始间距，
+    /// 而接受发生在移动超过 `kTouchSlop` 之后 —— 也就是说，
+    /// **头 18 像素是白走的**：它们只用来过阈值，还顺带把「初始间距」
+    /// 撑大了一圈。手指各推 40 像素想要 2 倍，算出来只有 1.33。
+    ///
+    /// 第一版没补偿，于是「张开」那条红了，而「到头了不越界」
+    /// 那条**照样绿** —— 它期望的就是「不变」。差一点就是一条假绿，
+    /// 所以补偿写在这里一次，而不是把阈值调松去迁就夹具。
+    Future<void> pinch(WidgetTester tester, double factor) async {
+      final center = tester.getCenter(find.byKey(GanttView.scrollKey));
+      const half = 40.0;
+      final target = half * factor;
+      final direction = factor > 1 ? 1 : -1;
+      // 每根手指要走的距离 = 想要的位移 + 被阈值吃掉的那一段。
+      final move = ((target - half).abs() + kTouchSlop) * direction;
+
+      final a = await tester.startGesture(center - const Offset(half, 0));
+      final b = await tester.startGesture(center + const Offset(half, 0));
+      await tester.pump();
+
+      // 分小步交替推：一根一步推到底的话，第二根还没动它就被接受了，
+      // 记下的初始间距会是「只拉开了一半」的那个。
+      const steps = 8;
+      for (var i = 0; i < steps; i++) {
+        await a.moveBy(Offset(-move / steps, 0));
+        await b.moveBy(Offset(move / steps, 0));
+        await tester.pump();
+      }
+      await a.up();
+      await b.up();
+      await tester.pumpAndSettle();
+    }
+
+    TimeGranularity granularityOf(WidgetTester tester) =>
+        ProviderScope.containerOf(tester.element(find.byType(GanttView)))
+            .read(viewSharedStateProvider)
+            .granularity;
+
+    testAppWidgets('捏合 → 看更长的跨度（日 → 周）', (tester) async {
+      await _pump(tester, tasks: [_task('a', from: 0, to: 3)]);
+      expect(granularityOf(tester), TimeGranularity.day, reason: '前提：默认是日');
+
+      await pinch(tester, 0.5);
+      expect(granularityOf(tester), TimeGranularity.week);
+    });
+
+    testAppWidgets('张开 → 看得更细（周 → 日）', (tester) async {
+      await _pump(tester, tasks: [_task('a', from: 0, to: 3)]);
+      ProviderScope.containerOf(tester.element(find.byType(GanttView)))
+          .read(viewSharedStateProvider.notifier)
+          .setGranularity(TimeGranularity.week);
+      await tester.pumpAndSettle();
+
+      await pinch(tester, 2);
+      expect(granularityOf(tester), TimeGranularity.day);
+    });
+
+    testAppWidgets('**一次手势只换一档** —— 不会从月冲到日', (tester) async {
+      // 手指一路张开会连着跨过两个阈值。用户想的是「放大一点」，
+      // 得到「放大到底」是两回事。
+      await _pump(tester, tasks: [_task('a', from: 0, to: 3)]);
+      ProviderScope.containerOf(tester.element(find.byType(GanttView)))
+          .read(viewSharedStateProvider.notifier)
+          .setGranularity(TimeGranularity.month);
+      await tester.pumpAndSettle();
+
+      await pinch(tester, 3);
+      expect(granularityOf(tester), TimeGranularity.week);
+    });
+
+    testAppWidgets('到头了就停住，不越界', (tester) async {
+      await _pump(tester, tasks: [_task('a', from: 0, to: 3)]);
+      // 已经是「日」，再张开没有更细的一档。
+      await pinch(tester, 2);
+      expect(granularityOf(tester), TimeGranularity.day);
+    });
+
+    testAppWidgets('轻微晃动不换档', (tester) async {
+      // 阈值太松的话，两指按住不动的抖动就会误换档。
+      //
+      // ## **从「周」起，不从「日」起**
+      //
+      // 第一版从「日」起、张开一点点，期望还是「日」—— 而「日」已经是
+      // 最细的一档，张开多少都会被夹住。把阈值从 1.35 放到 1.01
+      // 那条用例照样绿：它验的是夹取，不是阈值。变异演练里它活下来了。
+      //
+      // 现在从中间那一档起：阈值一松，它立刻会掉到「日」。
+      await _pump(tester, tasks: [_task('a', from: 0, to: 3)]);
+      ProviderScope.containerOf(tester.element(find.byType(GanttView)))
+          .read(viewSharedStateProvider.notifier)
+          .setGranularity(TimeGranularity.week);
+      await tester.pumpAndSettle();
+
+      // 1.25 倍：**过得了触摸阈值**（所以手势真的被接受了），
+      // 但没到 1.35 那一档。挑一个连触摸阈值都过不去的数，
+      // 就成了在验 Flutter 的阈值，不是验这里的判据。
+      await pinch(tester, 1.25);
+      expect(granularityOf(tester), TimeGranularity.week);
+    });
+
+    testAppWidgets('**单指竖划还是滚动，不是缩放**', (tester) async {
+      // ## 这条盯的是**手势竞争**，不是缩放的判据
+      //
+      // 加了 `onScaleUpdate` 之后，`ScaleGestureRecognizer` 会和滚动
+      // 那边的竖向拖动一起进竞技场。它要是赢了，甘特就再也滚不动了 ——
+      // 而甘特是竖着看的，那等于把这个视图最主要的操作弄坏。
+      //
+      // 换档本身不需要靠这条挡：单指时 `scale` 恒为 1.0，
+      // 两个阈值一个都够不着（见 `_pinchUpdate` 里那段）。
+      await _pump(tester, tasks: [_task('a', from: 0, to: 3)]);
+      // **先换到月档**：日档一屏才 14 天（672dp），比视口还矮，
+      // 压根没得滚 —— 那时 offset 恒为 0，这条断言会假绿。
+      ProviderScope.containerOf(tester.element(find.byType(GanttView)))
+          .read(viewSharedStateProvider.notifier)
+          .setGranularity(TimeGranularity.month);
+      await tester.pumpAndSettle();
+      final before = granularityOf(tester);
+
+      await tester.drag(find.byKey(GanttView.scrollKey), const Offset(0, -200));
+      await tester.pumpAndSettle();
+
+      expect(granularityOf(tester), before, reason: '单指滚动被当成了缩放');
+      expect(
+        tester
+            .widget<SingleChildScrollView>(find.byKey(GanttView.scrollKey))
+            .controller!
+            .offset,
+        greaterThan(0),
+        reason: '缩放手势把竖向滚动抢走了',
+      );
     });
   });
 

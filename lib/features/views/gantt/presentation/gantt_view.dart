@@ -115,74 +115,133 @@ class _GanttViewState extends ConsumerState<GanttView> {
         const _GranularityToggle(),
         _LaneHeader(key: GanttView.laneHeaderKey, layout: layout),
         Expanded(
-          child: SingleChildScrollView(
-            key: GanttView.scrollKey,
-            controller: _scroll,
-            child: SizedBox(
-              height: height,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SizedBox(
-                    width: GanttMetrics.dateGutter,
-                    child: _DateGutter(layout: layout, today: today),
-                  ),
-                  Expanded(
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final painter = GanttPainter(
-                          layout: layout,
-                          width: constraints.maxWidth,
-                          todayOffsetMinutes: _todayOffset(layout, today),
-                          barColor: colors.brandGraphic,
-                          gridColor: colors.borderSubtle,
-                          doneColor: colors.doneFill,
-                          nowColor: colors.brandGraphic,
-                        );
-                        return GestureDetector(
-                          onTapUp: (details) {
-                            final row = painter.barAt(details.localPosition);
-                            if (row != null) _open(row);
-                          },
-                          // 长按空白＝在那一刻新建（FR-VIEW-07）。
-                          //
-                          // **落在条上时不新建**：长按已有任务的意图是
-                          // 「对它做点什么」，不是「在它旁边加一条」。
-                          // 时间轴上这条靠 `Stack` 的命中测试顺序实现
-                          // （块在上、画布在下）；甘特整块画布是一个
-                          // `CustomPaint`，没有那样的层次，所以在这里
-                          // 显式问一次 `barAt`。
-                          onLongPressStart: onCreate == null
-                              ? null
-                              : (details) {
-                                  final at = details.localPosition;
-                                  if (painter.barAt(at) != null) return;
-                                  final when = painter.timeAt(
-                                    at,
-                                    tickMinutes: granularity.tickMinutes,
-                                  );
-                                  if (when == null) return;
-                                  onCreate(
-                                    date: when.date,
-                                    minute: when.minute,
-                                  );
-                                },
-                          child: CustomPaint(
-                            key: GanttView.canvasKey,
-                            painter: painter,
-                            size: Size(constraints.maxWidth, height),
-                          ),
-                        );
-                      },
+          child: GestureDetector(
+            // 双指缩放换档（§4.3「时间粒度：日/周/月三档，双指缩放
+            // 或顶部切换」）。
+            //
+            // **顶部那排切换必须留着**：捏合是个纯手势，读屏用户做不出来，
+            // 也没有任何可见的提示说它存在（NFR-A11Y-01 那条的同一个意思
+            // ——「手势不单独承载功能」）。捏合是快捷方式，不是唯一入口。
+            onScaleStart: _pinchStart,
+            onScaleUpdate: _pinchUpdate,
+            child: SingleChildScrollView(
+              key: GanttView.scrollKey,
+              controller: _scroll,
+              child: SizedBox(
+                height: height,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(
+                      width: GanttMetrics.dateGutter,
+                      child: _DateGutter(layout: layout, today: today),
                     ),
-                  ),
-                ],
+                    Expanded(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final painter = GanttPainter(
+                            layout: layout,
+                            width: constraints.maxWidth,
+                            todayOffsetMinutes: _todayOffset(layout, today),
+                            barColor: colors.brandGraphic,
+                            gridColor: colors.borderSubtle,
+                            doneColor: colors.doneFill,
+                            nowColor: colors.brandGraphic,
+                          );
+                          return GestureDetector(
+                            onTapUp: (details) {
+                              final row = painter.barAt(details.localPosition);
+                              if (row != null) _open(row);
+                            },
+                            // 长按空白＝在那一刻新建（FR-VIEW-07）。
+                            //
+                            // **落在条上时不新建**：长按已有任务的意图是
+                            // 「对它做点什么」，不是「在它旁边加一条」。
+                            // 时间轴上这条靠 `Stack` 的命中测试顺序实现
+                            // （块在上、画布在下）；甘特整块画布是一个
+                            // `CustomPaint`，没有那样的层次，所以在这里
+                            // 显式问一次 `barAt`。
+                            onLongPressStart: onCreate == null
+                                ? null
+                                : (details) {
+                                    final at = details.localPosition;
+                                    if (painter.barAt(at) != null) return;
+                                    final when = painter.timeAt(
+                                      at,
+                                      tickMinutes: granularity.tickMinutes,
+                                    );
+                                    if (when == null) return;
+                                    onCreate(
+                                      date: when.date,
+                                      minute: when.minute,
+                                    );
+                                  },
+                            child: CustomPaint(
+                              key: GanttView.canvasKey,
+                              painter: painter,
+                              size: Size(constraints.maxWidth, height),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
         ),
       ],
     );
+  }
+
+  /// 一次捏合里已经换过档了没有。
+  ///
+  /// **一次手势只换一档。** 不设这个闸的话，手指一路张开会连着跨过
+  /// 两个阈值，从「月」直接冲到「日」—— 用户想的是「放大一点」，
+  /// 得到的是「放大到底」。
+  bool _pinched = false;
+
+  /// 捏合到多少算换一档。
+  ///
+  /// 1.35 是**一次明确的捏合**：两指相对移动三成以上。再小的话，
+  /// 两指按住轻微晃动就会误换档；再大的话手小的人够不到。
+  static const double _pinchIn = 1.35;
+  static const double _pinchOut = 1 / _pinchIn;
+
+  void _pinchStart(ScaleStartDetails details) => _pinched = false;
+
+  void _pinchUpdate(ScaleUpdateDetails details) {
+    if (_pinched) return;
+
+    // ## 这里**不**判 `pointerCount >= 2`
+    //
+    // 一开始判了，理由写的是「单指拖动也会报 onScaleUpdate，不挡的话
+    // 竖向滚动会被当成捏合」。前半句对，后半句错：单指时
+    // `ScaleGestureRecognizer` 的初始跨度是 0，`scale` **恒为 1.0**，
+    // 下面两个阈值一个都够不着。那一行判断永远为假。
+    //
+    // 变异演练里把它删掉，二十五条用例全绿 —— 它不是被漏测了，
+    // 它本来就什么也没做（testing-strategy §1.16：活下来的变异
+    // 有时说明那段代码是多余的）。留着比删掉更糟：读的人会以为
+    // 单指的情形靠它挡着，而真正挡住的是阈值。
+    //
+    // 单指竖划仍然要能滚动 —— 那是另一回事（手势竞争），
+    // 由 `gantt_view_test.dart` 里那条用例盯着。
+
+    // 张开（scale > 1）= 放大 = 看得更细 = 往「日」走。
+    final step = details.scale >= _pinchIn
+        ? -1
+        : details.scale <= _pinchOut
+        ? 1
+        : 0;
+    if (step == 0) return;
+
+    _pinched = true;
+    const values = TimeGranularity.values;
+    final current = ref.read(viewSharedStateProvider).granularity.index;
+    final next = values[(current + step).clamp(0, values.length - 1)];
+    ref.read(viewSharedStateProvider.notifier).setGranularity(next);
   }
 
   /// 今天距窗口起点多少分钟。不在窗口里就是 null（不画今日线）。

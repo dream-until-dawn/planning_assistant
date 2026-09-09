@@ -17,6 +17,8 @@
 /// 一行一个 widget。自己搭之后横条就是 `Positioned`，不存在拼接缝。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -261,59 +263,143 @@ class _WeekdayHeader extends ConsumerWidget {
   }
 }
 
-/// 格子本体。左右滑动切月/切周（§3.2）。
+/// 格子本体。**左右滑动跟手切月**（§3.2）。
 ///
-/// ## 「带惯性」这一半没做，记在这里
+/// ## 从「松手才切」改成跟手，改的是数据层
 ///
-/// §3.2 写的是「左右滑动切月，**带惯性**」。现在是**松手才切**，
-/// 页面不跟手。跟手要求相邻月份同时能画出来，而布局是按**聚焦月**
-/// 算的一份 —— 要跟手就得把 `calendarLayoutProvider` 改成按月的 family，
-/// 让 `PageView` 的每一页各取各的。那是一笔独立的改动。
+/// 上一版是 `onHorizontalDragEnd` + `AnimatedSwitcher`：手指在屏幕上
+/// 拖的时候什么都不动，松手之后新的一页滑进来。规格写的是
+/// 「左右滑动切月，**带惯性**」，而那一版**没有惯性可言** ——
+/// 屏幕上没有任何东西跟着手指走。
 ///
-/// 切换本身的动画是有的，且 `reduceMotion` 时降为 0（§3.2 后半句、
-/// design-system §7）—— **降为 0 而不是跳过切换**，状态变化本身要保留。
+/// 跟手要求相邻月份**同时画得出来**，而布局原本只按聚焦月算一份。
+/// 所以先把 `calendarLayoutProvider` 拆成按月的 family
+/// （`calendarLayoutForProvider`），这一层才有东西可翻。
+/// —— 界面上的一句「跟手」，落在数据层是「一份变多份」。
+///
+/// ## 页号与月份的换算
+///
+/// `PageView` 要一个从 0 起的整数页号，而月份是无界的（两个方向都是）。
+/// 取一个**固定锚点**（[_epoch]）当第 0 页，页号即「距锚点几个月」。
+/// 锚点必须固定：拿「今天」当锚点的话，跨零点时所有页号会整体平移一格。
+///
+/// 页数取 [_pageCount]（锚点前后各约两百年）。**不是无限**：
+/// `PageView` 支持无限只能靠 `itemCount: null` + 负页号的自定义
+/// controller，而那要重写滚动物理。两百年的窗口对一个日程应用
+/// 是刻意的上界，同 `ListHorizon.lookaheadDays` 那条。
 class _Grid extends ConsumerStatefulWidget {
   const _Grid({required this.onEditTask, super.key});
 
   final OpenTask? onEditTask;
+
+  /// 页号的原点。**任意但固定**的一个月。
+  static const YearMonth epoch = YearMonth(2000, 1);
+
+  /// 页号总数（约 ±200 年）。
+  static const int pageCount = 4800;
+
+  static int pageOf(YearMonth ym) => ym.differenceInMonths(epoch);
+
+  static YearMonth monthOf(int page) => epoch.addMonths(page);
 
   @override
   ConsumerState<_Grid> createState() => _GridState();
 }
 
 class _GridState extends ConsumerState<_Grid> {
-  /// 上一次往哪边翻：+1 往后，-1 往前。决定新页从哪一侧滑进来。
-  int _direction = 1;
+  PageController? _controller;
 
-  /// 上一帧画了几行。**只是个备忘**，不参与触发重建。
-  int? _lastRows;
+  /// 这一页是**滑动自己翻出来的**吗。
+  ///
+  /// `onPageChanged` 里改聚焦日会让 `build` 重跑，那时 controller 上的
+  /// 页号已经是新的了 —— 若不认这一次，下面那段「外部改了聚焦日就
+  /// 跟过去」会紧接着再 `animateToPage` 一次，动画打架。
+  int? _settlingPage;
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final layout = ref.watch(calendarLayoutProvider);
-    final isMonth = ref.watch(calendarIsMonthProvider);
-    final shared = ref.read(viewSharedStateProvider.notifier);
+    final month = ref.watch(calendarMonthProvider);
     final focused = ref.watch(viewSharedStateProvider).focusedDate;
+    final shared = ref.read(viewSharedStateProvider.notifier);
     final reduced = reducedMotionOf(context, ref);
+    final page = _Grid.pageOf(month);
 
-    // 月↔周**不做转场**。两个理由，各自都够：
+    final controller = _controller ??= PageController(initialPage: page);
+
+    // 聚焦日被**别处**改了（日历下方点了一天、从甘特切回来、
+    // 顶部箭头），页面要跟过去。
     //
-    // 1. 语义上它不是翻页，是换了一种看法。横向滑进来是错的比喻。
-    // 2. 转场期间两页同时在场，而旧页会被塞进新页的高度里 ——
-    //    六行挤进一行的空间，每格只剩十几个像素，RenderFlex 直接报溢出。
-    //    裁剪救不了：那是**布局**时的断言，不是画出界。
-    final rows = layout.weeks.length;
-    final modeChanged = _lastRows != null && _lastRows != rows;
-    _lastRows = rows;
+    // `hasClients` 之外还要判 `_settlingPage`：那是这一次滑动自己
+    // 造成的变化，controller 已经在那一页上了，再动一次就是自己跟自己打架。
+    if (controller.hasClients && _settlingPage != page) {
+      final current = controller.page?.round();
+      if (current != null && current != page) {
+        // 隔一帧再动 —— build 里直接驱动动画会在同一帧里改布局。
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !controller.hasClients) return;
+          if (reduced) {
+            controller.jumpToPage(page);
+          } else {
+            unawaited(
+              controller.animateToPage(
+                page,
+                duration: Motion.slow,
+                curve: Motion.slowCurve,
+              ),
+            );
+          }
+        });
+      }
+    }
+    _settlingPage = null;
 
-    // 同一页内点选别的日子**不该触发转场** —— 所以 key 取的是「哪一页」
-    // （月视图取年月，周视图取那一周的头一天），不是聚焦日本身。
-    final pageKey = isMonth
-        ? '${focused.year}-${focused.month}'
-        : '${layout.weeks.first.first.date}';
+    return PageView.builder(
+      controller: controller,
+      itemCount: _Grid.pageCount,
+      onPageChanged: (i) {
+        final target = _Grid.monthOf(i);
+        if (target == month) return;
+        _settlingPage = i;
+        shared.focusDate(_dayIn(target, focused.day));
+      },
+      itemBuilder: (context, i) =>
+          _MonthGrid(month: _Grid.monthOf(i), onEditTask: widget.onEditTask),
+    );
+  }
 
-    final grid = Column(
-      key: ValueKey(pageKey),
+  /// 翻到新的一个月时落在哪一天。
+  ///
+  /// 保持**同一个日号**，这样连着翻几个月不会把选中日越推越前。
+  /// 日号不存在时（1/31 翻到 2 月）夹到当月最后一天 ——
+  /// 而不是让 `PlanDate` 抛。
+  PlanDate _dayIn(YearMonth ym, int day) => PlanDate(
+    ym.year,
+    ym.month,
+    day.clamp(1, PlanDate.daysInMonth(ym.year, ym.month)),
+  );
+}
+
+/// 一个月的六行格子。
+///
+/// **按月取自己的布局**（而不是接一个参数）：`PageView` 会预建左右两页，
+/// 各取各的那一份，跟手时两边都是画好的。
+class _MonthGrid extends ConsumerWidget {
+  const _MonthGrid({required this.month, required this.onEditTask});
+
+  final YearMonth month;
+  final OpenTask? onEditTask;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final layout = ref.watch(calendarLayoutForProvider(month));
+
+    return Column(
       children: [
         for (final (i, week) in layout.weeks.indexed)
           Expanded(
@@ -322,64 +408,11 @@ class _GridState extends ConsumerState<_Grid> {
               bands: layout.bands[i],
               dots: layout.dots[i],
               weekIndex: i,
-              onEditTask: widget.onEditTask,
+              onEditTask: onEditTask,
             ),
           ),
       ],
     );
-
-    return GestureDetector(
-      // 只认水平方向 —— 竖直留给下半屏那份列表滚动。
-      onHorizontalDragEnd: (details) {
-        final v = details.primaryVelocity ?? 0;
-        if (v == 0) return;
-        // 往左划（负速度）= 看下一个月。
-        final step = v < 0 ? 1 : -1;
-        setState(() => _direction = step);
-        shared.focusDate(_shift(focused, isMonth, step));
-      },
-      child: ClipRect(
-        // 换档那一帧**整个把转场拿掉**，不是把时长设成 0。
-        //
-        // 设成 0 不够：`AnimatedSwitcher` 在那一帧里两个孩子都在场，
-        // 都要过一遍布局，而旧的六行会被塞进新的一行的高度里 ——
-        // 每格只剩十几像素，RenderFlex 报溢出。那是**布局**时的断言，
-        // 外面裹多少层 ClipRect 都拦不住。
-        child: modeChanged || reduced
-            ? grid
-            : AnimatedSwitcher(
-                duration: Motion.slow,
-                switchInCurve: Motion.slowCurve,
-                switchOutCurve: Motion.slowCurve,
-                transitionBuilder: (child, animation) => SlideTransition(
-                  position: Tween<Offset>(
-                    begin: Offset(_direction.toDouble(), 0),
-                    end: Offset.zero,
-                  ).animate(animation),
-                  child: child,
-                ),
-                // 两页同时在场时按顺序叠，别让旧页盖住新页。
-                layoutBuilder: (current, previous) =>
-                    Stack(children: [...previous, ?current]),
-                child: grid,
-              ),
-      ),
-    );
-  }
-
-  /// 往前/往后翻一页。
-  ///
-  /// 月视图翻一个月时**日号可能不存在**（1/31 往后翻是 2/31）——
-  /// 夹到当月最后一天，而不是让 `PlanDate` 抛。
-  PlanDate _shift(PlanDate from, bool isMonth, int step) {
-    if (!isMonth) return from.addDays(7 * step);
-    final total = from.year * 12 + (from.month - 1) + step;
-    final year = total ~/ 12;
-    final month = total % 12 + 1;
-    final day = from.day <= PlanDate.daysInMonth(year, month)
-        ? from.day
-        : PlanDate.daysInMonth(year, month);
-    return PlanDate(year, month, day);
   }
 }
 

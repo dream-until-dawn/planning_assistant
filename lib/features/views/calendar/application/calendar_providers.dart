@@ -6,6 +6,10 @@
 /// 一次算完整个月：格子、每一行的横条、每一格的色点。**不做成
 /// 按天/按周的 family** —— 横条的层号本来就要在一整行里统一分配，
 /// 拆成七个 provider 各算各的，第一件事就得是把它们再拼回去。
+///
+/// **按月的 family 是有的**（[calendarLayoutForProvider]）：跟手滑动
+/// 要求相邻月份同时画得出来，而「一整月」正好是横条分层的自然边界。
+/// 聚焦月那一份（[calendarLayoutProvider]）只是它的一个特例。
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -49,19 +53,31 @@ import 'month_grid.dart';
 /// （FR-VIEW-04 的验收原话），只是日历不再跟着变了。
 final calendarIsMonthProvider = Provider<bool>((ref) => true);
 
-/// 这一屏要画哪些格子。
-final calendarWeeksProvider = Provider<List<List<MonthCell>>>((ref) {
-  final focused = ref.watch(viewSharedStateProvider).focusedDate;
-  final start = ref.watch(firstDayOfWeekSettingProvider).isoNumber;
+/// 某一个月要画哪些格子。
+final calendarWeeksForProvider =
+    Provider.family<List<List<MonthCell>>, YearMonth>((ref, ym) {
+      final start = ref.watch(firstDayOfWeekSettingProvider).isoNumber;
 
-  return ref.watch(calendarIsMonthProvider)
-      ? monthGrid(
-          year: focused.year,
-          month: focused.month,
-          firstDayOfWeek: start,
-        ).weeks
-      : [weekOf(focused, firstDayOfWeek: start)];
+      return ref.watch(calendarIsMonthProvider)
+          ? monthGrid(
+              year: ym.year,
+              month: ym.month,
+              firstDayOfWeek: start,
+            ).weeks
+          : [weekOf(PlanDate(ym.year, ym.month, 1), firstDayOfWeek: start)];
+    });
+
+/// 聚焦的那一个月。跟手滑动时它是**中间那一页**。
+final calendarMonthProvider = Provider<YearMonth>((ref) {
+  final focused = ref.watch(viewSharedStateProvider).focusedDate;
+  return YearMonth(focused.year, focused.month);
 });
+
+/// 这一屏要画哪些格子（聚焦月）。
+final calendarWeeksProvider = Provider<List<List<MonthCell>>>(
+  (ref) =>
+      ref.watch(calendarWeeksForProvider(ref.watch(calendarMonthProvider))),
+);
 
 /// 一周从周几起（配置项 `view.firstDayOfWeek`）。
 ///
@@ -79,34 +95,42 @@ final calendarWeekdayOrderProvider = Provider<List<Weekday>>((ref) {
   ];
 });
 
-/// 这一屏窗口里的全部发生，已筛选。
-final calendarOccurrencesProvider = Provider<List<TaskOccurrence>>((ref) {
-  final weeks = ref.watch(calendarWeeksProvider);
-  if (weeks.isEmpty) return const [];
-  final filter = ref.watch(viewSharedStateProvider).filter;
+/// 某一个月窗口里的全部发生，已筛选。
+final calendarOccurrencesForProvider =
+    Provider.family<List<TaskOccurrence>, YearMonth>((ref, ym) {
+      final weeks = ref.watch(calendarWeeksForProvider(ym));
+      if (weeks.isEmpty) return const [];
+      final filter = ref.watch(viewSharedStateProvider).filter;
 
-  return switch (ref.watch(visibleTasksProvider)) {
-    AsyncData(:final value) => applyFilter(
-      expandInWindow(
-        tasks: value,
-        overrides: switch (ref.watch(allOverridesProvider)) {
-          AsyncData(:final value) => value,
-          _ => const [],
-        },
-        // **整屏一个窗口**，含补进来的上/下月尾巴 —— 它们也要显示标记，
-        // 否则月初那几格看起来是空的，而它们其实有事。
-        window: DateRange(weeks.first.first.date, weeks.last.last.date),
-        // 阶段进来算有效跨度（§4.7）—— 四视图共用同一个答案。
-        stagesByTask: ref.watch(stagesByTaskProvider),
-        stageStatesByTask: ref.watch(stageStatesByTaskProvider),
-        engine: RecurrenceEngine(ref.watch(timeZoneResolverProvider)),
-        includeSkipped: filter.statuses.contains(TaskStatus.skipped),
-      ),
-      filter,
-    ),
-    _ => const [],
-  };
-});
+      return switch (ref.watch(visibleTasksProvider)) {
+        AsyncData(:final value) => applyFilter(
+          expandInWindow(
+            tasks: value,
+            overrides: switch (ref.watch(allOverridesProvider)) {
+              AsyncData(:final value) => value,
+              _ => const [],
+            },
+            // **整屏一个窗口**，含补进来的上/下月尾巴 —— 它们也要显示
+            // 标记，否则月初那几格看起来是空的，而它们其实有事。
+            window: DateRange(weeks.first.first.date, weeks.last.last.date),
+            // 阶段进来算有效跨度（§4.7）—— 四视图共用同一个答案。
+            stagesByTask: ref.watch(stagesByTaskProvider),
+            stageStatesByTask: ref.watch(stageStatesByTaskProvider),
+            engine: RecurrenceEngine(ref.watch(timeZoneResolverProvider)),
+            includeSkipped: filter.statuses.contains(TaskStatus.skipped),
+          ),
+          filter,
+        ),
+        _ => const [],
+      };
+    });
+
+/// 这一屏窗口里的全部发生（聚焦月），已筛选。
+final calendarOccurrencesProvider = Provider<List<TaskOccurrence>>(
+  (ref) => ref.watch(
+    calendarOccurrencesForProvider(ref.watch(calendarMonthProvider)),
+  ),
+);
 
 /// 一屏排好的日历。
 @immutable
@@ -126,10 +150,13 @@ final class CalendarLayout {
   final List<List<DayDots>> dots;
 }
 
-/// 格子 + 横条 + 色点，一次算完。
-final calendarLayoutProvider = Provider<CalendarLayout>((ref) {
-  final weeks = ref.watch(calendarWeeksProvider);
-  final rows = ref.watch(calendarOccurrencesProvider);
+/// 某一个月的格子 + 横条 + 色点，一次算完。
+final calendarLayoutForProvider = Provider.family<CalendarLayout, YearMonth>((
+  ref,
+  ym,
+) {
+  final weeks = ref.watch(calendarWeeksForProvider(ym));
+  final rows = ref.watch(calendarOccurrencesForProvider(ym));
 
   final bands = [for (final w in weeks) weekBands(rows, w.first.date)];
   return CalendarLayout(
@@ -147,6 +174,12 @@ final calendarLayoutProvider = Provider<CalendarLayout>((ref) {
     ],
   );
 });
+
+/// 聚焦月那一屏。
+final calendarLayoutProvider = Provider<CalendarLayout>(
+  (ref) =>
+      ref.watch(calendarLayoutForProvider(ref.watch(calendarMonthProvider))),
+);
 
 /// 下半屏那份列表：选中的那一天有哪些事（§3.1）。
 ///
