@@ -21,9 +21,11 @@ import 'core/time/time_zone_resolver.dart';
 import 'data/database/app_database.dart';
 import 'data/database/dao/synced_dao.dart';
 import 'data/repositories/category_repository_impl.dart';
+import 'data/repositories/scheduled_notification_store_impl.dart';
 import 'data/repositories/settings_repository_impl.dart';
 import 'data/repositories/task_repository_impl.dart';
 import 'domain/commands/command_dispatcher.dart';
+import 'features/reminder/application/reminder_providers.dart';
 import 'platform/timezone/platform_time_zone.dart';
 
 /// 启动应用。
@@ -99,6 +101,9 @@ Future<void> bootstrap(
         categoryRepositoryProvider.overrideWithValue(categories),
         settingsRepositoryProvider.overrideWithValue(settings),
         timeZoneSetupProvider.overrideWithValue(tzResult),
+        scheduledNotificationStoreProvider.overrideWithValue(
+          DriftScheduledNotificationStore(db),
+        ),
       ],
       child: appBuilder(),
     ),

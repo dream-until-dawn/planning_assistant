@@ -30,6 +30,7 @@ import 'package:planning_assistant/domain/entities/category.dart';
 import 'package:planning_assistant/domain/entities/stage.dart';
 import 'package:planning_assistant/domain/entities/stage_occurrence_state.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
+import 'package:planning_assistant/features/reminder/application/reminder_providers.dart';
 import 'package:planning_assistant/features/settings/application/settings_providers.dart';
 import 'package:planning_assistant/features/settings/domain/setting_spec.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
@@ -43,8 +44,17 @@ import 'package:planning_assistant/features/views/task_list/presentation/occurre
 import 'package:planning_assistant/features/views/timeline/application/timeline_providers.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 
+import 'fake_notifications.dart';
+
 /// 一套装好的依赖，供 `ProviderScope(overrides: ...)` 使用。
-typedef Harness = ({List<Override> overrides, AppDatabase db});
+typedef Harness = ({
+  List<Override> overrides,
+  AppDatabase db,
+
+  /// 假的通知平台。**排期到底有没有真的发生**问它 ——
+  /// 那是这块功能最容易悄悄断掉的地方（见 `reminder_providers.dart` 的头注）。
+  FakeNotificationPlatform notifications,
+});
 
 /// 装一套跑在内存库上的依赖。
 ///
@@ -81,8 +91,11 @@ Harness appHarness({
     clock,
   );
 
+  final notifications = FakeNotificationPlatform();
+
   return (
     db: db,
+    notifications: notifications,
     overrides: [
       clockProvider.overrideWithValue(clock),
       timeZoneResolverProvider.overrideWithValue(
@@ -109,6 +122,15 @@ Harness appHarness({
           const FixedWriterIdentity('test-device'),
           clock,
         ),
+      ),
+      // 提醒这一块：平台与排期存储都换成记账式的假实现。
+      //
+      // **必须在这儿给**，不是「顺手加的」：`ReminderSyncScope` 挂在
+      // `MaterialApp.builder` 上，于是**每一个** widget 测试都会走一轮续排。
+      // 不给的话它们会齐刷刷地撞上组合根那条 `mustOverride`。
+      notificationPlatformProvider.overrideWithValue(notifications),
+      scheduledNotificationStoreProvider.overrideWithValue(
+        InMemoryScheduledNotificationStore(),
       ),
     ],
   );
@@ -210,6 +232,12 @@ List<Override> viewPipelineOverrides({
   // `_FocusInheritedScope`，跟真正的原因隔着整棵树。
   Stream<List<Task>>? tasksStream,
   Stream<void> tick = const Stream<void>.empty(),
+
+  /// 时钟。**从这儿传，不要在外面再加一条 override** ——
+  /// 同一个 provider 在一个容器里只许覆盖一次，追加会撞上
+  /// 「Tried to override a provider twice」，而那条报错指的是
+  /// `_FocusInheritedScope`，跟真正的原因隔着整棵树（同上面那两条口子）。
+  Clock? clock,
   required PlanDate today,
 }) {
   // 这里发的是 `TzTimeZoneResolver`，而它没有时区库就抛
@@ -237,6 +265,17 @@ List<Override> viewPipelineOverrides({
     // 报的是「Pending timers」，与被测的行为毫无关系。
     //
     // 要验当前时刻线**会动**的用例自己覆盖成一个受控的流。
+    // 提醒的续排挂在 `MaterialApp.builder` 上，所以**用这套 override
+    // 装起来的树也会走一轮**。它要读时钟与那两个协作者 ——
+    // 不给的话报的是「clockProvider 必须在 overrides 中提供」，
+    // 而那句话离「你少给了通知的假实现」隔着两层。
+    clockProvider.overrideWithValue(
+      clock ?? FixedClock(DateTime.utc(2026, 9, 7, 3)),
+    ),
+    notificationPlatformProvider.overrideWithValue(FakeNotificationPlatform()),
+    scheduledNotificationStoreProvider.overrideWithValue(
+      InMemoryScheduledNotificationStore(),
+    ),
     minuteTickProvider.overrideWithValue(tick),
     // 展开按墙钟进行，要时区换算器。夹具里的任务多数不重复，
     // 但展开那一步照样会读它。

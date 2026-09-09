@@ -120,9 +120,7 @@ Future<void> _pump(
           today: _today,
           tasksStream: tasksStream,
           tick: tick ?? const Stream<void>.empty(),
-        ),
-        clockProvider.overrideWithValue(
-          _MovingClock(now ?? () => DateTime.utc(2026, 9, 8, 1)),
+          clock: _MovingClock(now ?? () => DateTime.utc(2026, 9, 8, 1)),
         ),
         ...extra,
       ],

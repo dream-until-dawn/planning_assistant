@@ -32,6 +32,7 @@ import 'core/time/plan_date.dart';
 import 'design/theme/app_theme.dart';
 import 'domain/value_objects/occurrence_key.dart';
 import 'features/archive/presentation/archive_page.dart';
+import 'features/reminder/application/reminder_providers.dart';
 import 'features/settings/application/registry.dart';
 import 'features/settings/application/settings_providers.dart';
 import 'features/settings/presentation/category_manager_page.dart';
@@ -295,6 +296,15 @@ class _PlanningAssistantAppState extends ConsumerState<PlanningAssistantApp> {
         ThemeModeSetting.dark => ThemeMode.dark,
       },
       routerConfig: widget._router,
+      // 提醒的续排挂在这儿（notifications.md §3 的「续排触发点」）。
+      //
+      // **包在 `builder` 里而不是包住 `MaterialApp`**：它要读
+      // `WidgetsBinding` 的生命周期，也要能在应用真正跑起来之后
+      // 才发第一轮 —— 而 `builder` 的子树正是路由内容那一层。
+      //
+      // 不挂的话，前面几层全都跑不起来：又一次「模型有旋钮、界面够不着」。
+      builder: (context, child) =>
+          ReminderSyncScope(child: child ?? const SizedBox.shrink()),
     );
   }
 }
