@@ -17,6 +17,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../design/components/undo_snackbar.dart';
 import '../../../../design/theme/app_theme.dart';
 import '../../../../design/tokens/dimensions.dart';
 import '../../../settings/application/registry.dart';
@@ -111,38 +112,7 @@ class SwipeRow extends ConsumerWidget {
     ScaffoldMessengerState? messenger,
     String text,
     VoidCallback? undo,
-  ) {
-    if (messenger == null) return;
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(text),
-          duration: const Duration(seconds: 5),
-          // **必须显式写 `persist: false`。**
-          //
-          // Flutter 的 `SnackBar` 里有一行：`persist = persist ?? action != null`
-          // —— **带 action 的提示默认永不自动消失**，等用户去点。
-          // 而我们每一条提示都带「撤销」，于是全都是永久的：
-          // `duration` 照样设了，计时器也照样起，但回调第一句是
-          // `if (snackBar.persist) return;`。
-          //
-          // 表现就是用户报的那条：「下方的轻提示永远不会消失」——
-          // 屏幕底部被一条陈旧提示长期占住，而它上面的「撤销」
-          // 还连着一个早就过期的闭包；后面每一条新提示都排在它后面出不来。
-          persist: false,
-          action: undo == null
-              ? null
-              : SnackBarAction(
-                  // Key 挂在 action 上没用（它不是 widget 树里的一个节点），
-                  // 所以整条 SnackBar 用 content 的文案定位，撤销按钮
-                  // 由这个 label 找。
-                  label: '撤销',
-                  onPressed: undo,
-                ),
-        ),
-      );
-  }
+  ) => showUndoSnackBar(messenger, text, onUndo: undo);
 }
 
 /// 滑动时露出来的底色 + 图标 + 文字。

@@ -12,6 +12,7 @@
 library;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:planning_assistant/core/time/date_and_minute.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/core/time/time_zone_resolver.dart';
@@ -22,7 +23,6 @@ import 'package:planning_assistant/domain/value_objects/occurrence_key.dart';
 import 'package:planning_assistant/domain/value_objects/recurrence.dart';
 import 'package:planning_assistant/features/views/shared/application/occurrence_expansion.dart';
 import 'package:planning_assistant/features/views/shared/application/task_occurrence.dart';
-import 'package:planning_assistant/features/views/timeline/application/timeline_blocks.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 
 const _today = PlanDate(2026, 9, 8);
@@ -418,22 +418,37 @@ void main() {
     });
   });
 
-  group('两条路径必须读出同一个块', () {
+  group('两条路径必须读出同一个跨度', () {
     // 同一形态的任务，不重复的直接读 task.endDate/endMinute，
     // 重复的先被折成 durationMinutes 再由引擎还原成 end。
-    // 两处读法一旦分叉，表现是「同一件事设成重复之后块变了」——
+    // 两处读法一旦分叉，表现是「同一件事设成重复之后跨度变了」——
     // 没人会把它当 bug 报，但它是两套语义的证据。
+    //
+    // ## 量的是 `EffectiveSpan`，不再是时间轴的块
+    //
+    // 这一组原本拿 `timelineDayFor` 当量具 —— 时间轴改成跨天议程之后
+    // 那个函数没了。换成直接量 `TaskOccurrence.span`：**四个视图的
+    // 跨度都由它给**（data-model §4.7），所以它才是这条不变量的落点，
+    // 而当初那个块只是碰巧读了它。
+
+    ({int start, int end, bool allDay}) shapeOf(TaskOccurrence row) {
+      final span = row.span!;
+      return (
+        start:
+            span.start.date.differenceInDays(row.planDate!) * minutesPerDay +
+            span.start.minute.value,
+        end:
+            span.end.date.differenceInDays(row.planDate!) * minutesPerDay +
+            span.end.minute.value,
+        allDay: row.isAllDay,
+      );
+    }
 
     void sameBlock(String name, Task plain, Task repeating, PlanDate on) {
       test(name, () {
-        final a = timelineDayFor(_window([plain], on, on), on);
-        final b = timelineDayFor(_window([repeating], on, on), on);
-        expect(
-          b.blocks.map((x) => (x.startMinute, x.endMinute, x.continuesAfter)),
-          a.blocks.map((x) => (x.startMinute, x.endMinute, x.continuesAfter)),
-          reason: '$on 这一天两条路径画出来不一样',
-        );
-        expect(b.allDay.length, a.allDay.length, reason: '$on 这一天「随时」区的条数不一样');
+        final a = _window([plain], on, on);
+        final b = _window([repeating], on, on);
+        expect(b.map(shapeOf), a.map(shapeOf), reason: '$on 这天两条路径不一样');
       });
     }
 

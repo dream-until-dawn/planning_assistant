@@ -92,24 +92,66 @@ final class OccurrenceActions {
 
   final Ref _ref;
 
-  /// 勾/取消某一次里的某个阶段（FR-TASK-07）。
+  /// 勾/取消一个阶段（FR-TASK-07）。
   ///
-  /// **不重复的任务不走这里**：它没有「某一次」，阶段状态就存在
-  /// `Stage.status` 上（判据见 `stageStatusFor`）。硬造一条指向
-  /// 空 key 的状态行，读的时候两边会打架。
+  /// ## 两条路，由这一行是不是「某一次」决定
+  ///
+  /// 与 [ToggleTaskDone] 同一个岔口，理由也同一条：重复任务每一次的
+  /// 阶段状态在 `stage_occurrence_states`，不重复的存在 `Stage.status`
+  /// 上（判据见 `stageStatusFor`）。走错不是「没反应」，是把状态写到
+  /// 读的时候不看的那一半去 —— 勾了没变，再勾还是没变。
+  ///
+  /// ## 不重复那条路一度是空的
+  ///
+  /// 这里原本 `if (key == null) return;` 就完了，注释写着「不重复的
+  /// 任务不走这里」。可它们的阶段也得能勾 —— 而唯一的入口是
+  /// **进编辑页、勾、保存**三步。时间轴把阶段摆成了独立的卡片，
+  /// 那张卡上的勾选框对一半的任务点了没反应，才把这条空路照出来。
+  ///
+  /// 走 [ReplaceStagesCommand] 整表替换：单个阶段的状态没有专门的
+  /// 命令，而为它新加一条要连着写入侧、同步侧、导入导出一起改。
+  /// 整表替换是编辑器保存时走的同一条路，已经验过了。
   Future<void> setStageDone(TaskOccurrence row, String stageId, bool done) {
+    final status = done ? TaskStatus.done : TaskStatus.pending;
     final key = row.key;
-    if (key == null) return Future<void>.value();
-    return _ref
-        .read(taskCommandDispatcherProvider)
-        .dispatch(
-          SetStageOccurrenceStatusCommand(
-            taskId: row.taskId,
-            stageId: stageId,
-            occurrenceKey: key,
-            status: done ? TaskStatus.done : TaskStatus.pending,
-          ),
-        );
+    final dispatcher = _ref.read(taskCommandDispatcherProvider);
+
+    if (key == null) {
+      // 手里没有这条任务的阶段（调用方没喂）就什么也别做 ——
+      // 拿一份空表去整表替换，会把它所有阶段都打上墓碑。
+      if (row.stages.isEmpty) return Future<void>.value();
+      return dispatcher.dispatch(
+        ReplaceStagesCommand(
+          taskId: row.taskId,
+          stages: [
+            for (final s in row.stages)
+              StageSpec(
+                id: s.id,
+                title: s.title,
+                orderIndex: s.orderIndex,
+                startOffsetMinutes: s.startOffsetMinutes,
+                durationMinutes: s.durationMinutes,
+                colorArgb: s.colorArgb,
+                // 别的阶段维持原状 —— 但**问行，不问阶段**：
+                // `row.stageStatus` 才是「这一行的这一步做完没有」的
+                // 唯一入口，直接读 `s.status` 有一条架构守卫盯着。
+                // 走到这个分支时两者相等，而相等是 `stageStatusFor`
+                // 的结论，不该在这里再假设一遍。
+                status: s.id == stageId ? status : row.stageStatus(s),
+              ),
+          ],
+        ),
+      );
+    }
+
+    return dispatcher.dispatch(
+      SetStageOccurrenceStatusCommand(
+        taskId: row.taskId,
+        stageId: stageId,
+        occurrenceKey: key,
+        status: status,
+      ),
+    );
   }
 
   /// 跳过这一次。**只对某一次有意义** —— 不重复的任务没有「某一次」，

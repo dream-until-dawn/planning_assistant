@@ -35,7 +35,7 @@ import 'package:planning_assistant/features/views/calendar/application/month_gri
 import 'package:planning_assistant/features/views/gantt/application/gantt_layout.dart';
 import 'package:planning_assistant/features/views/shared/application/occurrence_expansion.dart';
 import 'package:planning_assistant/features/views/shared/application/task_occurrence.dart';
-import 'package:planning_assistant/features/views/timeline/application/timeline_blocks.dart';
+import 'package:planning_assistant/features/views/timeline/application/agenda_entries.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 
 const _today = PlanDate(2026, 9, 8);
@@ -116,17 +116,33 @@ void main() {
     expect(took, lessThan(_budget), reason: '展开慢了：$took');
   });
 
-  test('时间轴排一天', () {
-    final rows = expandInWindow(
+  test('时间轴摊平成议程', () {
+    final rows = expandForAgenda(
       tasks: tasks,
       overrides: const [],
-      window: const DateRange(_today, _today),
+      today: _today,
       engine: _engine,
     );
-    var day = timelineDayFor(const [], _today);
-    final took = _median(() => day = timelineDayFor(rows, _today));
-    expect(day.isEmpty, isFalse);
-    expect(took, lessThan(_budget), reason: '时间轴排布慢了：$took');
+    var entries = agendaEntries(const []);
+    final took = _median(() => entries = agendaEntries(rows));
+    expect(entries, isNotEmpty);
+    expect(took, lessThan(_budget), reason: '议程摊平慢了：$took');
+  });
+
+  test('展开成议程（每条任务只留两次）', () {
+    var rows = <TaskOccurrence>[];
+    final took = _median(() {
+      rows = expandForAgenda(
+        tasks: tasks,
+        overrides: const [],
+        today: _today,
+        engine: _engine,
+      );
+    });
+    expect(rows, isNotEmpty, reason: '什么都没展开的话，快是应该的');
+    // 每条任务最多两行 —— 这既是行为，也是这条预算成立的前提。
+    expect(rows.length, lessThanOrEqualTo(_taskCount * 2));
+    expect(took, lessThan(_budget), reason: '议程展开慢了：$took');
   });
 
   test('日历排一个月（六行横条 + 四十二格色点）', () {

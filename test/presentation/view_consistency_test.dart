@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
+import 'package:planning_assistant/core/time/date_and_minute.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/domain/entities/category.dart';
@@ -154,8 +155,24 @@ void main() {
       const PlanDate(2026, 9, 20),
       reason: '时间轴还停在旧日期 —— 两边各存了一份聚焦日',
     );
-    // 那一天确实有事（体检在 9/20），所以时间轴不该是空态。
-    expect(find.byKey(TimelinePage.emptyKey), findsNothing);
+
+    // ## 验的是「看得见」，不是「provider 的值对」
+    //
+    // 时间轴改成跨天议程之后，它**不再靠聚焦日筛内容** —— 9/20 的事
+    // 本来就在那一列里。只断言 provider 的值的话，这条用例对
+    // 「切过去之后停在哪」一无所知：滚动条停在今天、9/20 在两屏之外，
+    // 它照样绿。验收原话是「显示 9/20」，所以要量它在不在视口里。
+    final section = find.byKey(
+      TimelinePage.dateKey(const PlanDate(2026, 9, 20)),
+    );
+    expect(section, findsOneWidget, reason: '9/20 那一段没滚出来');
+    final viewport = tester.getRect(find.byKey(TimelinePage.scrollKey));
+    final top = tester.getRect(section).top;
+    expect(
+      top,
+      inInclusiveRange(viewport.top, viewport.bottom),
+      reason: '9/20 那一段建出来了，但不在屏幕上',
+    );
   });
 
   testAppWidgets('日历跟的是聚焦日，不是今天', (tester) async {
@@ -267,10 +284,16 @@ void main() {
     final container = await _pumpShell(tester, tasks: [staged], stages: stages);
 
     await _switchTo(tester, ViewKind.timeline);
-    final block = container
-        .read(timelineDayProvider)
-        .blocks
-        .singleWhere((b) => b.row.taskId == '搬家');
+    // 时间轴改成议程之后不再有「块」，跨度直接问它那一行 ——
+    // 而那正是 §4.7 说的唯一来源，甘特读的也是它。
+    final span = container
+        .read(agendaRowsProvider)
+        .singleWhere((r) => r.taskId == '搬家')
+        .span!;
+    final endMinute =
+        span.end.date.differenceInDays(_today) * minutesPerDay +
+        span.end.minute.value;
+    final startMinute = span.start.minute.value;
 
     await _switchTo(tester, ViewKind.gantt);
     final painter =
@@ -278,11 +301,7 @@ void main() {
             as GanttPainter;
     final bar = painter.layout.lanes.single.bars.single;
 
-    expect(block.endMinute, 14 * 60, reason: '时间轴没用有效跨度');
-    expect(
-      bar.lengthMinutes,
-      block.endMinute - block.startMinute,
-      reason: '甘特与时间轴的跨度不一样',
-    );
+    expect(endMinute, 14 * 60, reason: '时间轴没用有效跨度');
+    expect(bar.lengthMinutes, endMinute - startMinute, reason: '甘特与时间轴的跨度不一样');
   });
 }

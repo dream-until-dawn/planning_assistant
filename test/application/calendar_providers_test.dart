@@ -257,7 +257,7 @@ void main() {
 
       // 筛之前三处都有两条。
       expect(idsOf(c, calendarOccurrencesProvider), hasLength(2));
-      expect(idsOf(c, timelineOccurrencesProvider), hasLength(2));
+      expect(idsOf(c, agendaRowsProvider), hasLength(2));
       expect(idsOf(c, filteredTasksProvider), hasLength(2));
 
       c
@@ -266,28 +266,34 @@ void main() {
 
       for (final p in <Provider<List<dynamic>>>[
         calendarOccurrencesProvider,
-        timelineOccurrencesProvider,
+        agendaRowsProvider,
         filteredTasksProvider,
       ]) {
         expect(idsOf(c, p), ['工作的'], reason: '$p 没跟上共享的筛选');
       }
     });
 
-    test('聚焦日也是共用的：日历改一天，时间轴跟着换', () async {
+    test('聚焦日也是共用的：日历改一天，下方列表跟着换', () async {
+      // ## 时间轴不在这条用例里了
+      //
+      // 它原本也读聚焦日**筛内容**（单日刻度尺），所以能在这儿一起验。
+      // 改成跨天议程之后它不再筛 —— 聚焦日只决定它滚到哪，
+      // 那是界面的事，在 `view_consistency_test.dart` 里量视口。
+      // 留在这里的话，这条断言会变成「议程里同时有今天和明天」，
+      // 而那与「两边各存了一份聚焦日」这个 bug 无关。
       final c = await _container(
         tasks: [
           _task('今天的', start: 9 * 60),
           _task('明天的', date: _today.addDays(1), start: 9 * 60),
         ],
       );
-      expect(idsOf(c, timelineOccurrencesProvider), ['今天的']);
+      expect(c.read(selectedDayRowsProvider).map((r) => r.taskId), ['今天的']);
 
       // 日历上点了明天。
       c.read(viewSharedStateProvider.notifier).focusDate(_today.addDays(1));
-      expect(idsOf(c, timelineOccurrencesProvider), [
+      expect(c.read(selectedDayRowsProvider).map((r) => r.taskId), [
         '明天的',
-      ], reason: '时间轴还停在旧日期 —— 两边各存了一份聚焦日');
-      expect(c.read(selectedDayRowsProvider).map((r) => r.taskId), ['明天的']);
+      ], reason: '下方列表还停在旧日期 —— 两边各存了一份聚焦日');
     });
   });
 }

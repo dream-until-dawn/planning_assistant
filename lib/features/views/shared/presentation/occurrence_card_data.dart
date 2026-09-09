@@ -32,12 +32,16 @@ import '../application/task_occurrence.dart';
 ///
 /// 所以把「要喂哪些东西」收在这里，视图只给一行。
 /// 纯函数版 [occurrenceCardData] 留着给测试直接构造用。
-TaskCardData cardDataOf(WidgetRef ref, TaskOccurrence row) =>
-    occurrenceCardData(
-      row,
-      ref.watch(categoryByIdProvider),
-      today: ref.watch(todayProvider),
-    );
+TaskCardData cardDataOf(
+  WidgetRef ref,
+  TaskOccurrence row, {
+  bool withTime = true,
+}) => occurrenceCardData(
+  row,
+  ref.watch(categoryByIdProvider),
+  today: ref.watch(todayProvider),
+  withTime: withTime,
+);
 
 /// 领域实体 → 卡片展示数据。
 ///
@@ -47,6 +51,10 @@ TaskCardData occurrenceCardData(
   TaskOccurrence row,
   Map<String, Category> categories, {
   required PlanDate today,
+
+  /// 时间轴自己有一条时间栏，卡片再写一遍就是同一个时刻在一行里
+  /// 出现两次。只有那一个视图关这个开关。
+  bool withTime = true,
 }) {
   final task = row.task;
   // `categoryId == null` 就是未分类（settings-spec §3.0）——
@@ -64,7 +72,7 @@ TaskCardData occurrenceCardData(
     categoryColor: category == null
         ? Uncategorized.color
         : Color(category.colorArgb),
-    timeLabel: timeLabelOf(row, today: today),
+    timeLabel: withTime ? timeLabelOf(row, today: today) : null,
     // **进度问行自己**（`TaskOccurrence.stageProgress`）——
     // 那里面才知道这一行是不是「某一次」，以及该看哪一份状态。
     stageProgress: switch (row.stageProgress) {
@@ -79,6 +87,17 @@ TaskCardData occurrenceCardData(
     // 状态也走**行**的 —— 重复任务的 tasks.status 恒为 pending，
     // 看它的话每一次都显示成未完成（data-model §4.3）。
     isDone: row.status == TaskStatus.done,
+    // ## 这一项一度是**没人传**的
+    //
+    // `TaskCardData.isOverdue` 声明了、卡片也照它换左色条与时间色
+    // （design-system §2.4），断言测试与 golden 也各有一条 ——
+    // 但那些都是**直接构造 `TaskCardData`** 的。从真实数据这条路上
+    // 过来的卡片永远拿到默认的 `false`，于是逾期样式在应用里
+    // 一次都没出现过。
+    //
+    // 又是「模型有旋钮、界面够不着」的一例（testing-strategy §1.6），
+    // 而且是最难发现的那一种：组件测试全绿，因为它们绕过了这里。
+    isOverdue: _isOverdue(row, today),
   );
 }
 
@@ -151,4 +170,17 @@ String? timeLabelOf(TaskOccurrence row, {required PlanDate today}) {
     (null, final t?) => t,
     (final d?, final t?) => '$d $t',
   };
+}
+
+/// 这一行逾期了没有。
+///
+/// **做完的不算逾期。** 上周做完的事就是做完了，给它标红只会让
+/// 「有几件事欠着」这个问题的答案变多。跳过的同理。
+bool _isOverdue(TaskOccurrence row, PlanDate today) {
+  final date = row.planDate;
+  if (date == null) return false;
+  if (row.status == TaskStatus.done || row.status == TaskStatus.skipped) {
+    return false;
+  }
+  return date.isBefore(today);
 }

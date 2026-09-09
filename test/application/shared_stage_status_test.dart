@@ -105,7 +105,10 @@ void main() {
   test('**四个视图对今天这一次说同一个进度**', () async {
     final c = await _container();
 
-    final timeline = c.read(timelineOccurrencesProvider).single;
+    // 议程一条重复任务出两行（本次和下次）—— 要今天那一行。
+    final timeline = c
+        .read(agendaRowsProvider)
+        .singleWhere((r) => r.planDate == _today);
     final list = c.read(filteredTasksProvider).single;
     // 甘特是排布好的条 —— 它的进度是 double。
     final lanes = c.read(ganttLayoutProvider).lanes;

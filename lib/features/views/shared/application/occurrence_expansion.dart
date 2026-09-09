@@ -14,6 +14,7 @@ import '../../../../domain/entities/task.dart';
 import '../../../../domain/recurrence/recurrence_engine.dart';
 import '../../../../domain/services/stage_occurrence_status.dart';
 import '../../../../domain/value_objects/occurrence_key.dart';
+import '../../../../domain/value_objects/task_status.dart';
 import 'task_occurrence.dart';
 
 /// 列表的展开窗口，相对「今天」。
@@ -276,6 +277,130 @@ List<TaskOccurrence> expandInWindow({
         out.add(row);
       }
     }
+  }
+
+  return out;
+}
+
+/// 时间轴的展开：每条任务只留「**本次**」与「**下次**」（view-specs §1）。
+///
+/// ## 三套展开的分工
+///
+/// | | 范围 | 折叠 |
+/// |---|---|---|
+/// | [expandInWindow] | 给定窗口 | 不折叠，窗口内一次不落 |
+/// | [expandForList] | 相对今天 | 逾期全留、未来留一次 |
+/// | [expandForAgenda] | 相对今天 | 逾期留一次、今天起补满两条 |
+///
+/// 窗口沿用 [ListHorizon]，与列表**共用同一个**「多久以前算逾期」——
+/// 各定各的话，同一条漏做的任务会在列表里还在、在时间轴上已经不见。
+///
+/// ## 「本次和下次」是哪两次
+///
+/// 用户的原话是「重复任务只出本次和下次」。直译成「最早的两次未完成」
+/// 会在一处出错：一条搁下两周的每日任务，最早的两次都在半个月前，
+/// 于是**今天那次反而看不见** —— 而这个视图要回答的正是「接下来是什么」。
+///
+/// 所以逾期的只留**最早一条**（一条足够说明「你欠着」），
+/// 今天起的按顺序补满到两条：
+///
+/// | 情形（今天 9/9） | 出哪几条 |
+/// |---|---|
+/// | 每日，8/26 起全没做 | 8/26、9/9 |
+/// | 每日，逾期的都补上了 | 9/9、9/10 |
+/// | 每周一，9/2 漏了 | 9/2、9/9 |
+/// | 规则已经结束，只剩逾期的 | 最早那条 |
+///
+/// [includeSkipped] / [includeCompleted] 同 [expandForList]：
+/// 用户显式筛「已跳过」「已完成」时把被折叠掉的那些放回来。
+/// 没有它们的话，这个视图会对筛选器**装作没看见**，
+/// 而四个视图必须对同一份筛选给同一种反应（FR-VIEW-05）。
+List<TaskOccurrence> expandForAgenda({
+  required List<Task> tasks,
+  required List<OccurrenceOverride> overrides,
+  required PlanDate today,
+  required RecurrenceEngine engine,
+  bool includeSkipped = false,
+  bool includeCompleted = false,
+  Map<String, List<Stage>> stagesByTask = const {},
+  Map<String, Map<OccurrenceKey, StageStatesOfOccurrence>> stageStatesByTask =
+      const {},
+}) {
+  final byTask = _indexOverrides(overrides);
+  final out = <TaskOccurrence>[];
+
+  bool wanted(TaskStatus status) => switch (status) {
+    TaskStatus.done => includeCompleted,
+    TaskStatus.skipped => includeSkipped,
+    TaskStatus.pending || TaskStatus.inProgress => true,
+  };
+
+  for (final task in tasks) {
+    final date = task.planDate;
+    // 没有日期的不进时间轴 —— 它不落在任何一条时间线上（用户明确要求）。
+    // 列表另有「无日期」分组管它（§2.1）。
+    if (date == null) continue;
+
+    if (!task.isRecurring) {
+      final row = TaskOccurrence(
+        task: task,
+        stages: stagesByTask[task.id] ?? const [],
+      );
+      if (wanted(row.status)) out.add(row);
+      continue;
+    }
+
+    final context = _contextOf(task, date);
+    final taskOverrides = byTask[task.id] ?? const <OccurrenceOverride>[];
+
+    final picked = <TaskOccurrence>[];
+    var tookOverdue = false;
+    var tookUpcoming = false;
+
+    void consider(List<Occurrence> occurrences) {
+      for (final o in occurrences) {
+        if (picked.length >= 2) return;
+        final row = TaskOccurrence(
+          task: task,
+          occurrence: o,
+          stages: stagesByTask[task.id] ?? const [],
+          stageStates: stageStatesByTask[task.id]?[o.key] ?? const {},
+        );
+        if (!wanted(row.status)) continue;
+        if (o.start.date.isBefore(today)) {
+          // 逾期的只留最早一条，见上表。
+          if (tookOverdue) continue;
+          tookOverdue = true;
+        } else {
+          tookUpcoming = true;
+        }
+        picked.add(row);
+      }
+    }
+
+    consider(
+      engine.expand(
+        context: context,
+        window: ListHorizon.around(today),
+        overrides: taskOverrides,
+        includeSkipped: includeSkipped,
+      ),
+    );
+
+    // 常规窗口里一条未来的都没有 → 往更远处找。不找的话，
+    // 「每年 5 月 20 日」这类稀疏规则在九月整条从时间轴上消失。
+    if (!tookUpcoming) {
+      consider(
+        engine.expand(
+          context: context,
+          window: ListHorizon.lookahead(today),
+          overrides: taskOverrides,
+          includeSkipped: includeSkipped,
+        ),
+      );
+    }
+
+    out.addAll(picked);
   }
 
   return out;

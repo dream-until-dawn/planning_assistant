@@ -80,7 +80,6 @@ final List<SettingSpecBase> settingsRegistry = [
   defaultView,
   listGroupBy,
   listSortBy,
-  timelineTickMinutes,
   firstDayOfWeek,
   calendarSplitRatio,
   ganttLaneBy,
@@ -324,28 +323,6 @@ final SettingSpec<double> calendarSplitRatio = SettingSpec<double>(
   decode: (json) => json is num
       ? CalendarSplit.clamp(json.toDouble())
       : CalendarSplit.byDefault,
-);
-
-/// 时间轴的刻度粒度（view-specs §1.2）。
-///
-/// **它同时决定纵向的比例尺**：一格恒为 `TimelineMetrics.tickHeight`，
-/// 于是选 15 分钟就是把一天拉长四倍。只加密刻度线而不改比例的话，
-/// 15 分钟一格只有十几个逻辑像素，标签互相压着，等于没有这个选项。
-final SettingSpec<int> timelineTickMinutes = SettingSpec<int>(
-  key: 'view.timelineTickMinutes',
-  defaultValue: 60,
-  exposure: SettingExposure.exposed,
-  group: SettingGroup.view,
-  editor: SettingEditor.select,
-  label: '时间轴刻度',
-  description: '时间轴上每一格代表多久',
-  options: const [(15, '15 分钟'), (30, '30 分钟'), (60, '1 小时')],
-  encode: (v) => v,
-  // 认不出的值回落到默认。**这里必须显式列出合法值**：
-  // 存进来一个 7 分钟的话，刻度线会落在 07:00、07:07…… 这种地方，
-  // 而它是「配置文件被手改过」，不是一个该被当真的选择。
-  decode: (json) =>
-      json is int && const [15, 30, 60].contains(json) ? json : 60,
 );
 
 final SettingSpec<ListSortBy> listSortBy = _enumSpec(

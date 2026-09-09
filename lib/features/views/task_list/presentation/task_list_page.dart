@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../design/components/empty_state.dart';
 import '../../../../design/components/task_card.dart';
+import '../../../../design/components/undo_snackbar.dart';
 import '../../../../design/theme/app_theme.dart';
 import '../../../../design/tokens/dimensions.dart';
 import '../../shared/application/create_task_at.dart';
@@ -351,27 +352,5 @@ class _SelectionBar extends ConsumerWidget {
     ScaffoldMessengerState messenger,
     String message,
     VoidCallback undo,
-  ) {
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          duration: const Duration(seconds: 5),
-          // **必须显式写 `persist: false`。**
-          //
-          // Flutter 的 `SnackBar` 里有一行：`persist = persist ?? action != null`
-          // —— **带 action 的提示默认永不自动消失**，等用户去点。
-          // 而我们每一条提示都带「撤销」，于是全都是永久的：
-          // `duration` 照样设了，计时器也照样起，但回调第一句是
-          // `if (snackBar.persist) return;`。
-          //
-          // 表现就是用户报的那条：「下方的轻提示永远不会消失」——
-          // 屏幕底部被一条陈旧提示长期占住，而它上面的「撤销」
-          // 还连着一个早就过期的闭包；后面每一条新提示都排在它后面出不来。
-          persist: false,
-          action: SnackBarAction(label: '撤销', onPressed: undo),
-        ),
-      );
-  }
+  ) => showUndoSnackBar(messenger, message, onUndo: undo);
 }
