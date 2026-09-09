@@ -559,22 +559,35 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     // （`recurrence_conversion.dart` 里记着那次尝试）。
     // 搬进草稿反而更好 —— 勾选框当场就带着正确的状态出现，
     // 用户在保存**之前**就看见了。
-    // 只在**从重复切到不重复**那一下搬。
+    // 只在**从重复切到不重复**那一下搬，而且**整个编辑会话只搬一次**。
     //
-    // 变异演练里把这个条件改成「一律搬」**没有变红**（I-02）——
-    // 我试着构造能分辨的场景，只造出一个「关掉→手动取消→再打开→再关掉」
-    // 的来回切换，而那个流程里「该不该重新搬」本身就没有明显正确答案。
-    // 与其为一个我自己发明的偏好写一条测试，不如如实记下：
-    // **这个条件是精确性，不是正确性** —— 一律搬也不会出错
-    // （打开重复那一侧的值随后会被归一化掉）。
-    // 留着它是因为它说清了「这是一次转换」，而不是每次动开关都跑一遍。
-    final leavingRecurring = state.isRecurring && !value.enabled;
+    // 「只搬一次」是 task-lifecycle §4.2「**用户显式操作优先于推导**」
+    // 在这个位置上的实例：搬过来之后用户手动取消了那一勾，
+    // 再来一次转换不能把它改回去 —— §4.2 那句「破坏用户已记录的
+    // 阶段进度比留下不一致更糟」说的就是这件事。
+    //
+    // **我一度把这条判断错了。** 变异演练里「一律搬」没变红，
+    // 我把场景表述成「关掉→取消→再打开→再关掉，该不该重新搬」，
+    // 觉得没有明显正确答案，于是删掉了自己写的那条测试，
+    // 并在这里写「这是精确性不是正确性」。
+    // 换个表述答案就有了：**再次转换能不能覆盖用户刚做出的取消**——
+    // 而那条规格早就写过了，只是我没认出来。
+    final leavingRecurring =
+        state.isRecurring && !value.enabled && !_inheritedStagesOnce;
     state = state.copyWith(
       recurrence: value,
       planDate: needsDate ? _today() : state.planDate,
       stages: leavingRecurring ? _stagesFromFirstOccurrence() : null,
     );
+    if (leavingRecurring) _inheritedStagesOnce = true;
   }
+
+  /// 这次编辑里已经搬过一回进度了。见 [setRecurrence] 里那段。
+  ///
+  /// 放私有字段而不是放进 [TaskDraft]：它不是表单的内容，
+  /// 是这次会话的簿记 —— 进了 draft 就会被 `copyWith` 到处传，
+  /// 而且它对「保存下去是什么」毫无影响。
+  bool _inheritedStagesOnce = false;
 
   /// 把第一次发生的阶段状态读进草稿的阶段行。
   ///

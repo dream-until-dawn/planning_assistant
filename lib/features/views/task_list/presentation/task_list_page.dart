@@ -52,6 +52,9 @@ class TaskListPage extends ConsumerStatefulWidget {
   static const Key selectionCountKey = ValueKey('task-list-selection-count');
   static const Key selectionDoneKey = ValueKey('task-list-selection-done');
   static const Key selectionDeleteKey = ValueKey('task-list-selection-delete');
+  static const Key selectionPostponeKey = ValueKey(
+    'task-list-selection-postpone',
+  );
   static const Key selectionCancelKey = ValueKey('task-list-selection-cancel');
 
   static Key selectionCheckKey(String rowId) =>
@@ -304,6 +307,24 @@ class _SelectionBar extends ConsumerWidget {
                 final messenger = ScaffoldMessenger.of(context);
                 final undo = await bulk.toggleDone();
                 _offerUndo(messenger, '已更新 $count 项', undo);
+              },
+            ),
+            IconButton(
+              key: TaskListPage.selectionPostponeKey,
+              icon: const Icon(Icons.schedule),
+              tooltip: '推迟一天',
+              onPressed: () async {
+                final messenger = ScaffoldMessenger.of(context);
+                final result = await bulk.postpone();
+                // **说清真的挪了几条。** 没有日期的推不了，
+                // 而选了五条只动了三条却什么都不说，用户会以为全动了。
+                _offerUndo(
+                  messenger,
+                  result.moved == count
+                      ? '已推迟 $count 项'
+                      : '推迟了 ${result.moved} 项，${count - result.moved} 项没有日期',
+                  result.undo,
+                );
               },
             ),
             IconButton(

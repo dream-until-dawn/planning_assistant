@@ -38,6 +38,22 @@ jobs:
       - name: 坏测试扫描（含扫描器自检）
         run: dart tool/lint_tests.dart --self-test
 
+      # 需求可追溯性：每条 V1 需求都要有**用例**点它的名，
+      # 豁免表只许缩短（棘轮）。同样带 --self-test。
+      # 见 docs/05-engineering/conventions.md §5.1
+      #
+      # **这一条是补进来的，而它没接进 CI 的那段时间很说明问题**：
+      # 它被造出来正是为了抓「能力存在、但没有任何入口够得着」那一族，
+      # 而它自己当时就是那个形状 —— tool/ 下六个脚本，五个接了，
+      # 漏的偏偏是最新加的这个。
+      #
+      # 更难看的是它**看起来**是条门禁：conventions.md 里写着，
+      # 每次收尾我都手动跑一遍并报「全绿」。手动跑出来的绿
+      # 与自动跑出来的绿在报告里长得一模一样，
+      # 而前者在没人跑的时候什么也不保证。
+      - name: 需求可追溯性（含自检与豁免棘轮）
+        run: python tool/check_traceability.py --self-test
+
       - name: 静态分析
         run: dart analyze --fatal-infos --fatal-warnings
 

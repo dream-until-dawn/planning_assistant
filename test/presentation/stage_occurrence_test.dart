@@ -390,6 +390,77 @@ void main() {
     expect(row.status, 'done', reason: '落库之后进度还是丢了');
   });
 
+  testAppWidgets('**用户手动取消之后，再次转换不会把它改回来**（§4.2）', (tester) async {
+    // task-lifecycle §4.2：**用户显式操作优先于推导**。
+    // 那一节结尾写着「这条不对称是刻意的，必须有专门测试锁住
+    //（否则将来有人「顺手统一一下」就悄悄改掉了）」——
+    // 这条就是那把锁在「转换时继承进度」这个新位置上的实例。
+    //
+    // **这条测试我写过一次又删掉过一次。** 当时我把场景表述成
+    // 「关掉→取消→再打开→再关掉，该不该重新搬」，觉得没有明显正确
+    // 答案，于是判定那个条件「是精确性不是正确性」。
+    // 换个表述答案就有了：**再次转换能不能覆盖用户刚做出的取消**。
+    // 规格早就写过了，我没认出来。
+    //
+    // 所以这里断言的是**原则**（手动改动不被覆盖），
+    // 不是机制（只在某个方向搬）—— 后者是变更检测器。
+    final harness = await _pumpApp(tester);
+    await _createRecurringStaged(tester);
+    final stages = await _stageIds(harness);
+
+    await _goToDay(tester, _today);
+    await _openSheet(tester);
+    await _tick(tester, stages.first);
+    await _closeSheet(tester);
+
+    await _openSheet(tester);
+    await tester.tap(find.byKey(OccurrenceSheetKeys.editSeries));
+    await tester.pumpAndSettle();
+
+    Future<void> scrollToStages() async {
+      await tester.scrollUntilVisible(
+        find.byKey(TaskEditorPage.stageSectionKey),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+    }
+
+    // 关掉重复 → 进度搬过来了。
+    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+    await scrollToStages();
+    expect(
+      tester
+          .widget<Checkbox>(
+            find.byKey(TaskEditorPage.stageDoneKey(stages.first)),
+          )
+          .value,
+      isTrue,
+      reason: '前提：搬过来了',
+    );
+
+    // **用户手动取消那一勾。**
+    await tapVisible(tester, TaskEditorPage.stageDoneKey(stages.first));
+    // 再打开重复、再关掉。
+    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+    await tapVisible(
+      tester,
+      TaskEditorPage.frequencyKey(RecurrenceFrequency.daily),
+    );
+    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+    await scrollToStages();
+
+    expect(
+      tester
+          .widget<Checkbox>(
+            find.byKey(TaskEditorPage.stageDoneKey(stages.first)),
+          )
+          .value,
+      isFalse,
+      reason: '用户手动取消的那一勾被「搬」覆盖回去了 —— 违反 §4.2「显式操作优先」',
+    );
+  });
+
   testAppWidgets('对照组：只搬第一次那一份，别的发生不掺和', (tester) async {
     // 少了这条，一个「把任意一次的进度搬过来」的实现能让上面绿。
     final harness = await _pumpApp(tester);

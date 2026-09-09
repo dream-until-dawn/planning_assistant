@@ -89,6 +89,34 @@ final class BulkActions {
     };
   }
 
+  /// 批量推迟一天。
+  ///
+  /// **补这个是因为一条判据**：批量与单行不该有一方支持、另一方不支持的
+  /// 动作。滑动那边三个动作（完成 / 推迟 / 删除）都可配，
+  /// 而批量一度只有完成与删除 —— 「把这五件都推到明天」是多选最自然的
+  /// 用法之一，缺它等于让用户一条条滑。
+  ///
+  /// 返回 `(挪动了几条, 撤销)`：没有日期的行推不了
+  /// （`PostponeRow` 返回 null），而**那件事要说出来** ——
+  /// 选了五条只动了三条却什么都不说，用户会以为全动了。
+  Future<({int moved, VoidCallback undo})> postpone() async {
+    final postponeRow = _ref.read(postponeRowProvider);
+    final undos = <VoidCallback>[];
+    for (final row in selectedRows()) {
+      final undo = await postponeRow(row);
+      if (undo != null) undos.add(undo);
+    }
+    _ref.read(selectionProvider.notifier).clear();
+    return (
+      moved: undos.length,
+      undo: () {
+        for (final undo in undos) {
+          undo();
+        }
+      },
+    );
+  }
+
   /// 批量删除（软删，进回收站）。
   Future<VoidCallback> delete() async {
     final trash = _ref.read(trashActionsProvider);

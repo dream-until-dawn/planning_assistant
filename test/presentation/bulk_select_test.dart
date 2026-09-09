@@ -40,11 +40,14 @@ Future<void> _create(
   WidgetTester tester,
   String title, {
   bool recurring = false,
+  bool dated = false,
 }) async {
   await tester.tap(find.byKey(AppShell.fabKey));
   await tester.pumpAndSettle();
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), title);
   await tester.pump();
+  // 关掉全天会补上今天 —— 给它一个日期最省事的路径。
+  if (dated) await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
   if (recurring) {
     await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
     await tapVisible(
@@ -214,6 +217,48 @@ void main() {
         hasLength(2),
         reason: '撤销只回来了一部分',
       );
+    });
+  });
+
+  group('批量推迟：补的是「单行有、批量没有」那个不对称', () {
+    testAppWidgets('两条一起推到明天，给撤销', (tester) async {
+      final harness = await _pumpApp(tester);
+      await _create(tester, '买菜', dated: true);
+      await _create(tester, '取快递', dated: true);
+
+      await _longPressCard(tester, 0);
+      await tester.tap(find.byType(TaskCard).at(1));
+      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskListPage.selectionPostponeKey);
+
+      final rows = await harness.db.select(harness.db.tasks).get();
+      expect(rows.map((r) => r.planDate).toSet(), {
+        '2026-09-08',
+      }, reason: '前提是今天 9/7，推迟一天该到 9/8');
+
+      await tester.tap(find.text('撤销'));
+      await tester.pumpAndSettle();
+      expect(
+        (await harness.db.select(harness.db.tasks).get())
+            .map((r) => r.planDate)
+            .toSet(),
+        {'2026-09-07'},
+        reason: '撤销要回到**原来那天**，不是「今天减一天」',
+      );
+    });
+
+    testAppWidgets('**没有日期的推不了，而且要说出来**', (tester) async {
+      // 选了两条只动了一条却什么都不说，用户会以为全动了。
+      await _pumpApp(tester);
+      await _create(tester, '买菜', dated: true);
+      await _create(tester, '想想去哪玩');
+
+      await _longPressCard(tester, 0);
+      await tester.tap(find.byType(TaskCard).at(1));
+      await tester.pumpAndSettle();
+      await tapVisible(tester, TaskListPage.selectionPostponeKey);
+
+      expect(find.textContaining('1 项没有日期'), findsOneWidget);
     });
   });
 
