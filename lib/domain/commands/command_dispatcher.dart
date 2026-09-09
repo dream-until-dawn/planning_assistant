@@ -7,6 +7,7 @@ library;
 
 import '../../core/patch/unset.dart';
 import '../../core/time/clock.dart';
+import '../../core/time/minute_of_day.dart';
 import '../../core/time/time_zone_resolver.dart';
 import '../entities/checklist_item.dart';
 import '../entities/occurrence.dart';
@@ -17,6 +18,7 @@ import '../entities/task.dart';
 import '../policies/task_lifecycle.dart';
 import '../recurrence/recurrence_engine.dart';
 import '../repositories/task_repository.dart';
+import '../services/all_day_conversion.dart';
 import '../value_objects/occurrence_key.dart';
 import '../value_objects/recurrence.dart';
 import '../value_objects/task_status.dart';
@@ -100,6 +102,8 @@ final class CommandDispatcher {
         await _setStageOccurrenceStatus(command);
       case ReplaceChecklistCommand():
         await _replaceChecklist(command);
+      case ConvertTaskAllDayModeCommand():
+        await _convertAllDayMode(command);
     }
   }
 
@@ -297,6 +301,33 @@ final class CommandDispatcher {
     // 阶段任务标完成时必须连阶段一起处理，否则父子状态不一致。
     // 这里只处理「非完成」的迁移；完成走 CompleteTaskWithStagesCommand。
     await _repo.saveTask(updated);
+  }
+
+  /// 全天 ⇄ 定时切换（R-27）。
+  ///
+  /// 判断与迁移全在纯函数 `convertAllDayMode` 里，这里只负责取数与落盘。
+  /// **已经是那个形态时直接返回** —— 不是「无害地再写一遍」：
+  /// 再写一遍会把所有例外原地删了重建，白白产生一批墓碑与新行，
+  /// 而 V3 对端要为这些什么也没变的行做一轮合并。
+  Future<void> _convertAllDayMode(ConvertTaskAllDayModeCommand c) async {
+    final task = await _require(c.taskId);
+    if (task.isAllDay == c.toAllDay) return;
+
+    await _repo.applyAllDayConversion(
+      convertAllDayMode(
+        task,
+        toAllDay: c.toAllDay,
+        // **回落 00:00 的规则只有一处**：`Task.wallStart` 里那句
+        // `startMinute ?? MinuteOfDay.midnight`。定时任务不填时刻时，
+        // 引擎展开出来的 key 就是 `T00:00` —— 这里算迁移后的 key 时
+        // 必须用同一条，否则迁完的例外挂在一个不存在的时刻上。
+        startMinute: c.toAllDay
+            ? null
+            : (c.startMinute ?? MinuteOfDay.midnight),
+        overrides: await _repo.findOverridesOfTask(c.taskId),
+        stageStates: await _repo.findStageStatesOfTask(c.taskId),
+      ),
+    );
   }
 
   /// 整表替换清单项（FR-TASK-09）。

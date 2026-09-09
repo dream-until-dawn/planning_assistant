@@ -72,6 +72,8 @@ sealed class TaskCommand {
       SetStageOccurrenceStatusCommand.kType =>
         SetStageOccurrenceStatusCommand.fromJson(json),
       ReplaceChecklistCommand.kType => ReplaceChecklistCommand.fromJson(json),
+      ConvertTaskAllDayModeCommand.kType =>
+        ConvertTaskAllDayModeCommand.fromJson(json),
       _ => throw UnknownCommandException(type),
     };
   }
@@ -93,6 +95,7 @@ sealed class TaskCommand {
     SplitRecurringTaskCommand.kType,
     SetStageOccurrenceStatusCommand.kType,
     ReplaceChecklistCommand.kType,
+    ConvertTaskAllDayModeCommand.kType,
   ];
 }
 
@@ -835,5 +838,50 @@ final class ChecklistItemSpec {
         title: json['title']! as String,
         orderIndex: json['orderIndex']! as int,
         isDone: json['isDone']! as bool,
+      );
+}
+
+/// 全天 ⇄ 定时的切换（R-27、data-model §4.6）。
+///
+/// **不放进 [UpdateTaskFieldsCommand]，是故意的。** 那条命令是「改几个
+/// 字段」，而这件事是「改一个字段 + 重写另外两张表的主键」——
+/// `occurrenceKey` 的形态跟着 `isAllDay` 走，切换时已有的例外与阶段状态
+/// 都要在同一事务里迁移 key，否则它们全部失联。
+/// 混进那条命令的话，任何一条改标题的路径都得顺带考虑 key 迁移。
+///
+/// 迁移规则与撞车检查是纯函数 `convertAllDayMode`。
+final class ConvertTaskAllDayModeCommand extends TaskCommand {
+  const ConvertTaskAllDayModeCommand({
+    required this.taskId,
+    required this.toAllDay,
+    this.startMinute,
+  });
+
+  static const kType = 'convertTaskAllDayMode';
+
+  final String taskId;
+  final bool toAllDay;
+
+  /// 转成定时时的新开始时刻；转成全天时必须为 null。
+  final MinuteOfDay? startMinute;
+
+  @override
+  String get type => kType;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'type': kType,
+    'taskId': taskId,
+    'toAllDay': toAllDay,
+    'startMinute': startMinute?.value,
+  };
+
+  static ConvertTaskAllDayModeCommand fromJson(Map<String, Object?> json) =>
+      ConvertTaskAllDayModeCommand(
+        taskId: json['taskId']! as String,
+        toAllDay: json['toAllDay']! as bool,
+        startMinute: json['startMinute'] == null
+            ? null
+            : MinuteOfDay(json['startMinute']! as int),
       );
 }

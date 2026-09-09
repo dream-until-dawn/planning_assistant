@@ -11,6 +11,7 @@ import '../entities/occurrence_override.dart';
 import '../entities/stage.dart';
 import '../entities/stage_occurrence_state.dart';
 import '../entities/task.dart';
+import '../services/all_day_conversion.dart';
 import '../value_objects/occurrence_key.dart';
 
 /// 查询任务时的可见性范围（task-lifecycle §1.1 的三个谓词）。
@@ -115,6 +116,19 @@ abstract interface class TaskRepository {
 
   /// 整表写回一条任务的清单项（含墓碑）。
   Future<void> saveChecklist(String taskId, List<ChecklistItem> items);
+
+  /// 一条任务全部发生的阶段状态（R-27 迁移 key 时要取全，含墓碑与否由
+  /// 调用方无关 —— 这里只给活着的，墓碑不需要迁移）。
+  Future<List<StageOccurrenceState>> findStageStatesOfTask(String taskId);
+
+  /// 全天 ⇄ 定时切换的落盘（R-27）。
+  ///
+  /// **必须原子**：任务改了而例外的 key 没迁，那些例外就永久失联了 ——
+  /// 库里还在、界面上再也挂不上任何一次发生。
+  ///
+  /// [movedOverrides] / [movedStageStates] 的 `from` 是旧 key：
+  /// 旧行打墓碑，新行另起（主键是从 key 派生的，见 `all_day_conversion`）。
+  Future<void> applyAllDayConversion(AllDayConversion conversion);
 
   /// 写入任务及其阶段（同一事务）。
   ///

@@ -132,6 +132,7 @@ final class TaskDraft {
     this.stages = const [],
     this.checklist = const [],
     this.recurrence = const RecurrenceDraft(),
+    this.initialIsAllDay,
   });
 
   /// 正在编辑哪条任务。**null = 新建**。
@@ -196,6 +197,17 @@ final class TaskDraft {
 
   /// 清单项（FR-TASK-09）。
   final List<ChecklistDraft> checklist;
+
+  /// 打开这张表单时任务是不是全天的。**新建时为 null。**
+  ///
+  /// 保存时用它判断要不要发 `ConvertTaskAllDayModeCommand`（R-27）——
+  /// 那条命令会把已有例外的 key 全部迁一遍，只在**真的换了形态**时发。
+  /// 拿 `isEditing` 当条件的话，每次保存都迁一遍，白白造一批墓碑。
+  final bool? initialIsAllDay;
+
+  /// 这次保存有没有换形态。
+  bool get allDayModeChanged =>
+      initialIsAllDay != null && initialIsAllDay != isAllDay;
 
   /// 有效清单项：标题非空的那些。同 [filledStages] ——
   /// 点了「加一项」还没打字的空行不该落库。
@@ -299,6 +311,7 @@ final class TaskDraft {
     TaskPriority? priority,
     List<StageDraft>? stages,
     List<ChecklistDraft>? checklist,
+    bool? initialIsAllDay,
     RecurrenceDraft? recurrence,
   }) => TaskDraft(
     editingTaskId: editingTaskId,
@@ -321,6 +334,7 @@ final class TaskDraft {
     priority: priority ?? this.priority,
     stages: stages ?? this.stages,
     checklist: checklist ?? this.checklist,
+    initialIsAllDay: initialIsAllDay ?? this.initialIsAllDay,
     recurrence: recurrence ?? this.recurrence,
   );
 }
@@ -374,6 +388,7 @@ TaskDraft draftFromTask(
         ChecklistDraft(id: i.id, title: i.title, isDone: i.isDone),
     ],
     recurrence: restored ?? const RecurrenceDraft(),
+    initialIsAllDay: task.isAllDay,
   );
 }
 
@@ -717,6 +732,32 @@ final class TaskEditorController extends Notifier<TaskDraft> {
         );
   }
 
+  /// 全天 ⇄ 定时的切换（R-27）。
+  ///
+  /// **形态变没变由 dispatcher 判，这里不判。**
+  /// 一度在这儿加了一道 `if (!draft.allDayModeChanged) return`，
+  /// 变异演练里去掉它测试全绿 —— 查下去发现它是**重复的判断**：
+  /// dispatcher 里那道 `task.isAllDay == c.toAllDay` 已经挡住了，
+  /// 而且它比这一道**更对**：它比的是库里当前的状态，
+  /// 这一道比的是打开表单那一刻的快照。
+  /// 两处判同一件事，迟早改了一处忘了另一处。
+  ///
+  /// （`draft.allDayModeChanged` 留着 —— 界面用它显示那句提示。）
+  ///
+  /// 时刻传 `draft.startMinute`，可能是 null —— 那时 dispatcher 回落到
+  /// 00:00，与 `Task.startWallTime` 里那条 `?? midnight` 是同一条规则。
+  Future<void> _convertAllDayMode(String taskId, TaskDraft draft) {
+    return ref
+        .read(taskCommandDispatcherProvider)
+        .dispatch(
+          ConvertTaskAllDayModeCommand(
+            taskId: taskId,
+            toAllDay: draft.isAllDay,
+            startMinute: draft.isAllDay ? null : draft.startMinute,
+          ),
+        );
+  }
+
   /// 把清单整表写回（FR-TASK-09）。
   ///
   /// **编辑时也要发，而且没有项时要发一条空的** —— 与阶段同一个理由：
@@ -833,6 +874,12 @@ final class TaskEditorController extends Notifier<TaskDraft> {
                   : draft.endMinute,
             ),
           );
+      // **形态切换排在改字段之前**（R-27）。
+      //
+      // 顺序有关系：迁移 key 用的是任务**当前**的形态去读旧例外，
+      // 改字段那条如果先跑，任务已经是新形态，而例外还挂着旧 key ——
+      // 那时再迁就得靠猜「它原来是哪种」。
+      await _convertAllDayMode(id, draft);
       await _replaceStages(id, draft);
       await _replaceChecklist(id, draft);
       return id;

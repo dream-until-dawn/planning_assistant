@@ -385,16 +385,16 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
               key: TaskEditorPage.allDaySwitchKey,
               contentPadding: EdgeInsets.zero,
               title: const Text('全天'),
-              // **编辑时禁用。** 全天 ⇄ 定时会改变 occurrenceKey 的形态，
-              // 已有的单次例外要在同一事务里迁移 key
-              // （data-model §4.6、R-27），那需要一条专门的命令，
-              // roadmap 排在 M3。在那之前让它能拨却存不下去，
-              // 就是又一个「改了没反应」的开关。
-              subtitle: draft.isEditing
-                  ? Text('建好之后暂时改不了', style: text.bodySmall)
+              // **编辑时一度是禁用的**：全天 ⇄ 定时会改变 occurrenceKey
+              // 的形态，已有的单次例外要在同一事务里迁移 key
+              // （data-model §4.6、R-27）。没有那条命令之前，
+              // 让它能拨却存不下去就是又一个「改了没反应」的开关。
+              // `ConvertTaskAllDayModeCommand` 做出来了，于是放开。
+              subtitle: draft.allDayModeChanged
+                  ? Text('保存时会把这条任务的单次例外一并迁移', style: text.bodySmall)
                   : null,
               value: draft.isAllDay,
-              onChanged: draft.isEditing ? null : controller.setAllDay,
+              onChanged: controller.setAllDay,
             ),
             if (!draft.isAllDay)
               _TimeRow(

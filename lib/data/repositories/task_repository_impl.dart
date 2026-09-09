@@ -19,6 +19,7 @@ import '../../domain/entities/stage_occurrence_state.dart';
 import '../../domain/entities/task.dart';
 import '../../domain/policies/task_lifecycle.dart';
 import '../../domain/repositories/task_repository.dart';
+import '../../domain/services/all_day_conversion.dart';
 import '../../domain/value_objects/occurrence_key.dart';
 import '../database/app_database.dart';
 import '../database/dao/synced_dao.dart';
@@ -190,6 +191,39 @@ final class DriftTaskRepository implements TaskRepository {
       q.where((t) => t.deletedAt.isNull());
     }
     return (await q.get()).map(checklistItemFromRow).toList();
+  }
+
+  @override
+  Future<List<StageOccurrenceState>> findStageStatesOfTask(
+    String taskId,
+  ) async {
+    final rows = await (_db.select(
+      _db.stageOccurrenceStates,
+    )..where((t) => t.taskId.equals(taskId) & t.deletedAt.isNull())).get();
+    return rows.map(stageStateFromRow).toList();
+  }
+
+  @override
+  Future<void> applyAllDayConversion(AllDayConversion conversion) async {
+    // **一个事务**：任务改了而例外的 key 没迁，那些例外就永久失联 ——
+    // 库里还在、界面上再也挂不上任何一次发生，而且没有任何报错。
+    await _db.transaction(() async {
+      await _tasks.upsert(conversion.task.toCompanion());
+      for (final moved in conversion.movedOverrides) {
+        // 顺序要紧：**先写新行再删旧行**。反过来的话，中途失败会留下
+        // 「旧的没了、新的还没写」—— 而事务回滚救得了，
+        // 唯独救不了「两边都指着同一条例外」那一瞬的唯一索引冲突。
+        // 这里两个 id 必然不同（key 变了才会进这张表），所以不冲突。
+        await _overrides.upsert(occurrenceOverrideToCompanion(moved.to));
+        await _overrides.softDelete(overrideRowId(moved.to.taskId, moved.from));
+      }
+      for (final moved in conversion.movedStageStates) {
+        await _stageStates.upsert(stageStateToCompanion(moved.to));
+        await _stageStates.softDelete(
+          StageOccurrenceState.idFor(moved.to.stageId, moved.from),
+        );
+      }
+    });
   }
 
   @override

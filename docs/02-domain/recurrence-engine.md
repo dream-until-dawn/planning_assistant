@@ -385,6 +385,17 @@ NFR-PERF-04 要求「展开 1 年实例 ≤ 50ms」。措施：
 | R-25 | 完成某一次后，任务 `status` 仍为 `pending` | 其它次不受影响（data-model §4.3） |
 | R-26 | 导入含 `EXDATE` 的 `.ics` | 每个 EXDATE 转成一条 `action=skip` 的 override；展开时该日不出现。**引擎不读 `recurrenceExDates` 列**（[data-model §4.5](data-model.md#45-recurrenceexdates-在-v1-不参与展开决定)） |
 | R-27 | 全天重复任务已有 override，切换为定时任务 | 相关 override 的 `occurrenceKey` 在同一事务内从 `yyyy-MM-dd` 迁移为 `yyyy-MM-ddTHH:mm`，例外不失联（[data-model §4.6](data-model.md#46-occurrencekey-的格式区分全天与定时)） |
+
+> **R-27 已落地（M3 收尾）。** 判据是纯函数 `convertAllDayMode`
+> （`domain/services/all_day_conversion.dart`），落盘是
+> `TaskRepository.applyAllDayConversion` 的一个事务。
+> 编辑器里那个「全天」开关**此前是禁用的** —— 没有迁移命令之前，
+> 让它能拨却存不下去就是又一个「改了没反应」的开关。
+>
+> 一处规格没写、实现时必须定的：**定时 → 全天可能撞车**
+> （9:00 与 14:00 两次压成同一个 `yyyy-MM-dd`）。选择是**抛异常拦住**，
+> 不做「留一条丢一条」—— 悄悄丢的话，用户跳过的那一次会复活、
+> 或者改过的标题不见了，而他只是拨了一个开关。
 | R-28 | 全天重复任务的 override | `occurrenceKey` 为纯日期，无 `T00:00` 后缀 |
 
 ### 6.4 「本次及以后」分裂

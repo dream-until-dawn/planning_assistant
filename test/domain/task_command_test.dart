@@ -95,6 +95,12 @@ final _samples = <TaskCommand>[
     occurrenceKey: _key,
     status: TaskStatus.done,
   ),
+  ConvertTaskAllDayModeCommand(
+    taskId: 'task-1',
+    toAllDay: false,
+    startMinute: MinuteOfDay.of(9, 30),
+  ),
+  const ConvertTaskAllDayModeCommand(taskId: 'task-1', toAllDay: true),
   const ReplaceChecklistCommand(
     taskId: 'task-1',
     items: [
