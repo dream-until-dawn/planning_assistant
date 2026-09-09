@@ -22,6 +22,7 @@ import 'package:planning_assistant/features/views/gantt/application/gantt_provid
 import 'package:planning_assistant/features/views/gantt/presentation/gantt_metrics.dart';
 import 'package:planning_assistant/features/views/gantt/presentation/gantt_painter.dart';
 import 'package:planning_assistant/features/views/gantt/presentation/gantt_view.dart';
+import 'package:planning_assistant/features/views/shared/application/create_task_at.dart';
 import 'package:planning_assistant/features/views/shared/application/view_shared_state.dart';
 
 import '../support/app_harness.dart';
@@ -53,6 +54,7 @@ Future<void> _pump(
   List<Task> tasks = const [],
   List<Category> categories = const [],
   Map<String, Object?> settings = const {},
+  CreateTaskAt? onCreateTask,
 }) async {
   await setScreenSize(tester, const Size(390, 844));
   await tester.pumpWidget(
@@ -65,7 +67,7 @@ Future<void> _pump(
       ),
       child: MaterialApp(
         theme: AppTheme.light(),
-        home: const Scaffold(body: GanttView()),
+        home: Scaffold(body: GanttView(onCreateTask: onCreateTask)),
       ),
     ),
   );
@@ -284,6 +286,115 @@ void main() {
           .focusDate(_today.addDays(200));
       await tester.pumpAndSettle();
       expect(_painter(tester).todayOffsetMinutes, isNull);
+    });
+  });
+
+  group('长按空白＝在那一刻新建（FR-VIEW-07）', () {
+    // ## 这条交互从时间轴搬过来
+    //
+    // 验收原话是「在时间轴 14:00 处长按新增，新任务默认时间为 14:00」。
+    // 那时时间轴是单日刻度尺，画布上每一个 y 都对应一个时刻。
+    // 改成跳跃议程之后它没有那样的画布了 —— 而甘特的纵轴仍然是时间，
+    // 所以这条落到这里。**不搬的话「带上时段」这个能力整个没了**，
+    // 而用户要的只是换一种排布。
+    //
+    // 窗口从聚焦日**往前三天**起（`ganttWindowProvider`），
+    // 今天是 9/8，所以画布顶端是 9/5 00:00。一天 48dp。
+
+    /// 长按画布上距顶端 [dy] 逻辑像素处，返回它说的是「哪天几点」。
+    Future<(PlanDate?, MinuteOfDay?)> longPressAt(
+      WidgetTester tester,
+      double dy, {
+      double dx = 60,
+    }) async {
+      PlanDate? gotDate;
+      MinuteOfDay? gotMinute;
+      await _pump(
+        tester,
+        tasks: [_task('a', from: 0, to: 0, startMinute: 60, endMinute: 120)],
+        onCreateTask: ({date, minute}) {
+          gotDate = date;
+          gotMinute = minute;
+        },
+      );
+      final canvas = tester.getTopLeft(find.byKey(GanttView.canvasKey));
+      await tester.longPressAt(canvas + Offset(dx, dy));
+      await tester.pumpAndSettle();
+      return (gotDate, gotMinute);
+    }
+
+    testAppWidgets('第二天正午那一处 → 9/6 12:00', (tester) async {
+      // 48dp（第一天）+ 24dp（半天）= 72dp。
+      expect(await longPressAt(tester, 72), (
+        const PlanDate(2026, 9, 6),
+        MinuteOfDay.of(12, 0),
+      ));
+    });
+
+    testAppWidgets('**取整到半小时** —— 一像素在这个比例尺下是半小时', (tester) async {
+      // 照着像素反算会得到 14:03 这种数。用户长按在「下午两点那一格」
+      // 上，他说的是 14:00。
+      final (_, minute) = await longPressAt(tester, 48 + 28.1);
+      expect(minute!.value % 30, 0);
+    });
+
+    testAppWidgets('**落在条上时不新建** —— 长按已有任务不是「在旁边加一条」', (tester) async {
+      // 时间轴上这条靠 Stack 的命中测试顺序实现（块在上、画布在下）；
+      // 甘特整块画布是一个 CustomPaint，没有那样的层次，
+      // 所以要显式问一次 `barAt`。少了那一问，长按任何一根条都会
+      // 弹出新建页，而那根条本身就点不着了。
+      var called = false;
+      await _pump(
+        tester,
+        tasks: [_task('a', from: 0, to: 0, startMinute: 60, endMinute: 120)],
+        onCreateTask: ({date, minute}) => called = true,
+      );
+      final painter = _painter(tester);
+      final bar = painter.layout.lanes.single.bars.single;
+      final canvas = tester.getTopLeft(find.byKey(GanttView.canvasKey));
+      // 条本身的中点。
+      final middle =
+          (bar.startMinute + bar.endMinute) / 2 * GanttMetrics.pixelsPerMinute;
+
+      await tester.longPressAt(canvas + Offset(60, middle));
+      await tester.pumpAndSettle();
+
+      expect(called, isFalse);
+    });
+
+    testAppWidgets('画布之外返回 null —— 编一个日期比不给更糟', (tester) async {
+      // ## 这一条是直接问画笔的，不走手势
+      //
+      // 画布的高度**正好**是 `totalMinutes × pixelsPerMinute`，于是
+      // 经手势进来的 dy 永远落在范围内 —— 那道越界判断在界面上
+      // 摸不到。变异演练里把它删掉，上面四条全绿。
+      //
+      // 但 `timeAt` 是画笔的公开方法（`barAt` 的同伴），窗口一改、
+      // 或者将来给画布加了下边距，越界就是可达的。所以在**它自己
+      // 这一层**验，而不是给界面编一个够不到的姿势
+      // （testing-strategy §1.15：守卫只守它自己的宇宙）。
+      await _pump(
+        tester,
+        tasks: [_task('a', from: 0, to: 0, startMinute: 60, endMinute: 120)],
+      );
+      final painter = _painter(tester);
+      final height = painter.layout.totalMinutes * GanttMetrics.pixelsPerMinute;
+
+      expect(painter.timeAt(Offset(10, height + 1)), isNull);
+      expect(painter.timeAt(const Offset(10, -1)), isNull);
+      expect(painter.timeAt(Offset(10, height - 1)), isNotNull);
+    });
+
+    testAppWidgets('没有新建回调时长按什么也不做', (tester) async {
+      await _pump(
+        tester,
+        tasks: [_task('a', from: 0, to: 0, startMinute: 60, endMinute: 120)],
+      );
+      final canvas = tester.getTopLeft(find.byKey(GanttView.canvasKey));
+      await tester.longPressAt(canvas + const Offset(60, 72));
+      await tester.pumpAndSettle();
+      // 没崩就算过 —— 这条挡的是「回调为空时照样调」那种写法。
+      expect(find.byKey(GanttView.canvasKey), findsOneWidget);
     });
   });
 

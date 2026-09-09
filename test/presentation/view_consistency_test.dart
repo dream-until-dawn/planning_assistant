@@ -134,7 +134,19 @@ void main() {
   });
 
   testAppWidgets('聚焦日保持：日历上点 9/20 → 切时间轴，时间轴就在 9/20', (tester) async {
-    final container = await _pumpShell(tester);
+    // **9/20 之前先塞满两屏。**
+    //
+    // 只用默认那三条任务的话，9/20 那一段本来就在首屏里 —— 于是
+    // 「它可见」这条断言对滚动一无所知：把定位整个删掉照样绿。
+    // 变异演练里它活过一次，所以这里把它压到折线以下。
+    final container = await _pumpShell(
+      tester,
+      tasks: [
+        for (var d = 0; d < 12; d++)
+          _task('第$d天', from: d, startMinute: 9 * 60, endMinute: 10 * 60),
+        _task('体检', from: 12, to: 12, categoryId: 'life'),
+      ],
+    );
 
     await _switchTo(tester, ViewKind.calendar);
     // **点日期数字那一块，不是格子中心。**

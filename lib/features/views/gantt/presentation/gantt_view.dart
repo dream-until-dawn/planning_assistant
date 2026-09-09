@@ -105,6 +105,8 @@ class _GanttViewState extends ConsumerState<GanttView> {
     final today = ref.watch(todayProvider);
     final colors = context.appColors;
     final height = layout.totalMinutes * GanttMetrics.pixelsPerMinute;
+    final onCreate = widget.onCreateTask;
+    final granularity = ref.watch(viewSharedStateProvider).granularity;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -141,6 +143,29 @@ class _GanttViewState extends ConsumerState<GanttView> {
                             final row = painter.barAt(details.localPosition);
                             if (row != null) _open(row);
                           },
+                          // 长按空白＝在那一刻新建（FR-VIEW-07）。
+                          //
+                          // **落在条上时不新建**：长按已有任务的意图是
+                          // 「对它做点什么」，不是「在它旁边加一条」。
+                          // 时间轴上这条靠 `Stack` 的命中测试顺序实现
+                          // （块在上、画布在下）；甘特整块画布是一个
+                          // `CustomPaint`，没有那样的层次，所以在这里
+                          // 显式问一次 `barAt`。
+                          onLongPressStart: onCreate == null
+                              ? null
+                              : (details) {
+                                  final at = details.localPosition;
+                                  if (painter.barAt(at) != null) return;
+                                  final when = painter.timeAt(
+                                    at,
+                                    tickMinutes: granularity.tickMinutes,
+                                  );
+                                  if (when == null) return;
+                                  onCreate(
+                                    date: when.date,
+                                    minute: when.minute,
+                                  );
+                                },
                           child: CustomPaint(
                             key: GanttView.canvasKey,
                             painter: painter,

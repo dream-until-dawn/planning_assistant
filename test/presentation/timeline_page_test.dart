@@ -168,7 +168,7 @@ String? _timeOn(WidgetTester tester, String id) {
 }
 
 void main() {
-  group('排布：按开始时刻一路排下去', () {
+  group('FR-VIEW-01 排布：按开始时刻一路排下去', () {
     testAppWidgets('跨天连着排，不是只有今天那一天', (tester) async {
       await _pump(
         tester,
@@ -308,6 +308,23 @@ void main() {
       await _pump(tester, tasks: [_task('纪念日', isAllDay: true)]);
 
       expect(_timeOn(tester, '纪念日'), '全天');
+    });
+
+    testAppWidgets('卡片自己不再写时刻 —— 左边那栏已经写了', (tester) async {
+      // 不关的话同一个时刻在一行里出现两次。列表那边照旧写
+      // （那里没有时间栏），所以这是**时间轴独有的**一个开关。
+      await _pump(
+        tester,
+        tasks: [_task('晨会', date: _tomorrow, start: 9 * 60)],
+      );
+
+      final card = tester.widget<TaskCard>(
+        find.descendant(
+          of: find.byKey(TimelinePage.entryKey('晨会')),
+          matching: find.byType(TaskCard),
+        ),
+      );
+      expect(card.data.timeLabel, isNull);
     });
   });
 

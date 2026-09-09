@@ -85,18 +85,28 @@ Stream<T> watchSetting<T>(SettingSpec<T> spec);
 | `view.defaultView` | enum | `list` | ✅ | list / timeline / calendar / gantt |
 | `view.firstDayOfWeek` | enum | `monday` | ✅ | 周一 / 周日 / 周六（其余四个没有地区用作周起始日） |
 | `view.showCompleted` | bool | `true` | ✅ | |
-| `view.timelineTickMinutes` | int | `60` | ✅ | 15 / 30 / 60 |
+| ~~`view.timelineTickMinutes`~~ | — | — | ❌ | **已删**，见 §2.4b |
 | `view.listGroupBy` | enum | `date` | ✅ | date / category / priority / status |
 | `view.listSortBy` | enum | `time` | ✅ | time / priority / created / manual |
 | ~~`view.calendarMode`~~ | — | — | ❌ | **不做**，见 §2.4a |
 | `view.ganttLaneBy` | enum | `category` | ✅ | category / task / tag |
 | `view.ganttGranularity` | enum | `day` | ✅ | day / week / month |
-| `view.timelineStartHour` | int | `6` | 🔒 | 时间轴默认可视起点 |
-| `view.timelineEndHour` | int | `23` | 🔒 | |
 | `view.calendarMaxDotsPerCell` | int | `3` | 🔒 | |
 | `view.ganttMaxColumnsPerLane` | int | `3` | 🔒 | 超出折叠 |
 | `view.collapseOverdueGroup` | bool | `true` | 🔒 | 逾期分组默认折叠 |
-| `view.minTimeBlockHeight` | double | `36` | 🔒 | dp |
+
+### 2.4b 时间轴那三条随刻度尺一起删了
+
+`view.timelineTickMinutes`（15/30/60）、`view.timelineStartHour` /
+`view.timelineEndHour`、`view.minTimeBlockHeight` 配的都是**连续刻度尺**：
+一格多高、从几点画到几点、最短的块不低于多少。
+
+时间轴按用户要求改成跳跃排布（[视图规格 §1](view-specs.md#1-时间轴视图-timelineviewfr-view-01)）
+之后，那把尺子没有了 —— 没有「一格」，没有「可视起点」，
+块高由卡片内容决定。留着的话，设置页上会有一个**选了没反应的下拉**，
+而那比没有这个选项更糟（同 §2.4a 与「默认视图」那条的判断）。
+
+已存的配置值不需要迁移：认不出的 key 读出来没人要，下次写回时自然消失。
 
 ### 2.3 提醒 `reminder.*`
 

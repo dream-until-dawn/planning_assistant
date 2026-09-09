@@ -18,6 +18,8 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../../../../core/time/date_and_minute.dart';
+import '../../../../core/time/minute_of_day.dart';
 import '../../shared/application/task_occurrence.dart';
 import '../application/gantt_layout.dart';
 import 'gantt_metrics.dart';
@@ -209,6 +211,30 @@ class GanttPainter extends CustomPainter {
       if (box.rect.contains(point)) return box.row;
     }
     return null;
+  }
+
+  /// 反查坐标落在**哪天几点**（FR-VIEW-07：长按空白处新建）。
+  ///
+  /// 与 [barAt] 是两件事：那个问「点着谁了」，这个问「点在什么时候」——
+  /// 空白处两者都要问，先看有没有条，没有才落到这里。
+  ///
+  /// ## 为什么向下取整到刻度
+  ///
+  /// 一像素在这个比例尺下是半小时（`pixelsPerMinute` = 48/1440），
+  /// 于是「照着像素反算」得到的是 14:03、14:37 这种数 ——
+  /// 用户长按在「下午两点那一格」上，他说的是 14:00。
+  /// 取整到 [tickMinutes]（跟着当前粒度走）比精确到分钟更接近意图。
+  ///
+  /// 越界返回 null：手指落在画布底下的留白里时，编出一个日期
+  /// 比不给日期更糟。
+  DateAndMinute? timeAt(Offset point, {int tickMinutes = 30}) {
+    final minutes = point.dy ~/ GanttMetrics.pixelsPerMinute;
+    if (minutes < 0 || minutes >= layout.totalMinutes) return null;
+    final snapped = (minutes ~/ tickMinutes) * tickMinutes;
+    return DateAndMinute(
+      layout.windowStart.addDays(snapped ~/ minutesPerDay),
+      MinuteOfDay(snapped % minutesPerDay),
+    );
   }
 
   @override
