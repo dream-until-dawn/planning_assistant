@@ -69,6 +69,8 @@ class TaskCard extends StatelessWidget {
     required this.data,
     this.onToggleDone,
     this.onTap,
+    this.onLongPress,
+    this.selected = false,
     super.key,
   });
 
@@ -80,6 +82,16 @@ class TaskCard extends StatelessWidget {
   /// 为 null 时整张卡片不可点 —— 一个点了没反应的卡片，
   /// 比一张明确不可点的更让人困惑。
   final VoidCallback? onTap;
+
+  /// 长按（view-specs §2.4：进入多选模式）。
+  final VoidCallback? onLongPress;
+
+  /// 多选模式下这张卡片被选中了。
+  ///
+  /// **不能只靠颜色**（§8.1：颜色/图标不单独承载信息）——
+  /// 低饱和的「可爱清新」配色下，一层浅色底与未选中几乎分不出来。
+  /// 所以选中时另加一圈明确的边框。
+  final bool selected;
 
   /// 完成钮的语义标签。屏幕阅读器读它。
   static const String toggleSemanticLabel = '切换完成状态';
@@ -201,7 +213,22 @@ class TaskCard extends StatelessWidget {
       ),
     );
 
-    if (onTap == null) return card;
+    // 选中态：**加边框，不只是换底色**（§8.1）。
+    final decorated = selected
+        ? DecoratedBox(
+            decoration: BoxDecoration(
+              // 跟卡片本身同一个圆角档位（用户可配的三档）。
+              borderRadius: BorderRadius.circular(radius),
+              border: Border.all(
+                color: context.appColors.brandGraphic,
+                width: 2,
+              ),
+            ),
+            child: card,
+          )
+        : card;
+
+    if (onTap == null && onLongPress == null) return decorated;
     // **点击区包在外面，不换成 InkWell 当背景。**
     // 卡片的圆角、阴影、左色条都在 DecoratedBox 上；
     // 换成 Material 系的容器会把那三样重画一遍，golden 全线要重拍。
@@ -210,7 +237,8 @@ class TaskCard extends StatelessWidget {
       // 而不只是文字所在的那几个像素。
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
-      child: card,
+      onLongPress: onLongPress,
+      child: decorated,
     );
   }
 }
