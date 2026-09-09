@@ -185,7 +185,24 @@ void main() {
       // 而回滚却回滚所有 done 的阶段，于是把用户亲手勾的那一步抹了。
       //
       // 这也和同一个改动里对 `skipped` 的处理自相矛盾：
-      // 「这一步跳过」保得住，「这一步做完了」保不住，两者都是用户亲手记的。
+      // 「这一步跳过」保得住，「这一步做完了」保不住，两者都是用户亲手记的。      //
+      // ## 这条**不是**领域层那条的重复，别精简掉
+      //
+      // 领域层那条（`task_lifecycle_test`）验的是判据本身写得对不对，
+      // 全程在内存里。这条走真库，多验一件它验不到的事：
+      // **完成时刻存进去再读出来，还比得相等吗。**
+      //
+      // `completedAt` 落库是 `millisecondsSinceEpoch`（INT 列），
+      // 而内存里的 `DateTime` 在 VM 上带微秒。今天两边都是从库里读出来的
+      // （任务与阶段各查一次），截断得一样多，所以相等还成立；
+      // 但只要有人把其中一侧换成现算的 `_now()`，截断就会让本该相等的
+      // 两个值不等 —— 判据当场退化成「什么都不收回」，
+      // 正是钉死时钟那个失效模式的反方向。
+      //
+      // 那个风险现在是**潜伏**的，不是活的。而这条用例就是它一旦变活时
+      // 唯一会红的东西 —— 看到「领域层已经测过同样的事」就把它剪掉，
+      // 剪掉的正是这个。（评审提的；与 §1.11.1 同一族：
+      // 两条测试看着测同一件事，实际测的是不同的失效模式。）
       final harness = await _pumpApp(tester, advancingClock: true);
       await _createStaged(tester);
       final stages = await _stageIds(harness);
@@ -472,6 +489,11 @@ void main() {
     testAppWidgets('**用户自己勾过的那一步，取消这一次的完成时留着**', (tester) async {
       // 任务侧那条（M-B1）的另一半。两张表各存各的，规则必须是同一条 ——
       // 只改一条路，正是这个仓库反复踩的形状。
+      //
+      // 与上面那条不重复的同理，这条也走真库，覆盖「完成时刻存进去
+      // 再读出来还比得相等吗」——`stage_occurrence_states` 与
+      // `occurrence_overrides` 的 `completed_at` 都是毫秒 INT 列。
+      // 别因为「领域层测过判据」就精简掉。
       final harness = await _pumpApp(tester, advancingClock: true);
       await _createStaged(tester, recurring: true);
       final stages = await _stageIds(harness);
