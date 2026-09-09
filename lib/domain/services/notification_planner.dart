@@ -172,11 +172,37 @@ List<PlannedNotification> planNotifications({
 
 /// 一条通知的稳定标识。**只此一处**拼这个串 —— 排期侧与对账侧各拼一遍的话，
 /// 两边算出来的 key 迟早差一个分隔符，而表现是「每次续排都全删全建」。
+///
+/// 用 `#` 拼接无歧义：三个部件都不含它 —— id 是 uuid，
+/// `OccurrenceKey` 的形态是 `yyyy-MM-dd` 或 `yyyy-MM-ddTHH:mm`
+/// （同 `overrideRowId` 那条理由）。
 String notificationKeyOf({
   required String taskId,
   required String reminderId,
   required OccurrenceKey occurrenceKey,
 }) => '$taskId#$reminderId#${occurrenceKey.value}';
+
+/// [notificationKeyOf] 的逆。
+///
+/// **和正向放在一起**：`scheduled_notifications` 存的是拆开的三列，
+/// 而对账认的是拼起来的那个串，两个方向都要有人做。分在两个文件里的话，
+/// 改了分隔符只会改一边 —— 而那种错误的表现是「对账认为一条都没排过」，
+/// 于是每次续排全删全建。
+///
+/// 串的形状不对时**抛异常，不回落**：能落到这里的串都是我们自己拼的，
+/// 拼不回去说明格式变过而只改了一边，那正是要立刻知道的事。
+({String taskId, String reminderId, OccurrenceKey occurrenceKey})
+parseNotificationKey(String key) {
+  final parts = key.split('#');
+  if (parts.length != 3) {
+    throw FormatException('通知标识必须是 taskId#reminderId#occurrenceKey', key);
+  }
+  return (
+    taskId: parts[0],
+    reminderId: parts[1],
+    occurrenceKey: OccurrenceKey.parse(parts[2]),
+  );
+}
 
 /// 这条提醒从哪一刻起算。
 DateAndMinute? _baseFor(
