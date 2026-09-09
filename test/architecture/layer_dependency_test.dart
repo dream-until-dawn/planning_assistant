@@ -744,6 +744,50 @@ import
     }
   });
 
+  test('带撤销按钮的 SnackBar 必须显式写 persist: false', () {
+    // ## 为什么要一条守卫，而不是「记住就行」
+    //
+    // Flutter 的 `SnackBar` 里有一行：
+    //
+    //     persist = persist ?? action != null;
+    //
+    // **带 action 的提示默认永不自动消失。** 而这个应用里每一条提示
+    // 都带「撤销」—— 于是全都是永久的，`duration` 设了也没用
+    //（计时器回调第一句就是 `if (snackBar.persist) return;`）。
+    //
+    // 用户报的原话：「下方的轻提示永远不会消失」。四处提示全中。
+    //
+    // 这是一条**默认值与我们的意图相反**的 API：不写就是错的，
+    // 而错的表现在代码里完全看不出来 —— 那正是该由守卫盯着的形状，
+    // 靠「下次记得」是守不住的。
+    final violations = <String>[];
+    var scanned = 0;
+    for (final file in libFiles) {
+      final rel = _relToLib(file.path);
+      if (rel == null) continue;
+      final text = file.readAsStringSync();
+      if (!text.contains('SnackBarAction')) continue;
+      scanned++;
+      // 一个文件里可能有好几条提示，逐个 `SnackBar(` 块看。
+      for (final chunk in text.split('SnackBar(').skip(1)) {
+        final head = chunk.length > 700 ? chunk.substring(0, 700) : chunk;
+        if (head.contains('SnackBarAction') &&
+            !head.contains('persist: false')) {
+          violations.add('  - lib/$rel');
+        }
+      }
+    }
+
+    expect(scanned, greaterThan(0), reason: '一个带 SnackBarAction 的文件都没扫到');
+    expect(
+      violations,
+      isEmpty,
+      reason:
+          '这几处的提示会永远挂在屏幕底部，并把后面的提示堵在队列里：\n'
+          '${violations.join('\n')}',
+    );
+  });
+
   test('lib/ 下有可供扫描的源码（守卫不能对着空目录报绿）', () {
     expect(libFiles, isNotEmpty, reason: '守卫扫描到 0 个文件时，它的「通过」没有任何信息量');
   });

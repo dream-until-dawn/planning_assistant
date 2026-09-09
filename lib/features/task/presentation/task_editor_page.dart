@@ -253,6 +253,10 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
       ..showSnackBar(
         SnackBar(
           content: const Text('已移到回收站'),
+          duration: const Duration(seconds: 5),
+          // 见 `swipe_row.dart` 里那段：带 action 的 SnackBar
+          // 默认 `persist: true`，永不自动消失。
+          persist: false,
           action: SnackBarAction(label: '撤销', onPressed: undo),
         ),
       );
@@ -273,6 +277,10 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
       ..showSnackBar(
         SnackBar(
           content: const Text('已归档'),
+          duration: const Duration(seconds: 5),
+          // 见 `swipe_row.dart` 里那段：带 action 的 SnackBar
+          // 默认 `persist: true`，永不自动消失。
+          persist: false,
           action: SnackBarAction(label: '撤销', onPressed: undo),
         ),
       );
