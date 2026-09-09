@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
+import 'package:planning_assistant/core/time/date_and_minute.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/domain/entities/category.dart';
@@ -132,8 +133,30 @@ void main() {
     expect(painter.layout.lanes.map((l) => l.title), ['工作']);
   });
 
-  testAppWidgets('聚焦日保持：日历上点 9/20 → 切时间轴，时间轴就在 9/20', (tester) async {
-    final container = await _pumpShell(tester);
+  testAppWidgets('FR-VIEW-06 聚焦日保持：日历上点 9/20 → 切时间轴，时间轴就在 9/20', (
+    tester,
+  ) async {
+    // ## 编号是补上去的
+    //
+    // 这条**就是** FR-VIEW-06 的验收原话（「日历选中 9/20 → 切时间轴 →
+    // 显示 9/20」），可它一直没点那个编号 —— 门禁的绿是靠
+    // `view_shared_state_test` 里 `FR-VIEW-05/06` 那个组换来的，
+    // 而那一组验的是 provider 自己不会把状态丢掉，**没有界面**。
+    //
+    // 两边都绿，但门禁指着的是较弱的那份证据。评审提的。
+    // **9/20 之前先塞满两屏。**
+    //
+    // 只用默认那三条任务的话，9/20 那一段本来就在首屏里 —— 于是
+    // 「它可见」这条断言对滚动一无所知：把定位整个删掉照样绿。
+    // 变异演练里它活过一次，所以这里把它压到折线以下。
+    final container = await _pumpShell(
+      tester,
+      tasks: [
+        for (var d = 0; d < 12; d++)
+          _task('第$d天', from: d, startMinute: 9 * 60, endMinute: 10 * 60),
+        _task('体检', from: 12, to: 12, categoryId: 'life'),
+      ],
+    );
 
     await _switchTo(tester, ViewKind.calendar);
     // **点日期数字那一块，不是格子中心。**
@@ -154,8 +177,24 @@ void main() {
       const PlanDate(2026, 9, 20),
       reason: '时间轴还停在旧日期 —— 两边各存了一份聚焦日',
     );
-    // 那一天确实有事（体检在 9/20），所以时间轴不该是空态。
-    expect(find.byKey(TimelinePage.emptyKey), findsNothing);
+
+    // ## 验的是「看得见」，不是「provider 的值对」
+    //
+    // 时间轴改成跨天议程之后，它**不再靠聚焦日筛内容** —— 9/20 的事
+    // 本来就在那一列里。只断言 provider 的值的话，这条用例对
+    // 「切过去之后停在哪」一无所知：滚动条停在今天、9/20 在两屏之外，
+    // 它照样绿。验收原话是「显示 9/20」，所以要量它在不在视口里。
+    final section = find.byKey(
+      TimelinePage.dateKey(const PlanDate(2026, 9, 20)),
+    );
+    expect(section, findsOneWidget, reason: '9/20 那一段没滚出来');
+    final viewport = tester.getRect(find.byKey(TimelinePage.scrollKey));
+    final top = tester.getRect(section).top;
+    expect(
+      top,
+      inInclusiveRange(viewport.top, viewport.bottom),
+      reason: '9/20 那一段建出来了，但不在屏幕上',
+    );
   });
 
   testAppWidgets('日历跟的是聚焦日，不是今天', (tester) async {
@@ -180,25 +219,43 @@ void main() {
     );
   });
 
-  testAppWidgets('粒度保持：切成「周」→ 切日历，日历就是周视图', (tester) async {
+  testAppWidgets('粒度保持：在甘特改档位，切走再回来还是那一档', (tester) async {
+    // **这条原来验的是「切成周之后日历变一行」。**
+    // 周视图按用户要求去掉了（日历恒为月），所以改成在**甘特**那侧验 ——
+    // 粒度共享这件事本身没变，只是日历不再是它的显示方之一。
     final container = await _pumpShell(tester);
 
-    await _switchTo(tester, ViewKind.calendar);
-    await tester.tap(find.byKey(CalendarPage.modeKey('week')));
-    await tester.pumpAndSettle();
+    await _switchTo(tester, ViewKind.gantt);
+    await tapVisible(tester, GanttView.granularityKey(TimeGranularity.week));
     expect(
       container.read(viewSharedStateProvider).granularity,
       TimeGranularity.week,
     );
 
-    // 切走再切回来，仍是周视图 —— 一行七格。
-    await _switchTo(tester, ViewKind.gantt);
+    // 切走再切回来，档位还在。
     await _switchTo(tester, ViewKind.calendar);
+    await _switchTo(tester, ViewKind.gantt);
+    expect(
+      container.read(viewSharedStateProvider).granularity,
+      TimeGranularity.week,
+      reason: '切视图把共享的档位弄丢了',
+    );
+  });
+
+  testAppWidgets('日历不跟着粒度变 —— 它恒为月视图', (tester) async {
+    // 用户要求：「不需要『周』固定使用月即可」。
+    final container = await _pumpShell(tester);
+    container
+        .read(viewSharedStateProvider.notifier)
+        .setGranularity(TimeGranularity.week);
+    await _switchTo(tester, ViewKind.calendar);
+
     expect(
       find.byWidgetPredicate(
         (w) => w.key.toString().startsWith("[<'calendar-day-"),
       ),
-      findsNWidgets(7),
+      findsNWidgets(42),
+      reason: '共享档位是「周」时日历变成了一行 —— 它该恒为月视图',
     );
   });
 
@@ -249,10 +306,16 @@ void main() {
     final container = await _pumpShell(tester, tasks: [staged], stages: stages);
 
     await _switchTo(tester, ViewKind.timeline);
-    final block = container
-        .read(timelineDayProvider)
-        .blocks
-        .singleWhere((b) => b.row.taskId == '搬家');
+    // 时间轴改成议程之后不再有「块」，跨度直接问它那一行 ——
+    // 而那正是 §4.7 说的唯一来源，甘特读的也是它。
+    final span = container
+        .read(agendaRowsProvider)
+        .singleWhere((r) => r.taskId == '搬家')
+        .span!;
+    final endMinute =
+        span.end.date.differenceInDays(_today) * minutesPerDay +
+        span.end.minute.value;
+    final startMinute = span.start.minute.value;
 
     await _switchTo(tester, ViewKind.gantt);
     final painter =
@@ -260,11 +323,7 @@ void main() {
             as GanttPainter;
     final bar = painter.layout.lanes.single.bars.single;
 
-    expect(block.endMinute, 14 * 60, reason: '时间轴没用有效跨度');
-    expect(
-      bar.lengthMinutes,
-      block.endMinute - block.startMinute,
-      reason: '甘特与时间轴的跨度不一样',
-    );
+    expect(endMinute, 14 * 60, reason: '时间轴没用有效跨度');
+    expect(bar.lengthMinutes, endMinute - startMinute, reason: '甘特与时间轴的跨度不一样');
   });
 }

@@ -154,6 +154,23 @@ abstract class SyncedDao<Tbl extends Table, Row extends DataClass>
       final nowMs = _now().millisecondsSinceEpoch;
       final prior = await _envelopeOf(keyValues);
 
+      // **没显式给 deletedAt 的 upsert = 断言这一行活着。**
+      //
+      // 不补这一句的话，`insertOnConflictUpdate` 只更新companion 里带的
+      // 那几列，墓碑那一列原样留着 —— 于是「写进去了，但读不出来」。
+      //
+      // 这在**主键是派生的**那几张表上是常规路径，不是边角情况：
+      // 例外的行 id 是 `taskId#occurrenceKey`，所以
+      // 「完成 → 取消完成 → 再完成」写的是同一行。用户报的就是它：
+      // 取消完成之后再点完成，库里 `status=done` 而 `deletedAt` 还在，
+      // 每一次读取都把它过滤掉，界面上那一下**看起来毫无反应**。
+      //
+      // 显式给了的照旧（`_replaceStages` 就是靠传 deletedAt 打墓碑的）——
+      // 一律清空会把那条路径的墓碑全复活。
+      if (!columns.containsKey('deleted_at')) {
+        columns['deleted_at'] = const Variable<int>(null);
+      }
+
       // 已存在时保留原 createdAt —— 覆盖它会让「这条何时建的」永久丢失，
       // 且 V3 的冲突解析拿它做兜底比较。
       columns['created_at'] = Variable<int>(prior?.createdAt ?? nowMs);

@@ -10,12 +10,26 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../app_providers.dart';
 import '../../../../core/patch/unset.dart';
+import '../../../../core/time/date_and_minute.dart';
 import '../../../../core/time/plan_date.dart';
 import '../../../../domain/entities/task.dart';
 import '../../../../domain/value_objects/task_status.dart';
 
 /// 时间粒度。甘特与日历共用（view-specs §0.1）。
-enum TimeGranularity { day, week, month }
+enum TimeGranularity {
+  day(tickMinutes: 30),
+  week(tickMinutes: 60),
+  month(tickMinutes: minutesPerDay);
+
+  const TimeGranularity({required this.tickMinutes});
+
+  /// 在这一档下，「点在画布的某处」取整到多少分钟（FR-VIEW-07）。
+  ///
+  /// **跟着比例尺走。** 日档下一像素是半小时，照着像素反算会得到
+  /// 14:03 这种数 —— 用户长按在「下午两点那一格」上，他说的是 14:00。
+  /// 月档下一天才几个像素，再谈分钟就是假的精度，所以整到整天。
+  final int tickMinutes;
+}
 
 /// 筛选条件（view-specs §2.3）。
 ///

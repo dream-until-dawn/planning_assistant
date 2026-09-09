@@ -83,9 +83,20 @@ final class GanttBar {
     required this.continuesAfter,
     required this.segments,
     required this.progress,
+    required this.colorArgb,
   });
 
   final TaskOccurrence row;
+
+  /// 这根条画成什么颜色（分类色）。null = 未分类，用主色。
+  ///
+  /// **每根条自己带一份，不是整张图一个色。** 一度所有条都用
+  /// `barColor`，于是同一屏里几十条任务长得一模一样 ——
+  /// 用户报的原话：「不同任务没有颜色区分」。
+  ///
+  /// 泳道也有 `colorArgb`，但那只在「按分类分泳道」时有值；
+  /// 按任务分泳道时每条泳道就是一条任务，颜色反而更该落在条上。
+  final int? colorArgb;
 
   /// 距窗口起点多少分钟，**已经裁到窗口之内**。
   final int startMinute;
@@ -223,6 +234,12 @@ GanttLayout ganttLayout({
             continuesAfter: placed.$2 > total,
             segments: _segmentsOf(slot.item, placed.$1, total),
             progress: _progressOf(slot.item),
+            // **按任务自己的分类取色**，不按泳道 —— 泳道的颜色只在
+            // 「按分类分泳道」时才有值，而按任务分泳道时同样需要区分。
+            colorArgb: _categoryOf(
+              slot.item.task.categoryId,
+              categories,
+            )?.colorArgb,
           ),
         );
       }

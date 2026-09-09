@@ -17,6 +17,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../design/components/undo_snackbar.dart';
 import '../../../../design/theme/app_theme.dart';
 import '../../../../design/tokens/dimensions.dart';
 import '../../../settings/application/registry.dart';
@@ -111,26 +112,7 @@ class SwipeRow extends ConsumerWidget {
     ScaffoldMessengerState? messenger,
     String text,
     VoidCallback? undo,
-  ) {
-    if (messenger == null) return;
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(text),
-          duration: const Duration(seconds: 5),
-          action: undo == null
-              ? null
-              : SnackBarAction(
-                  // Key 挂在 action 上没用（它不是 widget 树里的一个节点），
-                  // 所以整条 SnackBar 用 content 的文案定位，撤销按钮
-                  // 由这个 label 找。
-                  label: '撤销',
-                  onPressed: undo,
-                ),
-        ),
-      );
-  }
+  ) => showUndoSnackBar(messenger, text, onUndo: undo);
 }
 
 /// 滑动时露出来的底色 + 图标 + 文字。

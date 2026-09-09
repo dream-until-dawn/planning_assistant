@@ -75,7 +75,7 @@ void main() {
   test('三个视图对同一条任务给出同一个结束', () async {
     final c = await _container();
 
-    final fromTimeline = c.read(timelineOccurrencesProvider).single;
+    final fromTimeline = c.read(agendaRowsProvider).single;
     final fromCalendar = c.read(calendarOccurrencesProvider).single;
     final fromList = c.read(filteredTasksProvider).single;
 
@@ -94,7 +94,7 @@ void main() {
     // `effectiveEnd` 是**派生值，不落库**（§4.7）。存储那一份要原样在，
     // 否则「阶段超出了任务结束时间」这个提示就无从判断。
     final c = await _container();
-    final row = c.read(timelineOccurrencesProvider).single;
+    final row = c.read(agendaRowsProvider).single;
     expect(row.endDate, _today);
     expect(row.endMinute?.value, 10 * 60);
   });
@@ -124,7 +124,7 @@ void main() {
     addTearDown(c.dispose);
     await settleViewPipeline(c);
 
-    final row = c.read(timelineOccurrencesProvider).single;
+    final row = c.read(agendaRowsProvider).single;
     expect(row.effectiveEndDate, _today);
     expect(row.effectiveEndMinute?.value, 10 * 60);
   });

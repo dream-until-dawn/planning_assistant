@@ -27,6 +27,7 @@ import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 import 'package:planning_assistant/features/views/shared/presentation/filter_bar.dart';
+import 'package:planning_assistant/features/views/shared/presentation/filter_sheet.dart';
 
 import '../support/app_harness.dart';
 
@@ -63,8 +64,11 @@ void main() {
       expect(find.text('急事'), findsOneWidget);
       expect(find.text('平常事'), findsOneWidget);
 
-      await tester.tap(find.byKey(FilterBar.priorityKey(TaskPriority.urgent)));
-      await tester.pumpAndSettle();
+      await toggleFilter(
+        tester,
+        FilterDimension.priority,
+        FilterKeys.priority(TaskPriority.urgent),
+      );
 
       expect(find.text('急事'), findsOneWidget);
       expect(
@@ -81,11 +85,13 @@ void main() {
         _task('急事', TaskPriority.urgent),
         _task('平常事', TaskPriority.normal),
       ]);
-      final chip = find.byKey(FilterBar.priorityKey(TaskPriority.urgent));
-      await tester.tap(chip);
-      await tester.pumpAndSettle();
-      await tester.tap(chip);
-      await tester.pumpAndSettle();
+      for (var i = 0; i < 2; i++) {
+        await toggleFilter(
+          tester,
+          FilterDimension.priority,
+          FilterKeys.priority(TaskPriority.urgent),
+        );
+      }
 
       expect(find.text('平常事'), findsOneWidget);
     });
@@ -94,21 +100,33 @@ void main() {
       // 顺序与列表的「按优先级」分组、编辑器里的选择区共用同一份
       // （`TaskPriority.byImportance`）。三处各写一遍的话迟早对不上。
       await _pumpWith(tester, [_task('随便', TaskPriority.normal)]);
+      await tapVisible(
+        tester,
+        FilterBar.dimensionKey(FilterDimension.priority),
+      );
+
       for (final p in TaskPriority.values) {
         expect(
-          find.byKey(FilterBar.priorityKey(p)),
+          find.byKey(FilterKeys.priority(p)),
           findsOneWidget,
-          reason: '${p.label} 这一档筛选条上没有',
+          reason: '${p.label} 这一档弹层里没有',
         );
       }
-      final xs = [
+      // 弹层里是 `Wrap`，一行放不下就折行 —— 所以「顺序」要按
+      // **(top, left) 字典序**读，只看 left 的话第二行会排到第一行前面。
+      final positions = [
         for (final p in TaskPriority.byImportance)
-          tester.getRect(find.byKey(FilterBar.priorityKey(p))).left,
+          tester.getRect(find.byKey(FilterKeys.priority(p))).topLeft,
       ];
       expect(
-        xs,
-        orderedEquals(<double>[...xs]..sort()),
-        reason: '筛选条上的顺序不是「紧急 → 无」',
+        positions,
+        orderedEquals(
+          <Offset>[...positions]..sort(
+            (a, b) =>
+                a.dy != b.dy ? a.dy.compareTo(b.dy) : a.dx.compareTo(b.dx),
+          ),
+        ),
+        reason: '弹层里的顺序不是「紧急 → 无」',
       );
     });
   });

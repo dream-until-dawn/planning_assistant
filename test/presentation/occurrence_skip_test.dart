@@ -15,7 +15,7 @@ import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/domain/value_objects/task_status.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
-import 'package:planning_assistant/features/views/shared/presentation/filter_bar.dart';
+import 'package:planning_assistant/features/views/shared/presentation/filter_sheet.dart';
 import 'package:planning_assistant/features/views/task_list/presentation/occurrence_actions_sheet.dart';
 import 'package:planning_assistant/features/views/task_list/presentation/task_list_page.dart';
 
@@ -109,7 +109,11 @@ void main() {
     expect(_hasTodayGroup(tester), isFalse);
 
     // 顶部筛选条勾上「已跳过」。
-    await tapVisible(tester, FilterBar.statusKey(TaskStatus.skipped));
+    await toggleFilter(
+      tester,
+      FilterDimension.status,
+      FilterKeys.status(TaskStatus.skipped),
+    );
     expect(find.byType(TaskCard), findsOneWidget, reason: '筛「已跳过」时只该剩被跳过的那一次');
 
     // 从弹层里恢复。
@@ -128,7 +132,11 @@ void main() {
     expect(live, isEmpty);
 
     // 取消筛选，那一次回到列表里。
-    await tapVisible(tester, FilterBar.statusKey(TaskStatus.skipped));
+    await toggleFilter(
+      tester,
+      FilterDimension.status,
+      FilterKeys.status(TaskStatus.skipped),
+    );
     expect(_todayCount(tester), 1, reason: '恢复之后「今天」那一次该回来');
   });
 

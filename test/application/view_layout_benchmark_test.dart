@@ -11,6 +11,17 @@
 /// 十几毫秒，后面画得再快也来不及。反过来，布局快不等于不掉帧 ——
 /// 那部分要真机说了算，见文件末尾那条记账。
 ///
+/// ## NFR-PERF-02 在 V1 已降级为**不验收**
+///
+/// 用户 2026-09-09 的决定（requirements §7.1.1）：开发期只有模拟器，
+/// 而模拟器的帧时间由宿主机的调度决定 —— **拿它的采样当验收比不测更糟**，
+/// 它会给出一个看起来通过了的数字。
+///
+/// 所以这一份是那条需求当前**唯一**的支撑，而它只是个上游代理：
+/// 覆盖 CPU 侧的布局计算，不含光栅化、不含真机的调度与热节流。
+/// 这一段绿了不等于那条需求满足了 —— 拿到真机之前，
+/// 任何「滚动性能没问题」的说法都只有代理作支撑。
+///
 /// ## 阈值怎么定的
 ///
 /// 同 `recurrence_benchmark_test`：预热、取中位数、阈值留一个数量级的
@@ -35,7 +46,7 @@ import 'package:planning_assistant/features/views/calendar/application/month_gri
 import 'package:planning_assistant/features/views/gantt/application/gantt_layout.dart';
 import 'package:planning_assistant/features/views/shared/application/occurrence_expansion.dart';
 import 'package:planning_assistant/features/views/shared/application/task_occurrence.dart';
-import 'package:planning_assistant/features/views/timeline/application/timeline_blocks.dart';
+import 'package:planning_assistant/features/views/timeline/application/agenda_entries.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 
 const _today = PlanDate(2026, 9, 8);
@@ -116,17 +127,33 @@ void main() {
     expect(took, lessThan(_budget), reason: '展开慢了：$took');
   });
 
-  test('时间轴排一天', () {
-    final rows = expandInWindow(
+  test('时间轴摊平成议程', () {
+    final rows = expandForAgenda(
       tasks: tasks,
       overrides: const [],
-      window: const DateRange(_today, _today),
+      today: _today,
       engine: _engine,
     );
-    var day = timelineDayFor(const [], _today);
-    final took = _median(() => day = timelineDayFor(rows, _today));
-    expect(day.isEmpty, isFalse);
-    expect(took, lessThan(_budget), reason: '时间轴排布慢了：$took');
+    var entries = agendaEntries(const []);
+    final took = _median(() => entries = agendaEntries(rows));
+    expect(entries, isNotEmpty);
+    expect(took, lessThan(_budget), reason: '议程摊平慢了：$took');
+  });
+
+  test('展开成议程（每条任务只留两次）', () {
+    var rows = <TaskOccurrence>[];
+    final took = _median(() {
+      rows = expandForAgenda(
+        tasks: tasks,
+        overrides: const [],
+        today: _today,
+        engine: _engine,
+      );
+    });
+    expect(rows, isNotEmpty, reason: '什么都没展开的话，快是应该的');
+    // 每条任务最多两行 —— 这既是行为，也是这条预算成立的前提。
+    expect(rows.length, lessThanOrEqualTo(_taskCount * 2));
+    expect(took, lessThan(_budget), reason: '议程展开慢了：$took');
   });
 
   test('日历排一个月（六行横条 + 四十二格色点）', () {

@@ -18,6 +18,8 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../../../../core/time/date_and_minute.dart';
+import '../../../../core/time/minute_of_day.dart';
 import '../../shared/application/task_occurrence.dart';
 import '../application/gantt_layout.dart';
 import 'gantt_metrics.dart';
@@ -114,7 +116,10 @@ class GanttPainter extends CustomPainter {
         bottomLeft: bar.continuesAfter ? Radius.zero : radius,
         bottomRight: bar.continuesAfter ? Radius.zero : radius,
       ),
-      Paint()..color = barColor.withValues(alpha: 0.20),
+      // **每根条用自己的分类色**，未分类的才回落到主色。
+      // 一度整张图一个色，于是一屏几十条任务长得一模一样 ——
+      // 用户报的原话：「不同任务没有颜色区分」。
+      Paint()..color = _colorOf(bar).withValues(alpha: 0.28),
     );
 
     // 排了时间的阶段画成段；没排时间的只画一条进度填充（见
@@ -124,12 +129,19 @@ class GanttPainter extends CustomPainter {
       _paintProgress(canvas, bar, rect);
     } else {
       for (final segment in bar.segments) {
-        _paintSegment(canvas, segment, rect);
+        _paintSegment(canvas, segment, rect, _colorOf(bar));
       }
     }
   }
 
   /// 没排时间的阶段：从上往下填一段，长度 = 已完成的比例。
+  /// 这根条的颜色：分类色，未分类回落到主色。
+  ///
+  /// 回落而不是「未分类也给个别的颜色」：未分类是**没有选**，
+  /// 不是一个分类；给它一个专属色会让它看起来像一类。
+  Color _colorOf(GanttBar bar) =>
+      bar.colorArgb == null ? barColor : Color(bar.colorArgb!);
+
   void _paintProgress(Canvas canvas, GanttBar bar, Rect rect) {
     final ratio = bar.progress;
     if (ratio == null || ratio <= 0) return;
@@ -148,7 +160,12 @@ class GanttPainter extends CustomPainter {
   ///
   /// 已完成填实，未完成半透明 —— **外加一条左边线**：只靠透明度区分
   /// 的话，灰度屏与色觉障碍下两者几乎一样（§8.1 那条原则）。
-  void _paintSegment(Canvas canvas, GanttSegment segment, Rect bar) {
+  void _paintSegment(
+    Canvas canvas,
+    GanttSegment segment,
+    Rect bar,
+    Color base,
+  ) {
     final top = segment.startMinute * GanttMetrics.pixelsPerMinute;
     final bottom =
         segment.endMinute * GanttMetrics.pixelsPerMinute -
@@ -157,7 +174,7 @@ class GanttPainter extends CustomPainter {
 
     final rect = Rect.fromLTRB(bar.left, top, bar.right, bottom);
     final color = segment.stage.colorArgb == null
-        ? (segment.done ? doneColor : barColor)
+        ? (segment.done ? doneColor : base)
         : Color(segment.stage.colorArgb!);
 
     canvas.drawRect(
@@ -194,6 +211,30 @@ class GanttPainter extends CustomPainter {
       if (box.rect.contains(point)) return box.row;
     }
     return null;
+  }
+
+  /// 反查坐标落在**哪天几点**（FR-VIEW-07：长按空白处新建）。
+  ///
+  /// 与 [barAt] 是两件事：那个问「点着谁了」，这个问「点在什么时候」——
+  /// 空白处两者都要问，先看有没有条，没有才落到这里。
+  ///
+  /// ## 为什么向下取整到刻度
+  ///
+  /// 一像素在这个比例尺下是半小时（`pixelsPerMinute` = 48/1440），
+  /// 于是「照着像素反算」得到的是 14:03、14:37 这种数 ——
+  /// 用户长按在「下午两点那一格」上，他说的是 14:00。
+  /// 取整到 [tickMinutes]（跟着当前粒度走）比精确到分钟更接近意图。
+  ///
+  /// 越界返回 null：手指落在画布底下的留白里时，编出一个日期
+  /// 比不给日期更糟。
+  DateAndMinute? timeAt(Offset point, {int tickMinutes = 30}) {
+    final minutes = point.dy ~/ GanttMetrics.pixelsPerMinute;
+    if (minutes < 0 || minutes >= layout.totalMinutes) return null;
+    final snapped = (minutes ~/ tickMinutes) * tickMinutes;
+    return DateAndMinute(
+      layout.windowStart.addDays(snapped ~/ minutesPerDay),
+      MinuteOfDay(snapped % minutesPerDay),
+    );
   }
 
   @override

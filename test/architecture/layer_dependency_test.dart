@@ -726,22 +726,176 @@ import
     );
   });
 
-  test('两条视图侧 lint 的白名单文件都真的存在（防止白名单变僵尸）', () {
+  test('两条视图侧 lint 的白名单文件都在，而且真的还在做被豁免的那件事', () {
     // 白名单锚的是文件名。文件改了名而白名单没跟着改的话，
     // 那一条豁免会**静默失效**：守卫开始扫一个本该豁免的文件，
     // 或者更糟 —— 一条早就不存在的豁免留在表里，
     // 下一个人以为它还在挡着什么。
-    const named = {
-      'task_occurrence.dart',
-      'occurrence_expansion.dart',
-      'stage_occurrence_status.dart',
+    //
+    // ## 「存在」不够，还要「真的在做」
+    //
+    // 这一层是从 `SnackBarAction` 那条名单推广过来的（评审提的，
+    // 而那正是 §1.11.1「第二次写下同类理由时就该归并」的用法 ——
+    // 这已经是第三处名单了）。
+    //
+    // 只验存在的话，**被豁免的行为搬走之后，豁免会指着一个空文件**：
+    // 文件还在、检查还绿，而它豁免的那件事已经没人做了。
+    // 下一个人在那个文件里新写一处，名单不会拦 ——
+    // 一条本该早就删掉的豁免，把整块地方重新开放了。
+    //
+    // 所以每条豁免都带上**它被豁免的那个模式**，两样一起验。
+    final exemptions = <String, RegExp>{
+      // `endDate` lint：派生跨度的定义处与它的上游。
+      'task_occurrence.dart': RegExp(
+        r'\b(row|task|occurrence)\.(endDate|endMinute)\b',
+      ),
+      'occurrence_expansion.dart': RegExp(
+        r'\b(row|task|occurrence)\.(endDate|endMinute)\b',
+      ),
+      // `stage.status` lint：分流本身住在这儿。
+      'stage_occurrence_status.dart': RegExp(r'\b(stage|s)\.status\b'),
     };
+
     final present = {
-      for (final f in _dartFiles('lib')) _norm(f.path).split('/').last,
+      for (final f in _dartFiles('lib')) _norm(f.path).split('/').last: f,
     };
-    for (final name in named) {
-      expect(present, contains(name), reason: '白名单里的 $name 已经不存在了');
+    for (final MapEntry(key: name, value: pattern) in exemptions.entries) {
+      final file = present[name];
+      expect(file, isNotNull, reason: '白名单里的 $name 已经不存在了');
+      expect(
+        pattern.hasMatch(file!.readAsStringSync()),
+        isTrue,
+        reason: '$name 里已经没有 ${pattern.pattern} 了 —— 这条豁免该删',
+      );
     }
+  });
+
+  /// 允许构造 `SnackBarAction` 的文件。**每条要写理由。**
+  ///
+  /// 名单锚定确切文件名，不做子串匹配 —— 同 `endDate` lint 那条白名单。
+  const snackBarActionOwners = {
+    // 全项目发提示的唯一入口。`persist: false` 那一行就在它身上。
+    'undo_snackbar.dart',
+  };
+
+  test('构造 SnackBarAction 的地方必须在名单里', () {
+    // ## 这条与下面那条守的**不是同一件事**
+    //
+    // 下面那条是**逐处的性质检查**：凡是带 action 的提示都得写
+    // `persist: false`。它守得住「第五处忘了写」，
+    // **守不住「第五处照抄一整套、而且写对了」** —— 那时它绿，
+    // 而重复回来了。四份拷贝加同一段长注释，正是这次要消掉的东西。
+    //
+    // 所以「`scanned` 从 4 降到 1」不是那条守卫变弱了：
+    // 它从来就没在守这一件事。评审点出来的。
+    //
+    // ## 为什么是名单，不是禁令
+    //
+    // 将来真要加一个**非撤销**的动作提示（「查看」「重试」都是合理
+    // 需求），路要通 —— 但得在名单里留下一行，而那一行就是下一个
+    // 评审者会看见的东西。**一刀切会挡住合理需求，名单不会。**
+    //
+    // 我一度以「不带 action 的提示没有 persist 这个坑，一刀切会拦掉
+    // 合法用法」否掉过收紧。那个反驳**落在规则之外**：它说的是禁止
+    // 构造 `SnackBar`，而这里管的是 `SnackBarAction` ——
+    // 不带 action 的提示里根本没有它。反例不在规则的论域里。
+    final outsiders = <String>[];
+    for (final file in libFiles) {
+      final rel = _relToLib(file.path);
+      if (rel == null) continue;
+      final name = rel.split('/').last;
+      if (snackBarActionOwners.contains(name)) continue;
+      if (file.readAsStringSync().contains('SnackBarAction')) {
+        outsiders.add('  - lib/$rel');
+      }
+    }
+
+    expect(
+      outsiders,
+      isEmpty,
+      reason:
+          '带动作的提示请走 `showUndoSnackBar`；确实需要新的一类动作，'
+          '就把文件加进 snackBarActionOwners 并写明理由：\n'
+          '${outsiders.join('\n')}',
+    );
+  });
+
+  test('SnackBarAction 名单里的文件都真的在，而且真的构造了它', () {
+    // 反僵尸（同白名单那条）：名单锚的是文件名。
+    //
+    // 但这里多验一层「**真的构造了**」—— 光验文件存在的话，
+    // 把入口挪走之后名单会变成一条对着空文件的豁免，
+    // 而下一个人以为它还在挡着什么。
+    final present = {
+      for (final f in _dartFiles('lib')) _norm(f.path).split('/').last: f,
+    };
+    for (final name in snackBarActionOwners) {
+      final file = present[name];
+      expect(file, isNotNull, reason: '名单里的 $name 已经不存在了');
+      expect(
+        file!.readAsStringSync().contains('SnackBarAction'),
+        isTrue,
+        reason: '$name 已经不构造 SnackBarAction 了，这条豁免该删',
+      );
+    }
+  });
+
+  test('带撤销按钮的 SnackBar 必须显式写 persist: false', () {
+    // ## 为什么要一条守卫，而不是「记住就行」
+    //
+    // Flutter 的 `SnackBar` 里有一行：
+    //
+    //     persist = persist ?? action != null;
+    //
+    // **带 action 的提示默认永不自动消失。** 而这个应用里每一条提示
+    // 都带「撤销」—— 于是全都是永久的，`duration` 设了也没用
+    //（计时器回调第一句就是 `if (snackBar.persist) return;`）。
+    //
+    // 用户报的原话：「下方的轻提示永远不会消失」。四处提示全中。
+    //
+    // 这是一条**默认值与我们的意图相反**的 API：不写就是错的，
+    // 而错的表现在代码里完全看不出来 —— 那正是该由守卫盯着的形状，
+    // 靠「下次记得」是守不住的。
+    // ## 两处启发式，写明它们的边界
+    //
+    // 1. **700 字符的窗口**：从每个 `SnackBar(` 往后看这么多字符。
+    //    `SnackBarAction` 若出现在更靠后的位置就看不见了。
+    //    实际的提示块都在两百字符以内，留了三倍余量 —— 但这是个
+    //    **拍出来的数**，不是分析出来的边界。
+    // 2. **`split('SnackBar(')` 会在 `showSnackBar(` 上也切一刀**
+    //    （子串命中）。于是切出来的块比真正的构造点**多**。
+    //    方向是偏向多报而非漏报 —— 安全的那一侧，
+    //    但下一个人调这个窗口时该知道自己在调什么。
+    //
+    // 两条都是「够不着的写法是有的」那一类，同 `endDate` lint 里
+    // 那段名字启发式的说明。写在这儿是为了让边界可见，
+    // 不是为了让人以为它管全了。
+    final violations = <String>[];
+    var scanned = 0;
+    for (final file in libFiles) {
+      final rel = _relToLib(file.path);
+      if (rel == null) continue;
+      final text = file.readAsStringSync();
+      if (!text.contains('SnackBarAction')) continue;
+      scanned++;
+      // 一个文件里可能有好几条提示，逐个 `SnackBar(` 块看。
+      for (final chunk in text.split('SnackBar(').skip(1)) {
+        final head = chunk.length > 700 ? chunk.substring(0, 700) : chunk;
+        if (head.contains('SnackBarAction') &&
+            !head.contains('persist: false')) {
+          violations.add('  - lib/$rel');
+        }
+      }
+    }
+
+    expect(scanned, greaterThan(0), reason: '一个带 SnackBarAction 的文件都没扫到');
+    expect(
+      violations,
+      isEmpty,
+      reason:
+          '这几处的提示会永远挂在屏幕底部，并把后面的提示堵在队列里：\n'
+          '${violations.join('\n')}',
+    );
   });
 
   test('lib/ 下有可供扫描的源码（守卫不能对着空目录报绿）', () {
@@ -933,7 +1087,19 @@ import
     //
     // 这条守两件事：
     //  1. Repository 的写方法只能由 dispatcher 与实现自身调用；
-    //  2. DAO 的写方法（upsert / softDelete）不得在 data/ 之外出现。
+    //  2. DAO 的写方法（upsert / softDelete）只能由 `data/repositories/`
+    //     下的仓储实现、或 `allowedDaoWriters` 名单里的文件调用。
+    //
+    // 第 2 条一度写成、也一度报成「**不得在 `data/` 之外**出现」，
+    // 那与实现的规则不是一回事：`data/` 里一个既不在名单、
+    // 又不是仓储实现的文件照样会被判违规 —— 评审往
+    // `table_daos.dart`（它就在 `data/` 里）注入一处 `upsert(` 时，
+    // 守卫确实报了，而报出来的文案却说「不得在 data/ 之外」。
+    //
+    // **报错文案描述的规则必须就是被实现的规则。** 它比注释更要紧：
+    // 读它的人正处在「我该改什么」的当口，而照那句错文案去做，
+    // 会把代码往 `data/` 里挪 —— 挪完还是违规。
+    // 同 V-04 那条「注释写着一个不存在的机制」，只是位置更靠前。
     const repoWriteMethods = [
       'saveTask',
       'saveTaskWithStages',
@@ -955,7 +1121,11 @@ import
     const allowedDaoWriters = {
       // DAO 基类与各表 DAO 自身。
       'data/database/dao/synced_dao.dart',
-      'data/database/dao/table_daos.dart',
+      // `table_daos.dart` **不在这儿**：它只声明每张表的表名 / 实体类型 /
+      // 主键怎么取，写库全在 `SyncedDao` 基类里（那个文件头一句就写着）。
+      // 它一度挂在这张名单上，是一条**从没用上的豁免** ——
+      // 加强版反僵尸守卫（「不只是文件在，还要真的在做那件事」）
+      // 头一次跑就把它挑出来了。
       // 导入导出与回放走裸 SQL，不经 DAO —— 它们是「恢复」不是「操作」，
       // 不该再写一遍 outbox。见各自文件的头部注释。
       'data/dto/export_bundle.dart',
@@ -1012,7 +1182,8 @@ import
           }
           violations.add(
             '  - lib/$rel:${i + 1}\n      $line\n'
-            '      违反: DAO 写方法 $m 不得在 data/ 之外直接调用',
+            '      违反: DAO 写方法 $m 只能由 data/repositories/ 下的仓储'
+            '实现、或 allowedDaoWriters 名单里的文件调用',
           );
         }
       }
@@ -1025,22 +1196,37 @@ import
     );
   });
 
-  test('上面那条白名单里的文件确实存在 —— 防止白名单变成僵尸', () {
+  test('上面那条白名单里的文件都在，而且真的还在写库 —— 防止白名单变僵尸', () {
     // 白名单条目对应的文件被删或改名后，那一条就永远匹配不上，
     // 于是守卫在那个位置**静默失效**。这是守卫本身最常见的烂法。
+    //
+    // 「存在」之外还验「真的在写」，理由同视图侧那条：
+    // 写库的代码搬走之后，豁免会指着一个不再写库的文件，
+    // 而下一个人在那儿新写一处，名单不会拦。
     const whitelisted = [
       'lib/domain/commands/command_dispatcher.dart',
       'lib/data/repositories/task_repository_impl.dart',
       'lib/data/database/dao/synced_dao.dart',
-      'lib/data/database/dao/table_daos.dart',
       'lib/data/dto/export_bundle.dart',
       'lib/data/outbox/change_log_replayer.dart',
     ];
-    final missing = [
-      for (final f in whitelisted)
-        if (!File(f).existsSync()) f,
-    ];
-    expect(missing, isEmpty, reason: '白名单指向已不存在的文件：$missing');
+    // 判据放得比 lint 本身宽：只问「这个文件里还有写库这回事吗」。
+    // 卡死具体方法名的话，重构一次方法名这条就会红，
+    // 而那时它报的不是「豁免过期了」，是「我认得的名字变了」。
+    final writeish = RegExp(
+      r'\b(insert|update|delete|upsert|write|save|replace|softDelete|'
+      r'purge|restore|dispatch)\w*\s*\(',
+      caseSensitive: false,
+    );
+    for (final path in whitelisted) {
+      final file = File(path);
+      expect(file.existsSync(), isTrue, reason: '白名单指向已不存在的文件：$path');
+      expect(
+        writeish.hasMatch(file.readAsStringSync()),
+        isTrue,
+        reason: '$path 里已经看不到写库了 —— 这条豁免该删',
+      );
+    }
   });
 }
 

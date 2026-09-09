@@ -32,6 +32,8 @@ import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/features/settings/application/settings_providers.dart';
 import 'package:planning_assistant/features/views/shared/application/category_providers.dart';
 import 'package:planning_assistant/features/views/shared/application/task_providers.dart';
+import 'package:planning_assistant/features/views/shared/presentation/filter_bar.dart';
+import 'package:planning_assistant/features/views/shared/presentation/filter_sheet.dart';
 import 'package:planning_assistant/features/views/timeline/application/timeline_providers.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 
@@ -337,6 +339,26 @@ Future<void> tapVisible(WidgetTester tester, Key key) async {
   await tester.ensureVisible(finder);
   await tester.pumpAndSettle();
   await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
+/// 在筛选条上勾/取消某一项，然后把弹层收起来。
+///
+/// 筛选从「一排 Chip」改成「每维一个按钮 + 多选弹层」之后，勾一项
+/// 变成了三步（开、点、关）。**把这三步收成一个函数**，而不是让
+/// 每个用例各写一遍 —— 它们关心的是「筛了这一项之后列表变成什么样」，
+/// 不是弹层怎么开。
+///
+/// 弹层**不会点一下就关**（多选的意义就在于连着选几项），
+/// 所以这里显式按「完成」。
+Future<void> toggleFilter(
+  WidgetTester tester,
+  FilterDimension dimension,
+  Key option,
+) async {
+  await tapVisible(tester, FilterBar.dimensionKey(dimension));
+  await tapVisible(tester, option);
+  await tester.tap(find.byKey(FilterSheet.doneKey(dimension)));
   await tester.pumpAndSettle();
 }
 

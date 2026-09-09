@@ -32,8 +32,22 @@ void main() {
   group('固定 token：每个表面各算一遍', () {
     test('正文文字 × 三个亮表面 ≥ 4.5:1', () {
       // 只算 canvas 会漏掉 sunken —— 后者最暗，是紧约束。
+      // ## `BrandColors.primaryText` 一度**不在这张表里**
+      //
+      // 而它存在的全部理由就是「品牌色作正文时用它」——
+      // 也就是说，这个 token 的定义性质从来没有人验过。
+      // `colors.dart` 那边的注释写着「实测 5.12 / 4.95 / 4.55 ✅」，
+      // 那个 ✅ 背后什么也没有（而且三个数还是旧配色的）。
+      //
+      // 找到它的路径值得记：评审指出另一处注释里的数字过期，
+      // 我顺着同一份注释往下读，撞见了这一处 ——
+      // **过期的数字是「这一段没人维护」的信号，不只是它自己错了。**
       final failures = <String>[];
-      for (final text in [TextColors.primary, TextColors.secondary]) {
+      for (final text in [
+        TextColors.primary,
+        TextColors.secondary,
+        BrandColors.primaryText,
+      ]) {
         for (final surface in SurfaceColors.lightSurfaces) {
           final r = contrastRatio(text, surface);
           if (r < kBodyText) {
@@ -124,7 +138,12 @@ void main() {
       }
     });
 
-    test('primaryGraphic 对**三个**亮表面都 ≥ 3.0:1', () {
+    test('primaryGraphic 对**三个**亮表面都 ≥ 3.0:1，且都够不到 4.5', () {
+      // ## 两端都要钉，因为 `primaryText` 的存在理由就是这两端
+      //
+      // 下界（≥3.0）：图形级够用。
+      // 上界（<4.5）：正文级不够 —— **这正是品牌色要拆出第三级的原因**。
+      // 只钉下界的话，注释里那句「图形够用、正文不够」有一半没人守。
       final results = <String>[];
       for (final surface in SurfaceColors.lightSurfaces) {
         final r = contrastRatio(BrandColors.primaryGraphic, surface);
@@ -134,8 +153,69 @@ void main() {
           greaterThanOrEqualTo(kLargeTextOrGraphic),
           reason: '${_hex(BrandColors.primaryGraphic)} on ${_hex(surface)}',
         );
+        expect(
+          r,
+          lessThan(kBodyText),
+          reason:
+              '${_hex(surface)} 上它已经到正文级了 —— 那不是 bug，'
+              '是 primaryText 可能变多余了，去看一眼 §2.4 的三级拆分还成不成立',
+        );
       }
       expect(results.length, 3, reason: '必须三个表面都算，实际：$results');
+    });
+
+    test('把 primaryGraphic 的三个实测值钉住', () {
+      // ## 为什么要把数字写进断言
+      //
+      // 这三个数原本抄在 `colors.dart` 的注释里，改配色之后**三个全过期**
+      // 而没有任何东西会红（旧值是奶油白画布与暖灰 sunken 时代的）。
+      // 更糟的是评审复核时用了同一份旧值，算出来与注释一致、判了「✓」——
+      // **一份不受检的副本会主动提供假的确证**（testing-strategy §1.12.1）。
+      //
+      // 所以数字搬到这儿：**写在断言里的数字不会悄悄过期**，
+      // 改配色时这条会红，红了就有人看一眼余量还剩多少。
+      // 注释那边只留主张（「图形够用、正文不够」）与指针 ——
+      // 主张跨配色稳定，测量不稳定。
+      //
+      // 与 `text.disabled 豁免` 那条同一个做法（那里也 `closeTo` 钉了 2.41）。
+      // 用列表而不是 Map：canvas 与 card 都是纯白（§2.2），
+      // 写成 Map 会**键重复**编译不过 —— 那条报错本身就是
+      // 「这两个表面现在是同一个色」的证明。
+      // 所以下面两行数相同不是笔误；哪天它们不一样了，
+      // 要么表面色变了，要么这份期望过期了。
+      const expected = [
+        ('canvas', SurfaceColors.canvas, 3.46),
+        ('card', SurfaceColors.card, 3.46),
+        ('sunken', SurfaceColors.sunken, 3.10),
+      ];
+      for (final (name, surface, want) in expected) {
+        expect(
+          contrastRatio(BrandColors.primaryGraphic, surface),
+          closeTo(want, 0.01),
+          reason: '$name ${_hex(surface)} 上的实测值变了',
+        );
+      }
+
+      // `primaryText` 那三个数同样抄在注释里、同样过期
+      // （写的是 5.12 / 4.95 / 4.55，那是旧配色下 card / canvas / sunken
+      // 的值，连顺序都不是注释里那个顺序）。一并钉住。
+      const textExpected = [
+        ('canvas', SurfaceColors.canvas, 5.12),
+        ('card', SurfaceColors.card, 5.12),
+        ('sunken', SurfaceColors.sunken, 4.58),
+      ];
+      for (final (name, surface, want) in textExpected) {
+        expect(
+          contrastRatio(BrandColors.primaryText, surface),
+          closeTo(want, 0.01),
+          reason: '$name ${_hex(surface)} 上 primaryText 的实测值变了',
+        );
+      }
+      expect(
+        expected.map((e) => e.$2).toSet().length,
+        lessThan(expected.length),
+        reason: 'canvas 与 card 不再是同一个色了 —— 上面那段注释要改',
+      );
     });
 
     test('primaryGraphic 与 primaryFill 同色相同饱和，只差亮度', () {

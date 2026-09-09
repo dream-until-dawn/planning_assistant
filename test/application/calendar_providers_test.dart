@@ -67,33 +67,30 @@ Future<ProviderContainer> _container({
 }
 
 void main() {
-  group('档位来自共享状态，日历不自己存一份', () {
-    test('默认（day）按**月**处理 —— 月视图是日历的默认（§3.1）', () async {
-      // 「日」这一档日历没有对应形态。按周处理的话，从别的视图切过来时
-      // 日历默认是周视图，与规格第一行相反。
+  group('日历恒为月视图', () {
+    // **这一组原来钉的是反面**：日历跟着共享的 `granularity` 走，
+    // 月/周两档都验过。用户看过界面之后要求去掉周视图 ——
+    // 「不需要『周』固定使用月即可」。
+    //
+    // 所以这几条改成钉新行为：**无论共享档位是什么，日历都是六行月视图**。
+    // 甘特那边的日/周/月不受影响（它有自己的切换），只是日历不再跟着变。
+
+    test('默认就是月视图', () async {
       final c = await _container();
       expect(c.read(calendarIsMonthProvider), isTrue);
       expect(c.read(calendarWeeksProvider), hasLength(6));
     });
 
-    test('切到月 → 六行', () async {
-      final c = await _container();
-      c
-          .read(viewSharedStateProvider.notifier)
-          .setGranularity(TimeGranularity.month);
-      expect(c.read(calendarWeeksProvider), hasLength(6));
-    });
-
-    test('从甘特那侧改档位，日历跟着变 —— 两边读的是同一份', () async {
-      // 日历自己存一份的话，从甘特切过来时两边会对不上，
-      // 而那正是 FR-VIEW-05/06 要避免的。
-      final c = await _container();
-      final shared = c.read(viewSharedStateProvider.notifier);
-      shared.setGranularity(TimeGranularity.month);
-      expect(c.read(calendarIsMonthProvider), isTrue);
-      shared.setGranularity(TimeGranularity.week);
-      expect(c.read(calendarIsMonthProvider), isFalse);
-    });
+    for (final g in TimeGranularity.values) {
+      test('共享档位是 ${g.name} 时，日历仍然是六行月视图', () async {
+        // 甘特把档位切成「周」之后再切回日历，日历不该变成一行 ——
+        // 那正是用户看到的、要求去掉的东西。
+        final c = await _container();
+        c.read(viewSharedStateProvider.notifier).setGranularity(g);
+        expect(c.read(calendarIsMonthProvider), isTrue);
+        expect(c.read(calendarWeeksProvider), hasLength(6));
+      });
+    }
   });
 
   group('一周从周几起，配置说了算', () {
@@ -260,7 +257,7 @@ void main() {
 
       // 筛之前三处都有两条。
       expect(idsOf(c, calendarOccurrencesProvider), hasLength(2));
-      expect(idsOf(c, timelineOccurrencesProvider), hasLength(2));
+      expect(idsOf(c, agendaRowsProvider), hasLength(2));
       expect(idsOf(c, filteredTasksProvider), hasLength(2));
 
       c
@@ -269,28 +266,34 @@ void main() {
 
       for (final p in <Provider<List<dynamic>>>[
         calendarOccurrencesProvider,
-        timelineOccurrencesProvider,
+        agendaRowsProvider,
         filteredTasksProvider,
       ]) {
         expect(idsOf(c, p), ['工作的'], reason: '$p 没跟上共享的筛选');
       }
     });
 
-    test('聚焦日也是共用的：日历改一天，时间轴跟着换', () async {
+    test('聚焦日也是共用的：日历改一天，下方列表跟着换', () async {
+      // ## 时间轴不在这条用例里了
+      //
+      // 它原本也读聚焦日**筛内容**（单日刻度尺），所以能在这儿一起验。
+      // 改成跨天议程之后它不再筛 —— 聚焦日只决定它滚到哪，
+      // 那是界面的事，在 `view_consistency_test.dart` 里量视口。
+      // 留在这里的话，这条断言会变成「议程里同时有今天和明天」，
+      // 而那与「两边各存了一份聚焦日」这个 bug 无关。
       final c = await _container(
         tasks: [
           _task('今天的', start: 9 * 60),
           _task('明天的', date: _today.addDays(1), start: 9 * 60),
         ],
       );
-      expect(idsOf(c, timelineOccurrencesProvider), ['今天的']);
+      expect(c.read(selectedDayRowsProvider).map((r) => r.taskId), ['今天的']);
 
       // 日历上点了明天。
       c.read(viewSharedStateProvider.notifier).focusDate(_today.addDays(1));
-      expect(idsOf(c, timelineOccurrencesProvider), [
+      expect(c.read(selectedDayRowsProvider).map((r) => r.taskId), [
         '明天的',
-      ], reason: '时间轴还停在旧日期 —— 两边各存了一份聚焦日');
-      expect(c.read(selectedDayRowsProvider).map((r) => r.taskId), ['明天的']);
+      ], reason: '下方列表还停在旧日期 —— 两边各存了一份聚焦日');
     });
   });
 }

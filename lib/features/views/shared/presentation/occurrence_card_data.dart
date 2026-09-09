@@ -12,6 +12,8 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../app_providers.dart';
+import '../../../../core/time/plan_date.dart';
 import '../../../../design/components/app_chip.dart';
 import '../../../../design/components/task_card.dart';
 import '../../../../domain/entities/category.dart';
@@ -30,8 +32,16 @@ import '../application/task_occurrence.dart';
 ///
 /// 所以把「要喂哪些东西」收在这里，视图只给一行。
 /// 纯函数版 [occurrenceCardData] 留着给测试直接构造用。
-TaskCardData cardDataOf(WidgetRef ref, TaskOccurrence row) =>
-    occurrenceCardData(row, ref.watch(categoryByIdProvider));
+TaskCardData cardDataOf(
+  WidgetRef ref,
+  TaskOccurrence row, {
+  bool withTime = true,
+}) => occurrenceCardData(
+  row,
+  ref.watch(categoryByIdProvider),
+  today: ref.watch(todayProvider),
+  withTime: withTime,
+);
 
 /// 领域实体 → 卡片展示数据。
 ///
@@ -39,8 +49,13 @@ TaskCardData cardDataOf(WidgetRef ref, TaskOccurrence row) =>
 /// 所以整形放在这里。
 TaskCardData occurrenceCardData(
   TaskOccurrence row,
-  Map<String, Category> categories,
-) {
+  Map<String, Category> categories, {
+  required PlanDate today,
+
+  /// 时间轴自己有一条时间栏，卡片再写一遍就是同一个时刻在一行里
+  /// 出现两次。只有那一个视图关这个开关。
+  bool withTime = true,
+}) {
   final task = row.task;
   // `categoryId == null` 就是未分类（settings-spec §3.0）——
   // 查不到也当未分类：那说明分类被删了，而删分类不该让任务消失。
@@ -57,7 +72,7 @@ TaskCardData occurrenceCardData(
     categoryColor: category == null
         ? Uncategorized.color
         : Color(category.colorArgb),
-    timeLabel: timeLabelOf(row),
+    timeLabel: withTime ? timeLabelOf(row, today: today) : null,
     // **进度问行自己**（`TaskOccurrence.stageProgress`）——
     // 那里面才知道这一行是不是「某一次」，以及该看哪一份状态。
     stageProgress: switch (row.stageProgress) {
@@ -72,6 +87,17 @@ TaskCardData occurrenceCardData(
     // 状态也走**行**的 —— 重复任务的 tasks.status 恒为 pending，
     // 看它的话每一次都显示成未完成（data-model §4.3）。
     isDone: row.status == TaskStatus.done,
+    // ## 这一项一度是**没人传**的
+    //
+    // `TaskCardData.isOverdue` 声明了、卡片也照它换左色条与时间色
+    // （design-system §2.4），断言测试与 golden 也各有一条 ——
+    // 但那些都是**直接构造 `TaskCardData`** 的。从真实数据这条路上
+    // 过来的卡片永远拿到默认的 `false`，于是逾期样式在应用里
+    // 一次都没出现过。
+    //
+    // 又是「模型有旋钮、界面够不着」的一例（testing-strategy §1.6），
+    // 而且是最难发现的那一种：组件测试全绿，因为它们绕过了这里。
+    isOverdue: _isOverdue(row, today),
   );
 }
 
@@ -110,12 +136,51 @@ String describeRule(Task task) {
 /// 摆在卡片上只会让人以为它有安排。编辑器现在不会再产出这种数据
 /// （关掉全天会自动补今天），但**库里可能已经有** —— 早期版本存下的、
 /// 或将来导入进来的。渲染层照着不变量来，比相信数据一定干净稳妥。
-String? timeLabelOf(TaskOccurrence row) {
+/// 卡片副信息里的「什么时候」。
+///
+/// ## 不是今天的，就把日期写出来
+///
+/// 一度只写 `HH:mm`，而且**全天任务直接返回 null** —— 于是一条每天重复
+/// 的全天任务，卡片上关于「哪一天」一个字都没有。
+/// 用户报的原话：「每天的任务没有标注日期啊，我不知道这个每日任务
+/// 具体是哪一日的，都放在逾期里我看不出啊」。
+///
+/// 分组标题只说得了「逾期」这一类，说不了组里那七行各是哪天 ——
+/// 而重复任务恰恰会在「逾期」里堆出一长串长得一模一样的卡片。
+///
+/// **今天的不写日期**：那一行的分组标题已经写着「今天」了，
+/// 再写一遍是噪音。其余一律写，包括明天 ——
+/// 「明天」那一组只有一天，但写出日期不碍事，而少写会让规则变成
+/// 「有时写有时不写」，用户得先弄懂规则才能读卡片。
+String? timeLabelOf(TaskOccurrence row, {required PlanDate today}) {
   // 走**行**的字段：被例外挪到别的时刻的那一次，卡片上要显示挪之后的。
-  if (row.isAllDay) return null;
-  if (row.planDate == null) return null;
-  final m = row.startMinute;
-  if (m == null) return null;
-  return '${m.hour.toString().padLeft(2, '0')}:'
-      '${m.minute.toString().padLeft(2, '0')}';
+  final date = row.planDate;
+  if (date == null) return null;
+
+  final datePart = date == today ? null : '${date.month}/${date.day}';
+  final m = row.isAllDay ? null : row.startMinute;
+  final timePart = m == null
+      ? null
+      : '${m.hour.toString().padLeft(2, '0')}:'
+            '${m.minute.toString().padLeft(2, '0')}';
+
+  return switch ((datePart, timePart)) {
+    (null, null) => null,
+    (final d?, null) => d,
+    (null, final t?) => t,
+    (final d?, final t?) => '$d $t',
+  };
+}
+
+/// 这一行逾期了没有。
+///
+/// **做完的不算逾期。** 上周做完的事就是做完了，给它标红只会让
+/// 「有几件事欠着」这个问题的答案变多。跳过的同理。
+bool _isOverdue(TaskOccurrence row, PlanDate today) {
+  final date = row.planDate;
+  if (date == null) return false;
+  if (row.status == TaskStatus.done || row.status == TaskStatus.skipped) {
+    return false;
+  }
+  return date.isBefore(today);
 }

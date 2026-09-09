@@ -3,19 +3,21 @@
 /// 放 `views/shared/presentation/` 是因为四个视图共用它 ——
 /// 同一个组件、同一份状态，切视图时筛选照旧（FR-VIEW-05）。
 ///
+/// ## 一个维度一个按钮
+///
+/// 上一版是一排十来个 Chip（清除 + 三个状态 + 五个优先级 + 分类若干）。
+/// 改成现在这样的理由写在 `filter_sheet.dart` 开头 —— 一句话：
+/// 那一排读起来像平级开关，而维度之间是交集、维度内部是并集。
+///
+/// 按钮上带着**选了几项**：不带的话，筛选生效与否只能靠底色深浅判断，
+/// 而「我到底筛了什么」得逐个点开才知道。
+///
 /// ## 控件本身就是「已生效条件」的展示
 ///
 /// §2.3 要求「顶部以 Chip 形式展示已生效条件，可单个清除」。
-/// 这里没有再单做一条「已生效条件」栏 —— 选中的 Chip 就是那个展示，
-/// 点一下就是那个「单个清除」。两处各画一遍的话，它们迟早不同步，
-/// 而用户会相信离他更近的那一处。
-///
-/// ## 现在只有分类与状态
-///
-/// [FilterSpec] 支持优先级、关键词、日期范围，但那三个还没有入口：
-/// 优先级在编辑器里还设不了（设不了就筛不出东西）、关键词要一个搜索框、
-/// 日期范围要一个区间选择器。**不放点了没反应的控件** ——
-/// 逻辑先备好，入口跟着各自的来源一起做。
+/// 这里没有再单做一条「已生效条件」栏 —— 按钮上的计数就是那个展示，
+/// 点开逐项取消、或按「清空」就是那个「单个清除」。
+/// 两处各画一遍的话它们迟早不同步，而用户会相信离他更近的那一处。
 library;
 
 import 'package:flutter/material.dart';
@@ -23,50 +25,23 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../design/components/app_chip.dart';
 import '../../../../design/tokens/dimensions.dart';
-import '../../../../domain/entities/task.dart';
-import '../../../../domain/value_objects/task_status.dart';
-import '../application/category_providers.dart';
 import '../application/view_shared_state.dart';
+import 'filter_sheet.dart';
 
 class FilterBar extends ConsumerWidget {
   const FilterBar({super.key});
 
   static const Key barKey = ValueKey('filter-bar');
+
+  /// 「全部清除」。只在筛了东西时出现。
   static const Key clearKey = ValueKey('filter-clear');
 
-  /// 分类筛选项的 Key。`null` 是「未分类」那一项。
-  static Key categoryKey(String? id) =>
-      ValueKey('filter-category-${id ?? 'none'}');
-
-  static Key statusKey(TaskStatus status) =>
-      ValueKey('filter-status-${status.name}');
-
-  /// 优先级那一维。
-  ///
-  /// **这一维是补出来的。** `FilterSpec.priorities` 与 `applyFilter`
-  /// 早就有了，唯独筛选条上没有 —— 于是那一维**永远筛不出任何东西**
-  /// （用户造不出非空的 priorities）。与编辑器缺优先级控件是同一笔债的两半。
-  static Key priorityKey(TaskPriority p) =>
-      ValueKey('filter-priority-${p.name}');
-
-  /// 状态维度暴露哪几项。**只放设得出来的**。
-  ///
-  /// `inProgress` 仍然没有入口（编辑器只建 pending，勾完成只在
-  /// pending/done 之间切），摆出来是个筛不出东西的按钮。
-  ///
-  /// `skipped` 是**后来加上的**，而且它不只是个筛选条件：跳过的那一次
-  /// 「不出现在任何视图」（FR-TASK-05 验收），勾上这个才让它们现身
-  /// （`expandForList` 的 `includeSkipped`）。**这是跳过之后唯一的
-  /// 反悔入口** —— 拿掉它，跳过就成了一条走进去出不来的路。
-  static const List<(TaskStatus, String)> exposedStatuses = [
-    (TaskStatus.pending, '待办'),
-    (TaskStatus.done, '已完成'),
-    (TaskStatus.skipped, '已跳过'),
-  ];
+  /// 某一维那个按钮。点开是它的多选弹层。
+  static Key dimensionKey(FilterDimension d) =>
+      ValueKey('filter-dimension-${d.name}');
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final categories = ref.watch(categoryListProvider);
     final filter = ref.watch(viewSharedStateProvider).filter;
     final notifier = ref.read(viewSharedStateProvider.notifier);
 
@@ -77,59 +52,44 @@ class FilterBar extends ConsumerWidget {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: Spacing.pageHorizontal),
         children: [
-          // 「清除」放在**最前面**：筛完之后想回到全部是最急的操作，
-          // 而横向滚动条上「最前面」是唯一不用滚就够得到的位置。
-          if (!filter.isEmpty) ...[
+          for (final dimension in FilterDimension.values) ...[
+            _DimensionButton(dimension: dimension, filter: filter),
+            const SizedBox(width: Spacing.sm),
+          ],
+          // 「全部清除」放在维度按钮**之后**：三个按钮固定宽度，
+          // 一屏放得下，它跟在后面照样够得着；而放在最前面的话，
+          // 它一出现就把三个维度整体往右推，按钮位置会跳。
+          if (!filter.isEmpty)
             SelectableChip(
               key: clearKey,
               label: '清除筛选',
               selected: false,
               onSelected: (_) => notifier.clearFilter(),
             ),
-            const SizedBox(width: Spacing.sm),
-          ],
-          for (final (status, label) in exposedStatuses) ...[
-            SelectableChip(
-              key: statusKey(status),
-              label: label,
-              selected: filter.statuses.contains(status),
-              onSelected: (_) =>
-                  notifier.setFilter(filter.toggleStatus(status)),
-            ),
-            const SizedBox(width: Spacing.sm),
-          ],
-          // 优先级：按 `byImportance`（紧急 → … → 无），
-          // 与列表的「按优先级」分组、编辑器里的选择区**同一份顺序**。
-          for (final p in TaskPriority.byImportance) ...[
-            SelectableChip(
-              key: priorityKey(p),
-              label: p.label,
-              selected: filter.priorities.contains(p),
-              onSelected: (_) => notifier.setFilter(filter.togglePriority(p)),
-            ),
-            const SizedBox(width: Spacing.sm),
-          ],
-          // 「未分类」和真分类并排，不单列 —— 它是这个维度里的一个取值
-          // （settings-spec §3.0），不是一个额外开关。
-          SelectableChip(
-            key: categoryKey(null),
-            label: Uncategorized.name,
-            selected: filter.categoryIds.contains(null),
-            onSelected: (_) => notifier.setFilter(filter.toggleCategory(null)),
-          ),
-          const SizedBox(width: Spacing.sm),
-          for (final c in categories) ...[
-            SelectableChip(
-              key: categoryKey(c.id),
-              label: c.name,
-              selected: filter.categoryIds.contains(c.id),
-              onSelected: (_) =>
-                  notifier.setFilter(filter.toggleCategory(c.id)),
-            ),
-            const SizedBox(width: Spacing.sm),
-          ],
         ],
       ),
+    );
+  }
+}
+
+/// 一个维度的入口。
+class _DimensionButton extends StatelessWidget {
+  const _DimensionButton({required this.dimension, required this.filter});
+
+  final FilterDimension dimension;
+  final FilterSpec filter;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = FilterKeys.countOf(filter, dimension);
+
+    return SelectableChip(
+      key: FilterBar.dimensionKey(dimension),
+      // 计数写进标签里，不做成角标：角标是纯图形，
+      // 屏幕阅读器读不出「状态筛了两项」（NFR-A11Y-01）。
+      label: count == 0 ? dimension.label : '${dimension.label} $count',
+      selected: count > 0,
+      onSelected: (_) => showFilterSheet(context, dimension),
     );
   }
 }

@@ -140,7 +140,19 @@ final class TaskOccurrence {
       start: DateAndMinute(date, startMinute ?? MinuteOfDay.midnight),
       // **走这一行自己的结束**，不是任务的 —— 重复任务的每一次
       // 各有各的结束（被例外挪过的那一次尤其）。
-      end: storedEnd(endDate: endDate, endMinute: endMinute),
+      //
+      // 全天且没写结束的，跨度是**一整天**，不是零长。
+      // 零长的后果在甘特上一眼可见：`_place` 会把它撑成一分钟，
+      // 于是一条全天任务画出来是一根几乎看不见的线。
+      // 用户报的原话：「全天的任务没有占满全格？」
+      //
+      // 「全天」这个词本身就是这个意思 —— 它占的是那一天，
+      // 而不是那一天的 00:00 这一瞬。
+      end:
+          storedEnd(endDate: endDate, endMinute: endMinute) ??
+          (isAllDay
+              ? DateAndMinute(date, MinuteOfDay(minutesPerDay - 1))
+              : null),
       stages: stages,
     );
   }

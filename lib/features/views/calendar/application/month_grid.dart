@@ -21,6 +21,49 @@ const int weeksPerMonthView = 6;
 
 /// 格子里的一天。
 @immutable
+/// 「哪一年的哪个月」。
+///
+/// 单独一个类型而不是拿 `PlanDate(y, m, 1)` 凑：**它是 provider family
+/// 的键**，而 family 的键要参与相等比较。用日期当键的话，
+/// 「2026-09-01」与「2026-09-15」是两个键、算出同一个月 ——
+/// 同一份布局被算两遍，跟手滑动时相邻页还会来回失效。
+///
+/// 顺带把跨年的月份加减收在这里（[addMonths]）。这段算术此前抄在
+/// 界面里，而它正是「从 12 月往后翻」会出错的那种地方。
+@immutable
+final class YearMonth {
+  const YearMonth(this.year, this.month);
+
+  final int year;
+
+  /// 1..12。
+  final int month;
+
+  /// 往后 [months] 个月（可为负）。
+  ///
+  /// 先折成「从 0 年 1 月起的第几个月」再拆回来 —— 直接给 month 加减
+  /// 之后判 `> 12` / `< 1` 的写法，跨两年以上就得循环，而循环写错的
+  /// 那一版在「往前翻 13 个月」时才露出来。
+  YearMonth addMonths(int months) {
+    final total = year * 12 + (month - 1) + months;
+    return YearMonth(total ~/ 12, total % 12 + 1);
+  }
+
+  /// 与 [other] 相差几个月。[addMonths] 的逆。
+  int differenceInMonths(YearMonth other) =>
+      (year - other.year) * 12 + (month - other.month);
+
+  @override
+  bool operator ==(Object other) =>
+      other is YearMonth && other.year == year && other.month == month;
+
+  @override
+  int get hashCode => Object.hash(year, month);
+
+  @override
+  String toString() => '$year-${month.toString().padLeft(2, '0')}';
+}
+
 final class MonthCell {
   const MonthCell({required this.date, required this.inMonth});
 

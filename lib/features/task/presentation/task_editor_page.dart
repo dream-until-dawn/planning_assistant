@@ -23,6 +23,7 @@ import '../../../core/time/plan_date.dart';
 import '../../../core/time/weekday.dart';
 import '../../../design/components/app_button.dart';
 import '../../../design/components/app_chip.dart';
+import '../../../design/components/undo_snackbar.dart';
 import '../../../design/theme/app_theme.dart';
 import '../../../design/tokens/dimensions.dart';
 import '../../../domain/entities/task.dart';
@@ -248,14 +249,7 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
     final messenger = ScaffoldMessenger.of(context);
     final undo = await ref.read(trashActionsProvider).delete(id);
     widget.onDeleted?.call();
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: const Text('已移到回收站'),
-          action: SnackBarAction(label: '撤销', onPressed: undo),
-        ),
-      );
+    showUndoSnackBar(messenger, '已移到回收站', onUndo: undo);
   }
 
   /// 归档这条任务（FR-TASK-08）。
@@ -268,14 +262,7 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
     final messenger = ScaffoldMessenger.of(context);
     final undo = await ref.read(archiveActionsProvider).archive(id);
     widget.onArchived?.call();
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: const Text('已归档'),
-          action: SnackBarAction(label: '撤销', onPressed: undo),
-        ),
-      );
+    showUndoSnackBar(messenger, '已归档', onUndo: undo);
   }
 
   /// 「今天」经时钟 + 时区换算器拿，**不用 `DateTime.now()`**。

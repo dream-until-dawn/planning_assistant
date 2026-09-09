@@ -182,7 +182,7 @@ class TaskCard extends StatelessWidget {
               return Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _DoneButton(
+                  DoneButton(
                     key: TaskCard.doneButtonKey,
                     isDone: data.isDone,
                     onPressed: onToggleDone,
@@ -344,8 +344,14 @@ class _Body extends StatelessWidget {
 ///
 /// **触控区固定 48×48**（无障碍硬要求，§5），而视觉圆钮小得多 ——
 /// 两者不是一回事：视觉跟着设计走，触控区跟着手指走。
-class _DoneButton extends StatelessWidget {
-  const _DoneButton({required this.isDone, this.onPressed, super.key});
+///
+/// ## 为什么是公开的
+///
+/// 时间轴把阶段摆成了独立的卡片，那张卡上也要一个「做完没有」。
+/// 用 Material 的 `Checkbox` 的话，同一屏上会同时出现方框与圆钮 ——
+/// 而它们表示的是同一件事。真机截图上一眼就能看出来。
+class DoneButton extends StatelessWidget {
+  const DoneButton({required this.isDone, this.onPressed, super.key});
 
   final bool isDone;
   final VoidCallback? onPressed;

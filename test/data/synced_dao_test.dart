@@ -52,6 +52,42 @@ void main() {
   });
   tearDown(() => db.close());
 
+  test('对照组：显式带 deletedAt 的 upsert 仍然打墓碑（tasks）', () async {
+    // 少了它，一个「upsert 一律清空 deletedAt」的实现能让上面那组
+    // 「墓碑复活」全绿 —— 而那会把 `_replaceStages` 打的墓碑全复活，
+    // 用户删掉的阶段会集体诈尸。
+    //
+    // 只验一张表：那条规则住在共用的 `SyncedDao.upsert` 里，
+    // 一张表验得到就够；上面那组「复活」才需要逐表跑
+    // （因为每张表的 companion 带不带 deletedAt 各不相同）。
+    final dao = TaskDao(db, writer, clock);
+    await dao.upsert(
+      TasksCompanion.insert(
+        id: 'buried-1',
+        title: '要埋掉的',
+        kind: 'single',
+        timeZoneId: 'Asia/Shanghai',
+      ),
+    );
+    await dao.softDelete('buried-1');
+
+    await dao.upsert(
+      TasksCompanion.insert(
+        id: 'buried-1',
+        title: '要埋掉的',
+        kind: 'single',
+        timeZoneId: 'Asia/Shanghai',
+        deletedAt: Value(DateTime.utc(2026).millisecondsSinceEpoch),
+      ),
+    );
+
+    expect(
+      (await dao.getAll()).map(dao.primaryKeyOf),
+      isNot(contains('buried-1')),
+      reason: '显式传的墓碑被 upsert 清掉了',
+    );
+  });
+
   // 每张可同步表一条。**加表必须加这里**，否则下面的一一对应断言会红。
   List<DaoCase> cases() => [
     (
@@ -198,6 +234,36 @@ void main() {
           ids,
           isNot(contains('dead-1')),
           reason: '${c.label} 的读取漏了 deletedAt IS NULL',
+        );
+      });
+
+      test('${c.label}：**再次 upsert 会把墓碑复活**', () async {
+        // ## 这条是真缺陷补出来的
+        //
+        // `upsert` 原来只更新 companion 里带的那几列，
+        // 而多数 companion 不带 `deletedAt` —— 于是软删过的行再写一次，
+        // 数据写进去了、墓碑还在，**每一次读取都把它过滤掉**。
+        //
+        // 在**主键是派生的**那几张表上这是常规路径，不是边角情况：
+        // 例外的行 id 是 `taskId#occurrenceKey`，
+        // 「完成 → 取消完成 → 再完成」写的就是同一行。
+        // 用户报的就是它：取消完成之后再点完成，界面上毫无反应。
+        await seedParents();
+        final dao = c.dao();
+        await dao.upsert(c.makeRow('zombie-1'));
+        await dao.softDelete('zombie-1');
+        expect(
+          (await dao.getAll()).map(dao.primaryKeyOf),
+          isNot(contains('zombie-1')),
+          reason: '前提：它现在是墓碑',
+        );
+
+        await dao.upsert(c.makeRow('zombie-1'));
+
+        expect(
+          (await dao.getAll()).map(dao.primaryKeyOf),
+          contains('zombie-1'),
+          reason: '${c.label} 再写一次之后仍然读不出来 —— 墓碑没被复活',
         );
       });
 
