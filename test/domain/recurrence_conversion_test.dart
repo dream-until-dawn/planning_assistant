@@ -23,6 +23,7 @@ library;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
+import 'package:planning_assistant/domain/entities/occurrence.dart';
 import 'package:planning_assistant/domain/entities/stage.dart';
 import 'package:planning_assistant/domain/entities/stage_occurrence_state.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
@@ -94,13 +95,56 @@ void main() {
     test('**没动过的阶段不落行**', () {
       // data-model §3.5：只有被交互过的 (阶段, 发生) 才落行。
       // 给每个阶段都造一行 pending，等于把「还没动过」也写成数据。
+      //
+      // **必须混一个动过的**：全 pending 时整个迁移是空的，
+      // 断言「一行都没有」就永远成立 —— 那时它验的是「没迁移」，
+      // 不是「没动过的不落行」。
       final r = convertRecurrenceMode(
         _task(recurring: true),
+        was: false,
+        stages: [
+          _stages[0].copyWith(status: TaskStatus.done, completedAt: _done),
+          _stages[1],
+        ],
+        states: const [],
+      )!;
+      expect([for (final st in r.states) st.stageId], ['s1']);
+    });
+
+    test('**任务自己的状态也搬**：做了一半的任务改得成重复', () {
+      // 重复任务的 `tasks.status` 恒为 pending（data-model §4.3）。
+      // 不搬的话 `checkInvariants` 当场拦下 —— 一条做了一半的任务
+      // 根本改不成重复，而用户看到的只是「保存没反应」。
+      final r = convertRecurrenceMode(
+        _task(recurring: true).copyWith(status: TaskStatus.inProgress),
         was: false,
         stages: _stages,
         states: const [],
       )!;
-      expect(r.states, isEmpty);
+
+      expect(r.task.status, TaskStatus.pending);
+      expect(r.overrides, hasLength(1));
+      expect(r.overrides.single.key.value, _first.value);
+      expect(r.overrides.single.status, OccurrenceStatus.inProgress);
+      expect(
+        () => r.task.checkInvariants(),
+        returnsNormally,
+        reason: '搬完之后必须过得了不变量，否则这条任务存不下去',
+      );
+    });
+
+    test('已完成的任务改成重复：完成落到第一次上', () {
+      final r = convertRecurrenceMode(
+        _task(recurring: true)
+            .copyWith(status: TaskStatus.done, completedAt: _done),
+        was: false,
+        stages: const [],
+        states: const [],
+      )!;
+
+      expect(r.task.status, TaskStatus.pending);
+      expect(r.task.completedAt, isNull, reason: 'completedAt 与 status 同进同退');
+      expect(r.overrides.single.status, OccurrenceStatus.done);
     });
   });
 
@@ -159,12 +203,26 @@ void main() {
       );
     });
 
-    test('没有阶段就没什么可迁', () {
+    test('没有阶段、状态也没动过，就没什么可迁', () {
+      // 判据是「结果里有没有东西」，不是「有没有阶段」——
+      // 上面那条「已完成的任务改成重复」没有阶段，照样要迁。
       expect(
         convertRecurrenceMode(
           _task(recurring: true),
           was: false,
           stages: const [],
+          states: const [],
+        ),
+        isNull,
+      );
+    });
+
+    test('阶段全没动过、状态也是 pending → 同样不迁', () {
+      expect(
+        convertRecurrenceMode(
+          _task(recurring: true),
+          was: false,
+          stages: _stages,
           states: const [],
         ),
         isNull,

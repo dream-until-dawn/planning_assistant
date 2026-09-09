@@ -1,0 +1,323 @@
+/// 阶段与事项的**勾选状态双向同步**（用户第 6 条、task-lifecycle §4）。
+///
+/// ## 规则
+///
+///  · 勾事项 → 它的阶段都跟着勾；
+///  · 勾阶段 → **全部勾完**事项才算完成；
+///  · 两个方向都**可逆**（用户明确要的）。
+///
+/// ## 为什么要走界面而不是只测纯函数
+///
+/// `deriveStatusFromStages` 在领域层躺了很久，单测齐全，
+/// **生产代码一个调用点都没有** —— 推导写好了，界面够不着。
+/// 这个仓库反复撞上同一种缺陷（`isOverdue`、非重复的 `setStageDone`、
+/// `primaryText` 的对比度…），它们的共同点是：
+/// 纯函数那一侧全绿，而用户点下去什么也不会发生。
+///
+/// 所以这一份从卡片/弹层点起，一路验到库里的行。
+@TestOn('vm')
+library;
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:planning_assistant/app.dart';
+import 'package:planning_assistant/core/time/plan_date.dart';
+import 'package:planning_assistant/design/components/task_card.dart';
+import 'package:planning_assistant/features/settings/application/registry.dart';
+import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/task/application/default_duration.dart';
+import 'package:planning_assistant/features/task/application/recurrence_draft.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
+import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
+import 'package:planning_assistant/features/views/calendar/presentation/calendar_page.dart';
+import 'package:planning_assistant/features/views/shared/application/view_kind.dart';
+import 'package:planning_assistant/features/views/shared/application/view_shared_state.dart';
+import 'package:planning_assistant/features/views/task_list/presentation/occurrence_actions_sheet.dart';
+
+import '../support/app_harness.dart';
+
+const _today = PlanDate(2026, 9, 7);
+const _tomorrow = PlanDate(2026, 9, 8);
+
+Future<Harness> _pumpApp(WidgetTester tester) async {
+  await setScreenSize(tester, const Size(390, 844));
+  final harness = appHarness();
+  await tester.pumpWidget(
+    ProviderScope(overrides: harness.overrides, child: PlanningAssistantApp()),
+  );
+  await tester.pumpAndSettle();
+  // 与 `stage_occurrence_test` 同一个理由：默认 +24 小时会让每天重复的
+  // 两次在日历上叠着，而这一份要分别点开今天和明天那一次。
+  await seedSetting(tester, defaultTaskDuration, DefaultTaskDuration.endOfDay);
+  return harness;
+}
+
+/// 建一条带两个阶段的任务。[recurring] 为真时每天重复。
+Future<void> _createStaged(
+  WidgetTester tester, {
+  bool recurring = false,
+  List<String> names = const ['打包', '搬运'],
+}) async {
+  await tapCreate(
+    tester,
+    recurring ? TaskShape.recurringStaged : TaskShape.staged,
+  );
+  await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
+  await tester.pump();
+
+  for (final name in names) {
+    await tapVisible(tester, TaskEditorPage.addStageKey);
+    final fields = find.descendant(
+      of: find.byKey(TaskEditorPage.stageSectionKey),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(fields.last, name);
+    await tester.pump();
+  }
+
+  if (recurring) {
+    await tapVisible(
+      tester,
+      TaskEditorPage.frequencyKey(RecurrenceFrequency.daily),
+    );
+  }
+  await tapVisible(tester, TaskEditorPage.saveButtonKey);
+}
+
+Future<void> _goToDay(WidgetTester tester, PlanDate date) async {
+  if (find.byKey(CalendarPage.gridKey).evaluate().isEmpty) {
+    await tapVisible(tester, AppShell.viewTabKey(ViewKind.calendar));
+  }
+  ProviderScope.containerOf(tester.element(find.byType(AppShell)))
+      .read(viewSharedStateProvider.notifier)
+      .focusDate(date);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _openSheet(WidgetTester tester) async {
+  await tester.tap(find.byType(TaskCard).first);
+  await tester.pumpAndSettle();
+  expect(find.byKey(OccurrenceSheetKeys.sheet), findsOneWidget);
+}
+
+Future<void> _closeSheet(WidgetTester tester) async {
+  final sheet = find.byKey(OccurrenceSheetKeys.sheet);
+  if (sheet.evaluate().isEmpty) return;
+  Navigator.of(tester.element(sheet)).pop();
+  await tester.pumpAndSettle();
+}
+
+/// 弹层里勾/取消某一步。
+Future<void> _tick(WidgetTester tester, String stageId) async {
+  await tapVisible(tester, OccurrenceSheetKeys.stage(stageId));
+  await tester.pumpAndSettle();
+}
+
+/// 弹层里那个勾选框现在是勾着的吗。
+bool _ticked(WidgetTester tester, String stageId) => tester
+    .widget<CheckboxListTile>(find.byKey(OccurrenceSheetKeys.stage(stageId)))
+    .value!;
+
+Future<List<String>> _stageIds(Harness harness) async {
+  final rows = await harness.db.select(harness.db.stages).get();
+  rows.sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
+  return rows.map((r) => r.id).toList();
+}
+
+/// 库里阶段那一列的状态，按 orderIndex。
+Future<List<String>> _stageStatuses(Harness harness) async {
+  final rows = await harness.db.select(harness.db.stages).get();
+  rows.sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
+  return [for (final r in rows) r.status];
+}
+
+Future<String> _taskStatus(Harness harness) async =>
+    (await harness.db.select(harness.db.tasks).get()).single.status;
+
+/// 卡片上那个圆钮显示的是「已完成」吗。
+///
+/// 重复任务的 `tasks.status` 恒为 pending，这一行是不是完成只看
+/// 这一次 —— 所以查库没用，得看卡片自己算出来的那个值。
+bool _cardDone(WidgetTester tester) =>
+    tester.widget<DoneButton>(find.byKey(TaskCard.doneButtonKey)).isDone;
+
+void main() {
+  group('不重复的阶段事项', () {
+    testAppWidgets('勾事项 → 阶段都跟着勾；再取消 → 阶段都跟着回来（可逆）', (tester) async {
+      final harness = await _pumpApp(tester);
+      await _createStaged(tester);
+
+      await tester.tap(find.byKey(TaskCard.doneButtonKey));
+      await tester.pumpAndSettle();
+      expect(await _taskStatus(harness), 'done');
+      expect(await _stageStatuses(harness), ['done', 'done'], reason: '阶段没跟着勾');
+
+      await tester.tap(find.byKey(TaskCard.doneButtonKey));
+      await tester.pumpAndSettle();
+      expect(await _taskStatus(harness), 'pending');
+      expect(await _stageStatuses(harness), [
+        'pending',
+        'pending',
+      ], reason: '取消完成时阶段没回滚 —— 用户要的是可逆');
+    });
+
+    testAppWidgets('**勾满了才算完成**：勾一个不算，勾完第二个才算', (tester) async {
+      final harness = await _pumpApp(tester);
+      await _createStaged(tester);
+      final stages = await _stageIds(harness);
+
+      await _openSheet(tester);
+      await _tick(tester, stages[0]);
+      await _closeSheet(tester);
+      expect(
+        await _taskStatus(harness),
+        isNot('done'),
+        reason: '只勾了一半就把事项标完成了',
+      );
+
+      await _openSheet(tester);
+      await _tick(tester, stages[1]);
+      await _closeSheet(tester);
+      expect(await _taskStatus(harness), 'done', reason: '全勾完了，事项还不算完成');
+    });
+
+    testAppWidgets('取消其中一个阶段 → 事项不再是完成', (tester) async {
+      final harness = await _pumpApp(tester);
+      await _createStaged(tester);
+      final stages = await _stageIds(harness);
+
+      await tester.tap(find.byKey(TaskCard.doneButtonKey));
+      await tester.pumpAndSettle();
+      expect(await _taskStatus(harness), 'done', reason: '前提：先完成了');
+
+      await _openSheet(tester);
+      await _tick(tester, stages[0]);
+      await _closeSheet(tester);
+      expect(await _taskStatus(harness), isNot('done'));
+    });
+
+    testAppWidgets('**弹层里的勾选框认得不重复任务的状态**', (tester) async {
+      // 状态有两个存储位置：不重复在 `Stage.status`，重复在那张表。
+      // 弹层一度只会读后者（对不重复的行拿到一张空表），于是
+      // **不重复任务的勾选框永远是空的** —— 勾完关掉再打开，还是空的。
+      final harness = await _pumpApp(tester);
+      await _createStaged(tester);
+      final stages = await _stageIds(harness);
+
+      await _openSheet(tester);
+      await _tick(tester, stages[0]);
+      expect(_ticked(tester, stages[0]), isTrue, reason: '勾完当场就没打上勾');
+      await _closeSheet(tester);
+
+      await _openSheet(tester);
+      expect(_ticked(tester, stages[0]), isTrue, reason: '重新打开，勾没了');
+      expect(_ticked(tester, stages[1]), isFalse);
+      await _closeSheet(tester);
+    });
+
+    testAppWidgets('**撤销保住已经勾过的那一步**', (tester) async {
+      // 撤销若只是发一条反向的状态命令，走的是同一套级联
+      // （已完成的全回 pending），它不知道哪一步本来就勾着 ——
+      // 于是「完成 → 撤销」把进度从 1/2 抹成 0/2。
+      final harness = await _pumpApp(tester);
+      await _createStaged(tester);
+      final stages = await _stageIds(harness);
+
+      await _openSheet(tester);
+      await _tick(tester, stages[0]);
+      await _closeSheet(tester);
+
+      await tester.tap(find.byKey(TaskCard.doneButtonKey));
+      await tester.pumpAndSettle();
+      expect(await _stageStatuses(harness), ['done', 'done']);
+
+      await tester.tap(find.text('撤销'));
+      await tester.pumpAndSettle();
+      expect(await _stageStatuses(harness), [
+        'done',
+        'pending',
+      ], reason: '撤销把用户自己勾的那一步也抹了');
+    });
+  });
+
+  group('重复的阶段事项：每一次各算各的', () {
+    testAppWidgets('把某一次标完成 → 只有那一次的阶段跟着勾', (tester) async {
+      final harness = await _pumpApp(tester);
+      await _createStaged(tester, recurring: true);
+      final stages = await _stageIds(harness);
+
+      await _goToDay(tester, _today);
+      await _openSheet(tester);
+      await tapVisible(tester, OccurrenceSheetKeys.toggleDone);
+      await tester.pumpAndSettle();
+
+      await _openSheet(tester);
+      expect(_ticked(tester, stages[0]), isTrue);
+      expect(_ticked(tester, stages[1]), isTrue);
+      await _closeSheet(tester);
+
+      await _goToDay(tester, _tomorrow);
+      await _openSheet(tester);
+      for (final id in stages) {
+        expect(_ticked(tester, id), isFalse, reason: '另一次也跟着勾上了');
+      }
+      await _closeSheet(tester);
+
+      expect(await _stageStatuses(harness), [
+        'pending',
+        'pending',
+      ], reason: '重复任务的 Stage.status 恒为 pending（data-model §4.3）');
+    });
+
+    testAppWidgets('勾满某一次的阶段 → 那一次算完成，别的次不动', (tester) async {
+      final harness = await _pumpApp(tester);
+      await _createStaged(tester, recurring: true);
+      final stages = await _stageIds(harness);
+
+      await _goToDay(tester, _today);
+      await _openSheet(tester);
+      await _tick(tester, stages[0]);
+      await _closeSheet(tester);
+      expect(_cardDone(tester), isFalse, reason: '只勾了一半，这一次就算完成了');
+
+      await _openSheet(tester);
+      await _tick(tester, stages[1]);
+      await _closeSheet(tester);
+      expect(_cardDone(tester), isTrue, reason: '全勾完了，这一次还不算完成');
+
+      await _goToDay(tester, _tomorrow);
+      expect(_cardDone(tester), isFalse, reason: '明天那一次被今天的进度带成完成了');
+    });
+
+    testAppWidgets('取消某一次的完成 → 只清那一次的阶段', (tester) async {
+      final harness = await _pumpApp(tester);
+      await _createStaged(tester, recurring: true);
+      final stages = await _stageIds(harness);
+
+      await _goToDay(tester, _today);
+      await _openSheet(tester);
+      await tapVisible(tester, OccurrenceSheetKeys.toggleDone);
+      await tester.pumpAndSettle();
+
+      await _openSheet(tester);
+      await tapVisible(tester, OccurrenceSheetKeys.toggleDone);
+      await tester.pumpAndSettle();
+
+      await _openSheet(tester);
+      for (final id in stages) {
+        expect(_ticked(tester, id), isFalse, reason: '取消完成之后阶段没回滚');
+      }
+      await _closeSheet(tester);
+
+      final states = await harness.db
+          .select(harness.db.stageOccurrenceStates)
+          .get();
+      expect(
+        states.where((s) => s.status == 'done'),
+        isEmpty,
+        reason: '库里还留着 done 的阶段状态',
+      );
+    });
+  });
+}

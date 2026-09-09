@@ -140,7 +140,7 @@ void main() {
     });
 
     testAppWidgets('单事项：默认结束是开始 +24 小时（配置项的默认档）', (tester) async {
-      // `task.defaultDuration` 默认 24 小时 —— 于是默认新建的任务
+      // `behavior.defaultDuration` 默认 24 小时 —— 于是默认新建的任务
       // **跨午夜**。这一条把那个后果钉住：它是用户选的默认，
       // 不是谁手滑写的。
       final harness = await _pump(tester);

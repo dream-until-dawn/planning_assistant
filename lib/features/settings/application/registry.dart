@@ -80,7 +80,7 @@ SettingSpec<T> _enumSpec<T>({
 /// 一路往下滚着找的。把一条 `behavior` 的项插在 `view` 那几条中间，
 /// 它渲染的位置在页面靠下、而下一条 `view` 的项在它上面 ——
 /// 滚动条已经到底，再往下滚也回不去，那条用例会报「找不到」。
-/// 加 `task.defaultDuration` 时就是这么红的一次。
+/// 加 `behavior.defaultDuration` 时就是这么红的一次。
 final List<SettingSpecBase> settingsRegistry = [
   themeMode,
   cornerStyle,
@@ -312,7 +312,7 @@ final SettingSpec<int> trashRetentionDays = SettingSpec<int>(
 ///
 /// 档位的取值与「为什么不是一个分钟数」写在 [DefaultTaskDuration] 上。
 final SettingSpec<DefaultTaskDuration> defaultTaskDuration = _enumSpec(
-  key: 'task.defaultDuration',
+  key: 'behavior.defaultDuration',
   defaultValue: DefaultTaskDuration.oneDay,
   options: [for (final v in DefaultTaskDuration.values) (v, v.label)],
   storageKeyOf: (v) => v.storageKey,

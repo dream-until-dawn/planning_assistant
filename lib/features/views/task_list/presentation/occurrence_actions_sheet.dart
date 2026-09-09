@@ -22,7 +22,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../design/tokens/dimensions.dart';
-import '../../../../domain/services/stage_occurrence_status.dart';
 import '../../../../domain/value_objects/task_status.dart';
 import '../../shared/application/task_occurrence.dart';
 import '../../shared/application/task_providers.dart';
@@ -241,8 +240,25 @@ class _StageChecklist extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
     final actions = ref.read(occurrenceActionsProvider);
-    final states =
-        ref.watch(stageStatesByTaskProvider)[row.taskId]?[row.key] ?? const {};
+
+    // **弹层拿到的 `row` 是打开那一刻的快照**，勾一下之后它不会自己变新。
+    //
+    // 重复那一半原本靠现读 `stageStatesByTaskProvider` 绕开了这件事；
+    // 不重复的任务状态在 `Stage.status` 上，那条路上什么都没读 ——
+    // 于是它的勾选框**打开是空的、勾完还是空的**。
+    // （更准的说法：那里把 `occurrenceStates` 传成了空表而不是 null，
+    // 而空表的意思是「这一次一步都没做」。）
+    //
+    // 两半一起解决：拿新的阶段与新的状态**重建这一行**，再问
+    // `row.stageStatus` —— 「状态该读哪一份」的分流仍然只有那一处。
+    final live = TaskOccurrence(
+      task: row.task,
+      occurrence: row.occurrence,
+      stages: ref.watch(stagesByTaskProvider)[row.taskId] ?? row.stages,
+      stageStates:
+          ref.watch(stageStatesByTaskProvider)[row.taskId]?[row.key] ??
+          const {},
+    );
 
     return Column(
       key: OccurrenceSheetKeys.stageSection,
@@ -258,16 +274,16 @@ class _StageChecklist extends ConsumerWidget {
           ),
           child: Text('这一次的进度', style: text.bodySmall),
         ),
-        for (final stage in row.stages)
+        for (final stage in live.stages)
           CheckboxListTile(
             key: OccurrenceSheetKeys.stage(stage.id),
             dense: true,
             controlAffinity: ListTileControlAffinity.leading,
-            value:
-                stageStatusFor(stage, occurrenceStates: states) ==
-                TaskStatus.done,
+            value: live.stageStatus(stage) == TaskStatus.done,
             title: Text(stage.title),
-            onChanged: (v) => actions.setStageDone(row, stage.id, v ?? false),
+            // **喂 `live` 不是 `row`**：不重复那条路要拿这一行的全部阶段
+            // 去整表替换，用快照的话，勾第二步会把第一步写回未完成。
+            onChanged: (v) => actions.setStageDone(live, stage.id, v ?? false),
           ),
         const Divider(height: 1),
       ],

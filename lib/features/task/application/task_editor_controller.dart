@@ -479,7 +479,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
   ///
   /// 「下一个整点」是用户定的（2026-09-09）：新建时给一个当场就能用的
   /// 起点，比给「此刻 14:37」这种数好 —— 没有人把事情排在 14:37。
-  /// 结束由配置项 `task.defaultDuration` 决定（默认 +24 小时）。
+  /// 结束由配置项 `behavior.defaultDuration` 决定（默认 +24 小时）。
   TaskDraft _newDraft(TaskShape shape, NewTaskSeed? seed) {
     final categoryId = ref.read(defaultCategoryIdProvider);
     if (!shape.needsSchedule) {

@@ -49,16 +49,20 @@
 /// 用户在保存**之前**就看见了。
 library;
 
+import '../entities/occurrence.dart';
+import '../entities/occurrence_override.dart';
 import '../entities/stage.dart';
 import '../entities/stage_occurrence_state.dart';
 import '../entities/task.dart';
 import '../value_objects/occurrence_key.dart';
 import '../value_objects/task_status.dart';
 
-/// 一次切换要写回的东西。两张表都可能变，所以一起给。
+/// 一次切换要写回的东西。四张表都可能变，所以一起给。
 typedef RecurrenceConversion = ({
+  Task task,
   List<Stage> stages,
   List<StageOccurrenceState> states,
+  List<OccurrenceOverride> overrides,
 });
 
 /// 算出切换后要写的阶段与状态；不需要迁移时返回 null。
@@ -71,7 +75,7 @@ RecurrenceConversion? convertRecurrenceMode(
   required List<StageOccurrenceState> states,
 }) {
   final now = updated.isRecurring;
-  if (was == now || stages.isEmpty) return null;
+  if (was == now) return null;
 
   // 没有开始时刻就没有「第一次」可指。重复任务必须有日期
   // （`needsDateForRecurrence`），所以这一支实际到不了 ——
@@ -83,10 +87,53 @@ RecurrenceConversion? convertRecurrenceMode(
   if (now) {
     // 单项 → 重复：把阶段自己的状态搬到「第一次」上，阶段归零。
     //
+    // **任务自己的状态也要搬**，理由一模一样：重复任务的
+    // `tasks.status` 恒为 pending（data-model §4.3），真实状态落在
+    // `occurrence_overrides`。不搬的话 `checkInvariants` 当场拦下 ——
+    // 一条做了一半（或已完成）的任务**根本改不成重复**，
+    // 而用户看到的只是「保存没反应」。
+    //
+    // 这条一直是漏的：以前只有显式标完成才可能让它非 pending，
+    // 而那条路上没人会顺手改成重复。阶段状态开始反推父任务状态之后
+    // （§4.1），勾一个阶段就够了，于是它天天都撞得上。
+    //
     // **只搬非 pending 的**：给每个阶段都造一行 pending 的状态，
     // 等于把「还没动过」也落成数据 —— 那张表的约定是
     // 「只有被交互过的 (阶段, 发生) 才落行」（data-model §3.5）。
+    // 任务状态那条例外同理，pending 就不落行。
+    final moved = updated.status != TaskStatus.pending;
+    final states = [
+      for (final s in stages)
+        if (s.status != TaskStatus.pending)
+          StageOccurrenceState(
+            id: StageOccurrenceState.idFor(s.id, first),
+            taskId: updated.id,
+            stageId: s.id,
+            occurrenceKey: first,
+            status: s.status,
+            completedAt: s.completedAt,
+          ),
+    ];
+
+    // 一条都没搬就当没这回事：调用方会走普通的 `saveTask`，
+    // 少开一个事务，也少写一批一模一样的行。
+    // **判据是「结果里有没有东西」，不是「有没有阶段」**——
+    // 一条没有阶段但已完成的任务照样要搬。
+    if (!moved && states.isEmpty) return null;
+
     return (
+      task: moved
+          ? updated.copyWith(status: TaskStatus.pending, completedAt: null)
+          : updated,
+      overrides: [
+        if (moved)
+          OccurrenceOverride(
+            taskId: updated.id,
+            key: first,
+            action: OverrideAction.modify,
+            status: OccurrenceStatus.fromWireName(updated.status.wireName),
+          ),
+      ],
       stages: [
         for (final s in stages)
           if (s.status == TaskStatus.pending)
@@ -94,18 +141,7 @@ RecurrenceConversion? convertRecurrenceMode(
           else
             s.copyWith(status: TaskStatus.pending, completedAt: null),
       ],
-      states: [
-        for (final s in stages)
-          if (s.status != TaskStatus.pending)
-            StageOccurrenceState(
-              id: StageOccurrenceState.idFor(s.id, first),
-              taskId: updated.id,
-              stageId: s.id,
-              occurrenceKey: first,
-              status: s.status,
-              completedAt: s.completedAt,
-            ),
-      ],
+      states: states,
     );
   }
 

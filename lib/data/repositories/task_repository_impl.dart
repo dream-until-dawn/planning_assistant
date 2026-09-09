@@ -13,6 +13,7 @@ import 'package:drift/drift.dart';
 
 import '../../core/time/clock.dart';
 import '../../domain/entities/checklist_item.dart';
+import '../../domain/entities/occurrence.dart';
 import '../../domain/entities/occurrence_override.dart';
 import '../../domain/entities/stage.dart';
 import '../../domain/entities/stage_occurrence_state.dart';
@@ -20,6 +21,7 @@ import '../../domain/entities/task.dart';
 import '../../domain/policies/task_lifecycle.dart';
 import '../../domain/repositories/task_repository.dart';
 import '../../domain/services/all_day_conversion.dart';
+import '../../domain/services/recurrence_conversion.dart';
 import '../../domain/value_objects/occurrence_key.dart';
 import '../database/app_database.dart';
 import '../database/dao/synced_dao.dart';
@@ -204,19 +206,27 @@ final class DriftTaskRepository implements TaskRepository {
   }
 
   @override
-  Future<void> applyRecurrenceConversion(
-    Task task,
-    List<Stage> stages,
-    List<StageOccurrenceState> states,
-  ) async {
-    task.checkInvariants();
+  Future<void> applyRecurrenceConversion(RecurrenceConversion c) async {
+    c.task.checkInvariants();
     await _db.transaction(() async {
-      await _tasks.upsert(task.toCompanion());
-      for (final s in stages) {
+      await _tasks.upsert(c.task.toCompanion());
+      for (final s in c.stages) {
         await _stages.upsert(s.toCompanion());
       }
-      for (final s in states) {
+      for (final s in c.states) {
         await _stageStates.upsert(stageStateToCompanion(s));
+      }
+      for (final o in c.overrides) {
+        // 任务原来的状态搬到「第一次」上。`completedAt` 跟着状态走，
+        // 与 `saveOverride` 同一条不变量。
+        await _overrides.upsert(
+          occurrenceOverrideToCompanion(
+            o,
+            completedAt: o.status == OccurrenceStatus.done
+                ? _clock.nowUtc()
+                : null,
+          ),
+        );
       }
     });
   }

@@ -1,4 +1,4 @@
-/// 新建单事项时，默认的结束离开始多远（配置项 `task.defaultDurationMinutes`）。
+/// 新建单事项时，默认的结束离开始多远（配置项 `behavior.defaultDuration`）。
 ///
 /// ## 为什么是枚举而不是「一个分钟数」
 ///

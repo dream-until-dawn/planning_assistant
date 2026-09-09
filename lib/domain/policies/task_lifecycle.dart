@@ -90,16 +90,31 @@ Task unarchive(Task task) {
 TaskStatus? deriveStatusFromStages(
   List<Stage> stages, {
   StageDerivationConfig config = kDefaultDerivationConfig,
-}) {
-  if (stages.isEmpty) return null;
+}) => deriveStatusFromStageStatuses([
+  for (final s in stages) s.status,
+], config: config);
 
-  final done = stages.where((s) => s.status == TaskStatus.done).length;
-  final skipped = stages.where((s) => s.status == TaskStatus.skipped).length;
+/// 同一条推导，但只吃**一串状态**。
+///
+/// 拆出来是因为阶段状态有两个存储位置（判据见 `stageStatusFor`）：
+/// 不重复的在 `Stage.status`，重复的在 `StageOccurrenceState`。
+/// 两边都要把「阶段 → 父」这一步算一遍，而各算各的话，
+/// 迟早出现「不重复的任务全勾完变已完成、重复的那次不变」。
+///
+/// 判据只此一份，两边各自负责把状态取出来。
+TaskStatus? deriveStatusFromStageStatuses(
+  List<TaskStatus> statuses, {
+  StageDerivationConfig config = kDefaultDerivationConfig,
+}) {
+  if (statuses.isEmpty) return null;
+
+  final done = statuses.where((s) => s == TaskStatus.done).length;
+  final skipped = statuses.where((s) => s == TaskStatus.skipped).length;
   final settled = done + skipped;
 
   // 顺序不能随便调：全 skipped 也满足「settled == length」，
   // 必须先分辨出「一个都没 done」这种情况。
-  if (settled == stages.length) {
+  if (settled == statuses.length) {
     return done > 0 ? TaskStatus.done : TaskStatus.skipped;
   }
   if (settled == 0) return TaskStatus.pending;
@@ -111,7 +126,47 @@ TaskStatus? deriveStatusFromStages(
       : TaskStatus.pending;
 }
 
-/// 显式把父任务标完成：**所有未完成阶段一并标 done**（§4.2、用例 L-05）。
+/// 把阶段状态**投影**到父任务上（§4.1）。
+///
+/// 与 [applyStatusChange] 的区别是**不查迁移表**。迁移表约束的是
+/// 「用户能直接按哪一下」—— `done → skipped` 被禁掉，是因为直接按出这一步
+/// 多半是误操作。而这里的值不是用户选的，是阶段算出来的：把最后一个 done
+/// 的阶段改成「跳过」之后，父任务除了 skipped 没有别的值可取。
+/// 那时候抛异常，用户看到的是「这个阶段改不动」——
+/// 一条给误操作用的护栏，挡住了一次完全正当的操作。
+///
+/// 三种情况原样返回：
+///  · **没有阶段** —— 推导给不出值，父任务的状态本来就是用户自己设的；
+///  · **重复任务** —— `status` 恒为 pending，真实状态按每一次存（§4.3）；
+///  · **已归档** —— 归档期间状态冻结（§2.2）。这时跟着阶段改的话，
+///    「取消归档还原成什么」会被悄悄改掉。
+Task projectStagesOntoTask(
+  Task task,
+  List<Stage> stages, {
+  required DateTime now,
+  StageDerivationConfig config = kDefaultDerivationConfig,
+}) {
+  if (task.isRecurring || task.isArchived) return task;
+  // 墓碑不算数：整表替换回来的列表里带着刚被删掉的阶段，
+  // 把它们算进去，删掉一个未完成的阶段不会让任务变完成。
+  final alive = [
+    for (final s in stages)
+      if (s.deletedAt == null) s,
+  ];
+  final derived = deriveStatusFromStages(alive, config: config);
+  if (derived == null || derived == task.status) return task;
+  return task.copyWith(
+    status: derived,
+    completedAt: derived == TaskStatus.done ? (task.completedAt ?? now) : null,
+  )..checkInvariants();
+}
+
+/// 显式把父任务标完成：**所有待办阶段一并标 done**（§4.2、用例 L-05）。
+///
+/// **`skipped` 的阶段不动。** 「跳过」是用户对那一步的明确判断
+/// （这一步不做了），把它盖成 done 是在替他改结论。
+/// 全 settled 且有 done 的组合推导出来照样是 done（[deriveStatusFromStages]），
+/// 所以放着不动不会让父子状态对不上。
 ({Task task, List<Stage> stages}) completeTaskWithStages(
   Task task,
   List<Stage> stages, {
@@ -119,7 +174,7 @@ TaskStatus? deriveStatusFromStages(
 }) {
   final updated = [
     for (final s in stages)
-      s.status == TaskStatus.done
+      s.status == TaskStatus.done || s.status == TaskStatus.skipped
           ? s
           : s.copyWith(status: TaskStatus.done, completedAt: now),
   ];
@@ -129,20 +184,36 @@ TaskStatus? deriveStatusFromStages(
   );
 }
 
-/// 取消父任务完成：**阶段状态保持不变**（§4.2、用例 L-06）。
+/// 取消父任务完成：**已完成的阶段一并回到 pending**（§4.2、用例 L-06）。
 ///
-/// 这条不对称是刻意的 —— 破坏用户已记录的阶段进度，比留下「父任务未完成
-/// 但阶段全完成」这种不一致更糟。UI 显示为「部分完成」。
+/// ## 这里原本是相反的
 ///
-/// 将来若有人「顺手统一一下」把它改成回滚阶段，L-06 会变红。
-({Task task, List<Stage> stages}) uncompleteTaskKeepingStages(
+/// 旧规则是「取消父任务时不回滚阶段」，理由写的是
+/// 「破坏用户已记录的阶段进度比留下不一致更糟」。
+/// 那条理由**不成立**：走到「取消完成」这一步，父任务是 done，
+/// 而 done 只有两种来法 —— 阶段全 settled 推出来的，或者
+/// [completeTaskWithStages] 盖上去的。前者阶段全都已完成，没有「进度」
+/// 可破坏；后者那份进度在**标完成的那一下就已经被盖掉了**。
+/// 旧规则保住的是级联自己写下的值，不是用户记的。
+///
+/// 现在两个方向对称：勾上 → 待办阶段全 done，取消 → 已完成阶段全回 pending。
+///
+/// `skipped` 同样不动，与 [completeTaskWithStages] 一致 ——
+/// 一来一回之后跳过的还是跳过。
+({Task task, List<Stage> stages}) uncompleteTaskWithStages(
   Task task,
   List<Stage> stages, {
   required DateTime now,
 }) {
+  final updated = [
+    for (final s in stages)
+      s.status == TaskStatus.done
+          ? s.copyWith(status: TaskStatus.pending, completedAt: null)
+          : s,
+  ];
   return (
     task: applyStatusChange(task, TaskStatus.pending, now: now),
-    stages: stages,
+    stages: updated,
   );
 }
 

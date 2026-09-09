@@ -98,6 +98,22 @@ final class OccurrenceOverride {
   bool get movesOccurrence =>
       planDateOverride != null || startMinuteOverride != null;
 
+  /// 除了状态，这一行还改了别的没有。
+  ///
+  /// 用来分辨「取消完成」该**清一格**还是**删整行**：
+  /// 什么都没改的行删掉才对（`removeOverride` 的注释：从没动过与
+  /// 动过又撤回，对用户是同一件事）；而改过标题或挪过日期的行，
+  /// 删掉等于顺手把那些也撤了。
+  ///
+  /// `action` 不算在内：一条 `skip` 行清掉状态之后本来就该没了。
+  bool get hasEditsBesidesStatus =>
+      titleOverride != null ||
+      noteOverride != null ||
+      planDateOverride != null ||
+      startMinuteOverride != null ||
+      endDateOverride != null ||
+      endMinuteOverride != null;
+
   @override
   String toString() =>
       'OccurrenceOverride($taskId, $key, ${action.name}'
