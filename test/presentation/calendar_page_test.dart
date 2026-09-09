@@ -48,6 +48,7 @@ Future<void> _pump(
   List<Task> tasks = const [],
   Map<String, Object?> settings = const {},
   TimeGranularity granularity = TimeGranularity.month,
+  PlanDate today = _today,
 }) async {
   await setScreenSize(tester, const Size(390, 844));
   await tester.pumpWidget(
@@ -55,7 +56,7 @@ Future<void> _pump(
       overrides: viewPipelineOverrides(
         tasks: tasks,
         settings: settings,
-        today: _today,
+        today: today,
       ),
       child: MaterialApp(
         theme: AppTheme.light(),
@@ -324,88 +325,60 @@ void main() {
     });
   });
 
-  group('月/周切换：这个旋钮界面上够得着', () {
-    // `granularity` 是共享状态里的字段，日历读它、甘特也要读它，
-    // 但**一度没有任何地方写它** —— 用户永远停在默认那一档，
-    // 月视图根本到不了。testing-strategy §1.6 那一族的又一次。
+  group('FR-VIEW-03 顶上要写着现在是哪个月', () {
+    // 用户报的原话：「看不出当前月份，左右滑动后就看不出现在几月份」。
+    // 格子里只有日号，1 号到 30 号翻过去长得一模一样 ——
+    // 划两下之后没有任何线索告诉你划到哪儿了。
+    //
+    // **这一组原来钉的是月/周切换**，而周视图按用户要求去掉了
+    //（「不需要『周』固定使用月即可」），空出来的位置给了月份标题。
 
-    testAppWidgets('默认是月视图（§3.1 那张表第一行）', (tester) async {
-      // 不设 granularity，走默认的 `day` 档。
+    testAppWidgets('标题写着当前月份', (tester) async {
       await _pumpDefault(tester);
+      expect(find.byKey(CalendarPage.monthTitleKey), findsOneWidget);
+      expect(find.text('2026 年 9 月'), findsOneWidget);
+    });
+
+    testAppWidgets('翻到下个月，标题跟着变', (tester) async {
+      await _pumpDefault(tester);
+      await tester.tap(find.byKey(CalendarPage.nextMonthKey));
+      await tester.pumpAndSettle();
+      expect(find.text('2026 年 10 月'), findsOneWidget);
+    });
+
+    testAppWidgets('**跨年也对** —— 12 月的下一个月是次年 1 月', (tester) async {
+      // 月份加减最容易错在这儿：`month + 1` 得到 13。
+      await _pump(tester, today: const PlanDate(2026, 12, 15));
+      await tester.tap(find.byKey(CalendarPage.nextMonthKey));
+      await tester.pumpAndSettle();
+      expect(find.text('2027 年 1 月'), findsOneWidget);
+    });
+
+    testAppWidgets('往前跨年：1 月的上一个月是上一年 12 月', (tester) async {
+      await _pump(tester, today: const PlanDate(2026, 1, 15));
+      await tester.tap(find.byKey(CalendarPage.prevMonthKey));
+      await tester.pumpAndSettle();
+      expect(find.text('2025 年 12 月'), findsOneWidget);
+    });
+
+    testAppWidgets('**从 31 号翻到 2 月不炸** —— 日号要夹住', (tester) async {
+      // `PlanDate(2026, 2, 31)` 直接抛。不夹的话点一下箭头整页崩。
+      await _pump(tester, today: const PlanDate(2026, 1, 31));
+      await tester.tap(find.byKey(CalendarPage.nextMonthKey));
+      await tester.pumpAndSettle();
+      expect(find.text('2026 年 2 月'), findsOneWidget);
+    });
+
+    testAppWidgets('**不再有周视图那个档位**', (tester) async {
+      await _pumpDefault(tester);
+      expect(find.byKey(CalendarPage.modeKey('week')), findsNothing);
       expect(
         find.byWidgetPredicate(
           (w) => w.key.toString().startsWith("[<'calendar-day-"),
         ),
         findsNWidgets(42),
+        reason: '日历该恒为六行月视图',
       );
-    });
-
-    testAppWidgets('点「周」变一行，点「月」变回六行', (tester) async {
-      await _pumpDefault(tester);
-
-      await tester.tap(find.byKey(CalendarPage.modeKey('week')));
-      await tester.pumpAndSettle();
-      expect(
-        find.byWidgetPredicate(
-          (w) => w.key.toString().startsWith("[<'calendar-day-"),
-        ),
-        findsNWidgets(7),
-      );
-
-      await tester.tap(find.byKey(CalendarPage.modeKey('month')));
-      await tester.pumpAndSettle();
-      expect(
-        find.byWidgetPredicate(
-          (w) => w.key.toString().startsWith("[<'calendar-day-"),
-        ),
-        findsNWidgets(42),
-      );
-    });
-
-    testAppWidgets('切换写的是共享状态，不是日历自己存一份', (tester) async {
-      // 自己存一份的话，切到甘特再回来就对不上了（FR-VIEW-05/06）。
-      await _pumpDefault(tester);
-      final container = ProviderScope.containerOf(
-        tester.element(find.byType(CalendarPage)),
-      );
-
-      await tester.tap(find.byKey(CalendarPage.modeKey('week')));
-      await tester.pumpAndSettle();
-      expect(
-        container.read(viewSharedStateProvider).granularity,
-        TimeGranularity.week,
-      );
-    });
-  });
-
-  group('周视图', () {
-    testAppWidgets('一格的高度与月视图一样，不是被拉成六倍', (tester) async {
-      // 比例定的是**行高**，不是格子区的高。直接把整块给一行的话，
-      // 一行日期占掉大半屏，下面的列表挤没了；月↔周来回切时
-      // 格子还会忽大忽小。模拟器上一眼就看见了。
-      await _pump(tester, granularity: TimeGranularity.month);
-      final monthRow = tester
-          .getRect(find.byKey(CalendarPage.dayKey(_today)))
-          .height;
-
-      await _pump(tester, granularity: TimeGranularity.week);
-      final weekRow = tester
-          .getRect(find.byKey(CalendarPage.dayKey(_today)))
-          .height;
-
-      expect(weekRow, closeTo(monthRow, 1));
-    });
-
-    testAppWidgets('只有一行七格', (tester) async {
-      await _pump(tester, granularity: TimeGranularity.week);
-      expect(
-        find.byWidgetPredicate(
-          (w) => w.key.toString().startsWith("[<'calendar-day-"),
-        ),
-        findsNWidgets(7),
-      );
-      expect(find.byKey(CalendarPage.dayKey(_d(7))), findsOneWidget);
-      expect(find.byKey(CalendarPage.dayKey(_d(13))), findsOneWidget);
     });
   });
 

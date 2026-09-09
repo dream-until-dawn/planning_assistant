@@ -10,6 +10,7 @@ library;
 import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:planning_assistant/core/time/date_and_minute.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/domain/entities/category.dart';
@@ -78,6 +79,79 @@ GanttLayout _layout(
 );
 
 void main() {
+  group('用户报的两条：全天占满、按任务分色', () {
+    test('**全天任务占满一整天**，不是一根一分钟的线', () {
+      // 全天任务的 `startMinute` 是空的（当 00:00），又没有结束 ——
+      // 跨度于是是零长，`_place` 把它撑成一分钟。
+      // 画出来是一根几乎看不见的线。用户原话：「全天的任务没有占满全格？」
+      //
+      // 「全天」这个词本身就是「占那一天」的意思。
+      final layout = _layout([
+        // **不给 `to`** —— 给了的话 `storedEnd` 会补出 23:59，
+        // 这条用例就绕过了真正的缺陷（没有结束时的零长跨度）。
+        _row('全天的'),
+      ]);
+      final bar = layout.lanes.single.bars.single;
+
+      expect(bar.startMinute, 0);
+      expect(
+        bar.endMinute,
+        minutesPerDay - 1,
+        reason: '全天任务只占了 ${bar.endMinute - bar.startMinute} 分钟',
+      );
+    });
+
+    test('对照组：定时任务不被撑成一整天', () {
+      // 少了这条，一个「一律撑满当天」的实现能让上面绿 ——
+      // 而那会让一个 30 分钟的会议在甘特上占满一格。
+      final layout = _layout([
+        _row('半小时', to: 0, startMinute: 540, endMinute: 570),
+      ]);
+      final bar = layout.lanes.single.bars.single;
+      expect(bar.endMinute - bar.startMinute, 30);
+    });
+
+    test('每根条带着自己的分类色', () {
+      // 一度整张图一个色，一屏几十条任务长得一模一样。
+      // 用户原话：「不同任务没有颜色区分」。
+      const work = Category(
+        id: 'work',
+        name: '工作',
+        colorArgb: 0xFF112233,
+        icon: 'work',
+        orderIndex: 0,
+      );
+      const life = Category(
+        id: 'life',
+        name: '生活',
+        colorArgb: 0xFF445566,
+        icon: 'home',
+        orderIndex: 1,
+      );
+      final layout = _layout(
+        [
+          _row('甲', from: 0, to: 1, categoryId: 'work'),
+          _row('乙', from: 3, to: 4, categoryId: 'life'),
+          _row('丙', from: 6, to: 7),
+        ],
+        laneBy: GanttLaneBy.task,
+        categories: const [work, life],
+      );
+
+      final byTitle = {
+        for (final lane in layout.lanes)
+          for (final bar in lane.bars) bar.row.title: bar.colorArgb,
+      };
+      expect(byTitle['甲'], 0xFF112233);
+      expect(byTitle['乙'], 0xFF445566);
+      expect(
+        byTitle['丙'],
+        isNull,
+        reason: '未分类该回落到主色，而不是被塞一个专属色 —— 那会让它看起来像一类',
+      );
+    });
+  });
+
   test('G-01 单泳道单任务跨 3 天 → 一根连续条，长度 = 3 个时间单元', () {
     // 9/7 到 9/9 全天 = 三天。全天任务的结束读到那天的 23:59，
     // 所以长度是 3×1440 − 1 分钟 —— 差的那一分钟是「到当天末尾」

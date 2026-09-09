@@ -17,8 +17,10 @@ import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/features/views/shared/application/category_providers.dart';
+import 'package:planning_assistant/features/views/shared/application/task_occurrence.dart';
 import 'package:planning_assistant/features/views/shared/application/task_providers.dart';
 import 'package:planning_assistant/features/views/shared/application/view_shared_state.dart';
+import 'package:planning_assistant/features/views/shared/presentation/occurrence_card_data.dart';
 import 'package:planning_assistant/features/views/task_list/presentation/task_list_page.dart';
 
 import '../support/app_harness.dart';
@@ -85,7 +87,79 @@ Future<void> _pump(
   }
 }
 
+TaskOccurrence _row(PlanDate? date, {bool allDay = false, int? minute}) =>
+    TaskOccurrence(
+      task: Task(
+        id: 't',
+        title: '吃药',
+        kind: TaskKind.single,
+        timeZoneId: 'Asia/Shanghai',
+        planDate: date,
+        startMinute: minute == null ? null : MinuteOfDay(minute),
+        isAllDay: allDay,
+      ),
+    );
+
 void main() {
+  group('FR-VIEW-02 卡片要说清「哪一天」', () {
+    // 用户报的原话：「每天的任务没有标注日期啊，我不知道这个每日任务
+    // 具体是哪一日的，都放在逾期里我看不出啊」。
+    //
+    // 一度只写 `HH:mm`，而且**全天任务直接返回 null** —— 于是一条每天
+    // 重复的全天任务，卡片上关于「哪一天」一个字都没有。
+    // 分组标题只说得了「逾期」这一类，说不了组里那七行各是哪天，
+    // 而重复任务恰恰会在「逾期」里堆出一长串长得一模一样的卡片。
+
+    test('不是今天的全天任务：写出日期', () {
+      expect(
+        timeLabelOf(
+          _row(const PlanDate(2026, 9, 5), allDay: true),
+          today: const PlanDate(2026, 9, 8),
+        ),
+        '9/5',
+      );
+    });
+
+    test('不是今天的定时任务：日期 + 时刻', () {
+      expect(
+        timeLabelOf(
+          _row(const PlanDate(2026, 9, 5), minute: 9 * 60 + 30),
+          today: const PlanDate(2026, 9, 8),
+        ),
+        '9/5 09:30',
+      );
+    });
+
+    test('**今天的不写日期** —— 分组标题已经说了', () {
+      // 再写一遍是噪音。
+      expect(
+        timeLabelOf(
+          _row(const PlanDate(2026, 9, 8), minute: 9 * 60 + 30),
+          today: const PlanDate(2026, 9, 8),
+        ),
+        '09:30',
+      );
+    });
+
+    test('今天的全天任务：什么都不写', () {
+      expect(
+        timeLabelOf(
+          _row(const PlanDate(2026, 9, 8), allDay: true),
+          today: const PlanDate(2026, 9, 8),
+        ),
+        isNull,
+      );
+    });
+
+    test('没有日期的任务：什么都不写', () {
+      // 「无日期」是合法状态（FR-TASK-01），它有自己的分组。
+      expect(
+        timeLabelOf(_row(null), today: const PlanDate(2026, 9, 8)),
+        isNull,
+      );
+    });
+  });
+
   group('FR-VIEW-02 分组标题', () {
     testWidgets('每组一个标题，带条数', (tester) async {
       await _pump(tester, [

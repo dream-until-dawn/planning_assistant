@@ -55,7 +55,14 @@ class CalendarPage extends ConsumerStatefulWidget {
   final CreateTaskAt? onCreateTask;
 
   static const Key gridKey = ValueKey('calendar-grid');
+
+  /// 顶部那一行（现在是月份标题 + 翻月，一度是月/周切换）。
   static const Key modeToggleKey = ValueKey('calendar-mode-toggle');
+
+  /// 当前月份的标题 —— 「看不出现在几月」是用户报的问题之一。
+  static const Key monthTitleKey = ValueKey('calendar-month-title');
+  static const Key prevMonthKey = ValueKey('calendar-prev-month');
+  static const Key nextMonthKey = ValueKey('calendar-next-month');
 
   /// 月/周切换里的某一档。
   static Key modeKey(String mode) => ValueKey('calendar-mode-$mode');
@@ -117,7 +124,7 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
 
         return Column(
           children: [
-            const _ModeToggle(key: CalendarPage.modeToggleKey),
+            const _MonthHeader(key: CalendarPage.modeToggleKey),
             const _WeekdayHeader(key: CalendarPage.headerKey),
             SizedBox(
               height: gridHeight,
@@ -170,13 +177,37 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
 /// 月视图根本到不了。又是一次「模型有旋钮、界面上够不着」
 /// （testing-strategy §1.6）：这次是在模拟器上一眼看出来的，
 /// 因为屏幕上只有一行日期，而规格说默认是六行。
-class _ModeToggle extends ConsumerWidget {
-  const _ModeToggle({super.key});
+/// 顶部那一行：**现在看的是哪个月**，以及翻月。
+///
+/// ## 为什么必须有它
+///
+/// 一度这里是个月/周切换，而**没有任何地方写着当前是几月**。
+/// 用户报的原话：「看不出当前月份，左右滑动后就看不出现在几月份」——
+/// 格子里只有日号，1 号到 30 号翻过去长得一模一样，
+/// 划两下之后没有任何线索告诉你划到哪儿了。
+///
+/// 周视图那一档按用户要求去掉了（`calendarIsMonthProvider` 上有注释），
+/// 空出来的位置正好给月份。
+///
+/// 左右箭头与横向滑动是同一件事的两条路：滑动更顺手，
+/// 箭头对读屏用户可用 —— 与阶段那边「拖拽 + 箭头并存」同一条理由。
+class _MonthHeader extends ConsumerWidget {
+  const _MonthHeader({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isMonth = ref.watch(calendarIsMonthProvider);
+    final focused = ref.watch(viewSharedStateProvider).focusedDate;
     final shared = ref.read(viewSharedStateProvider.notifier);
+    final text = Theme.of(context).textTheme;
+
+    void shift(int months) {
+      final m = focused.month + months;
+      final year = focused.year + (m - 1) ~/ 12 - (m <= 0 ? 1 : 0);
+      final month = ((m - 1) % 12 + 12) % 12 + 1;
+      // 翻到 2 月时把 31 号夹成 28/29 —— 不夹的话 `PlanDate` 直接抛。
+      final day = focused.day.clamp(1, PlanDate.daysInMonth(year, month));
+      shared.focusDate(PlanDate(year, month, day));
+    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(
@@ -185,18 +216,23 @@ class _ModeToggle extends ConsumerWidget {
       ),
       child: Row(
         children: [
-          SelectableChip(
-            key: CalendarPage.modeKey('month'),
-            label: '月',
-            selected: isMonth,
-            onSelected: (_) => shared.setGranularity(TimeGranularity.month),
+          Text(
+            '${focused.year} 年 ${focused.month} 月',
+            key: CalendarPage.monthTitleKey,
+            style: text.titleMedium,
           ),
-          const SizedBox(width: Spacing.sm),
-          SelectableChip(
-            key: CalendarPage.modeKey('week'),
-            label: '周',
-            selected: !isMonth,
-            onSelected: (_) => shared.setGranularity(TimeGranularity.week),
+          const Spacer(),
+          IconButton(
+            key: CalendarPage.prevMonthKey,
+            icon: const Icon(Icons.chevron_left),
+            tooltip: '上个月',
+            onPressed: () => shift(-1),
+          ),
+          IconButton(
+            key: CalendarPage.nextMonthKey,
+            icon: const Icon(Icons.chevron_right),
+            tooltip: '下个月',
+            onPressed: () => shift(1),
           ),
         ],
       ),
@@ -204,7 +240,6 @@ class _ModeToggle extends ConsumerWidget {
   }
 }
 
-/// 星期表头。顺序随 `view.firstDayOfWeek`（§3.2）。
 class _WeekdayHeader extends ConsumerWidget {
   const _WeekdayHeader({super.key});
 
@@ -553,13 +588,17 @@ class _Band extends StatelessWidget {
                 right: band.continuesAfter ? Radius.zero : radius,
               ),
             ),
-            padding: const EdgeInsets.symmetric(horizontal: Spacing.xs),
+            // 格子只有一格宽，横条更窄 —— 用 `bodySmall` 时一条三四个字
+            // 的标题就被省略号吃掉大半。用户报的原话：
+            // 「任务 tag 文本太大了看不全」。
+            // 换 `labelSmall` 并把内边距收到 2，同样宽度能多放两三个字。
+            padding: const EdgeInsets.symmetric(horizontal: 2),
             alignment: Alignment.centerLeft,
             child: Text(
               band.row.title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: text.bodySmall,
+              style: text.labelSmall,
             ),
           ),
         ),

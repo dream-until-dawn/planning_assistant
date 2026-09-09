@@ -114,7 +114,10 @@ class GanttPainter extends CustomPainter {
         bottomLeft: bar.continuesAfter ? Radius.zero : radius,
         bottomRight: bar.continuesAfter ? Radius.zero : radius,
       ),
-      Paint()..color = barColor.withValues(alpha: 0.20),
+      // **每根条用自己的分类色**，未分类的才回落到主色。
+      // 一度整张图一个色，于是一屏几十条任务长得一模一样 ——
+      // 用户报的原话：「不同任务没有颜色区分」。
+      Paint()..color = _colorOf(bar).withValues(alpha: 0.28),
     );
 
     // 排了时间的阶段画成段；没排时间的只画一条进度填充（见
@@ -124,12 +127,19 @@ class GanttPainter extends CustomPainter {
       _paintProgress(canvas, bar, rect);
     } else {
       for (final segment in bar.segments) {
-        _paintSegment(canvas, segment, rect);
+        _paintSegment(canvas, segment, rect, _colorOf(bar));
       }
     }
   }
 
   /// 没排时间的阶段：从上往下填一段，长度 = 已完成的比例。
+  /// 这根条的颜色：分类色，未分类回落到主色。
+  ///
+  /// 回落而不是「未分类也给个别的颜色」：未分类是**没有选**，
+  /// 不是一个分类；给它一个专属色会让它看起来像一类。
+  Color _colorOf(GanttBar bar) =>
+      bar.colorArgb == null ? barColor : Color(bar.colorArgb!);
+
   void _paintProgress(Canvas canvas, GanttBar bar, Rect rect) {
     final ratio = bar.progress;
     if (ratio == null || ratio <= 0) return;
@@ -148,7 +158,12 @@ class GanttPainter extends CustomPainter {
   ///
   /// 已完成填实，未完成半透明 —— **外加一条左边线**：只靠透明度区分
   /// 的话，灰度屏与色觉障碍下两者几乎一样（§8.1 那条原则）。
-  void _paintSegment(Canvas canvas, GanttSegment segment, Rect bar) {
+  void _paintSegment(
+    Canvas canvas,
+    GanttSegment segment,
+    Rect bar,
+    Color base,
+  ) {
     final top = segment.startMinute * GanttMetrics.pixelsPerMinute;
     final bottom =
         segment.endMinute * GanttMetrics.pixelsPerMinute -
@@ -157,7 +172,7 @@ class GanttPainter extends CustomPainter {
 
     final rect = Rect.fromLTRB(bar.left, top, bar.right, bottom);
     final color = segment.stage.colorArgb == null
-        ? (segment.done ? doneColor : barColor)
+        ? (segment.done ? doneColor : base)
         : Color(segment.stage.colorArgb!);
 
     canvas.drawRect(

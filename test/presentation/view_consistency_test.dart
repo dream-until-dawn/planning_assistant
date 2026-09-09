@@ -180,25 +180,43 @@ void main() {
     );
   });
 
-  testAppWidgets('粒度保持：切成「周」→ 切日历，日历就是周视图', (tester) async {
+  testAppWidgets('粒度保持：在甘特改档位，切走再回来还是那一档', (tester) async {
+    // **这条原来验的是「切成周之后日历变一行」。**
+    // 周视图按用户要求去掉了（日历恒为月），所以改成在**甘特**那侧验 ——
+    // 粒度共享这件事本身没变，只是日历不再是它的显示方之一。
     final container = await _pumpShell(tester);
 
-    await _switchTo(tester, ViewKind.calendar);
-    await tester.tap(find.byKey(CalendarPage.modeKey('week')));
-    await tester.pumpAndSettle();
+    await _switchTo(tester, ViewKind.gantt);
+    await tapVisible(tester, GanttView.granularityKey(TimeGranularity.week));
     expect(
       container.read(viewSharedStateProvider).granularity,
       TimeGranularity.week,
     );
 
-    // 切走再切回来，仍是周视图 —— 一行七格。
-    await _switchTo(tester, ViewKind.gantt);
+    // 切走再切回来，档位还在。
     await _switchTo(tester, ViewKind.calendar);
+    await _switchTo(tester, ViewKind.gantt);
+    expect(
+      container.read(viewSharedStateProvider).granularity,
+      TimeGranularity.week,
+      reason: '切视图把共享的档位弄丢了',
+    );
+  });
+
+  testAppWidgets('日历不跟着粒度变 —— 它恒为月视图', (tester) async {
+    // 用户要求：「不需要『周』固定使用月即可」。
+    final container = await _pumpShell(tester);
+    container
+        .read(viewSharedStateProvider.notifier)
+        .setGranularity(TimeGranularity.week);
+    await _switchTo(tester, ViewKind.calendar);
+
     expect(
       find.byWidgetPredicate(
         (w) => w.key.toString().startsWith("[<'calendar-day-"),
       ),
-      findsNWidgets(7),
+      findsNWidgets(42),
+      reason: '共享档位是「周」时日历变成了一行 —— 它该恒为月视图',
     );
   });
 

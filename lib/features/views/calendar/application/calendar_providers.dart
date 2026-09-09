@@ -35,10 +35,19 @@ import 'month_grid.dart';
 /// `day` 这一档日历没有对应形态，**按月处理** —— 月视图是日历的默认
 /// （§3.1 那张表第一行）。按周处理的话，从别的视图切过来时日历默认
 /// 是周视图，与规格相反。
-final calendarIsMonthProvider = Provider<bool>(
-  (ref) =>
-      ref.watch(viewSharedStateProvider).granularity != TimeGranularity.week,
-);
+/// **日历恒为月视图。**
+///
+/// 一度跟着共享的 `granularity` 走（§0.1「日/周/月，甘特与日历共用」），
+/// 界面上还配了一个月/周切换。用户看过之后要求去掉周视图：
+/// 一个月的格子已经能一眼看完，而「周」那一档既占一个控件的位置，
+/// 又让「现在看的是哪一段」多了一种可能。
+///
+/// 保留这个 provider 而不是把 `true` 散到各处：`calendarWeeksProvider`
+/// 与格子高度的算法都读它，将来若要恢复周视图，改这一处就够。
+///
+/// **甘特那边的粒度不受影响** —— 它有自己的日/周/月切换
+/// （FR-VIEW-04 的验收原话），只是日历不再跟着变了。
+final calendarIsMonthProvider = Provider<bool>((ref) => true);
 
 /// 这一屏要画哪些格子。
 final calendarWeeksProvider = Provider<List<List<MonthCell>>>((ref) {

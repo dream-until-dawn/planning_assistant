@@ -67,33 +67,30 @@ Future<ProviderContainer> _container({
 }
 
 void main() {
-  group('档位来自共享状态，日历不自己存一份', () {
-    test('默认（day）按**月**处理 —— 月视图是日历的默认（§3.1）', () async {
-      // 「日」这一档日历没有对应形态。按周处理的话，从别的视图切过来时
-      // 日历默认是周视图，与规格第一行相反。
+  group('日历恒为月视图', () {
+    // **这一组原来钉的是反面**：日历跟着共享的 `granularity` 走，
+    // 月/周两档都验过。用户看过界面之后要求去掉周视图 ——
+    // 「不需要『周』固定使用月即可」。
+    //
+    // 所以这几条改成钉新行为：**无论共享档位是什么，日历都是六行月视图**。
+    // 甘特那边的日/周/月不受影响（它有自己的切换），只是日历不再跟着变。
+
+    test('默认就是月视图', () async {
       final c = await _container();
       expect(c.read(calendarIsMonthProvider), isTrue);
       expect(c.read(calendarWeeksProvider), hasLength(6));
     });
 
-    test('切到月 → 六行', () async {
-      final c = await _container();
-      c
-          .read(viewSharedStateProvider.notifier)
-          .setGranularity(TimeGranularity.month);
-      expect(c.read(calendarWeeksProvider), hasLength(6));
-    });
-
-    test('从甘特那侧改档位，日历跟着变 —— 两边读的是同一份', () async {
-      // 日历自己存一份的话，从甘特切过来时两边会对不上，
-      // 而那正是 FR-VIEW-05/06 要避免的。
-      final c = await _container();
-      final shared = c.read(viewSharedStateProvider.notifier);
-      shared.setGranularity(TimeGranularity.month);
-      expect(c.read(calendarIsMonthProvider), isTrue);
-      shared.setGranularity(TimeGranularity.week);
-      expect(c.read(calendarIsMonthProvider), isFalse);
-    });
+    for (final g in TimeGranularity.values) {
+      test('共享档位是 ${g.name} 时，日历仍然是六行月视图', () async {
+        // 甘特把档位切成「周」之后再切回日历，日历不该变成一行 ——
+        // 那正是用户看到的、要求去掉的东西。
+        final c = await _container();
+        c.read(viewSharedStateProvider.notifier).setGranularity(g);
+        expect(c.read(calendarIsMonthProvider), isTrue);
+        expect(c.read(calendarWeeksProvider), hasLength(6));
+      });
+    }
   });
 
   group('一周从周几起，配置说了算', () {
