@@ -38,7 +38,7 @@ Widget _current(Brightness brightness, double scale) => _wrap(
     currentView: ViewKind.list,
     availableViews: const [ViewKind.list],
     onViewSelected: (_) {},
-    onCreateTask: () {},
+    onCreateTask: (_) {},
     onOpenSettings: () {},
     // 筛选条是外壳的一部分（组合根传进来的）—— 不传的话，
     // 拍到的是一个线上不存在的配置。
@@ -59,7 +59,7 @@ Widget _withSwitcher(Brightness brightness, double scale) => _wrap(
     currentView: ViewKind.list,
     availableViews: ViewKind.values,
     onViewSelected: (_) {},
-    onCreateTask: () {},
+    onCreateTask: (_) {},
     onOpenSettings: () {},
     // 筛选条是外壳的一部分（组合根传进来的）—— 不传的话，
     // 拍到的是一个线上不存在的配置。
@@ -217,7 +217,7 @@ Widget _longText(Brightness brightness, double scale) => _wrap(
     currentView: ViewKind.list,
     availableViews: const [ViewKind.list],
     onViewSelected: (_) {},
-    onCreateTask: () {},
+    onCreateTask: (_) {},
     onOpenSettings: () {},
     header: const FilterBar(),
     viewBuilder: (context, kind) =>
@@ -235,7 +235,7 @@ Widget _dense(Brightness brightness, double scale) => _wrap(
     currentView: ViewKind.list,
     availableViews: const [ViewKind.list],
     onViewSelected: (_) {},
-    onCreateTask: () {},
+    onCreateTask: (_) {},
     onOpenSettings: () {},
     // 筛选条是外壳的一部分（组合根传进来的）—— 不传的话，
     // 拍到的是一个线上不存在的配置。

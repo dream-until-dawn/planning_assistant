@@ -36,6 +36,7 @@ final class OccurrenceOverride {
     required this.key,
     required this.action,
     this.status,
+    this.completedAt,
     this.titleOverride,
     this.noteOverride,
     this.planDateOverride,
@@ -48,6 +49,7 @@ final class OccurrenceOverride {
   const OccurrenceOverride.skip({required this.taskId, required this.key})
     : action = OverrideAction.skip,
       status = null,
+      completedAt = null,
       titleOverride = null,
       noteOverride = null,
       planDateOverride = null,
@@ -64,6 +66,18 @@ final class OccurrenceOverride {
 
   /// 该次的状态；null 表示不改变状态。
   final OccurrenceStatus? status;
+
+  /// 这一次**实际被标完成的那一刻**（Instant，UTC），与 [status] 同进同退
+  /// （§5，同任务侧那条不变量）。
+  ///
+  /// **这一列一直是「写了没人读」**：写路径把它当参数传给 `saveOverride`，
+  /// 读路径压根没把它取回实体。于是
+  /// `_moveOccurrence`（在已有例外上叠加）复制不到它 ——
+  /// 把一条已完成的发生推迟一下，完成时刻就没了，而没有任何报错。
+  ///
+  /// 放进实体之后它跟着别的字段一起被复制，同时
+  /// 「哪些阶段是这一下勾上的」才有得比（见 `_cascadeStagesOfOccurrence`）。
+  final DateTime? completedAt;
 
   final String? titleOverride;
   final String? noteOverride;
@@ -84,6 +98,7 @@ final class OccurrenceOverride {
     key: newKey,
     action: action,
     status: status,
+    completedAt: completedAt,
     titleOverride: titleOverride,
     noteOverride: noteOverride,
     planDateOverride: planDateOverride,
@@ -97,6 +112,22 @@ final class OccurrenceOverride {
   /// 是否改变了发生的时间位置。
   bool get movesOccurrence =>
       planDateOverride != null || startMinuteOverride != null;
+
+  /// 除了状态，这一行还改了别的没有。
+  ///
+  /// 用来分辨「取消完成」该**清一格**还是**删整行**：
+  /// 什么都没改的行删掉才对（`removeOverride` 的注释：从没动过与
+  /// 动过又撤回，对用户是同一件事）；而改过标题或挪过日期的行，
+  /// 删掉等于顺手把那些也撤了。
+  ///
+  /// `action` 不算在内：一条 `skip` 行清掉状态之后本来就该没了。
+  bool get hasEditsBesidesStatus =>
+      titleOverride != null ||
+      noteOverride != null ||
+      planDateOverride != null ||
+      startMinuteOverride != null ||
+      endDateOverride != null ||
+      endMinuteOverride != null;
 
   @override
   String toString() =>

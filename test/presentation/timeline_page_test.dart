@@ -36,6 +36,7 @@ import 'package:planning_assistant/domain/value_objects/recurrence.dart';
 import 'package:planning_assistant/domain/value_objects/task_status.dart';
 import 'package:planning_assistant/features/views/shared/application/create_task_at.dart';
 import 'package:planning_assistant/features/views/shared/application/view_shared_state.dart';
+import 'package:planning_assistant/features/views/task_list/presentation/occurrence_actions_sheet.dart';
 import 'package:planning_assistant/features/views/timeline/application/timeline_providers.dart';
 import 'package:planning_assistant/features/views/timeline/presentation/timeline_page.dart';
 
@@ -596,6 +597,9 @@ void main() {
 
       await tester.tap(find.byKey(TimelinePage.entryKey('晨会')));
       await tester.pumpAndSettle();
+      // 点一行弹的是动作抽屉（用户第①条，四个视图同一套），
+      // 编辑从抽屉里进。
+      await tapVisible(tester, OccurrenceSheetKeys.edit);
 
       expect(opened, '晨会');
     });

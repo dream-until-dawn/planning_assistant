@@ -52,15 +52,26 @@ final class ToggleTaskDone {
     final isDone = row.status == TaskStatus.done;
     final key = row.key;
 
+    // 阶段任务的撤销要还原**阶段**，不是发一条反向的状态命令。
+    //
+    // 反向命令走的是同一套级联（待办全 done / 已完成全回 pending），
+    // 它不知道哪些阶段本来就勾着：勾了一半的阶段任务点完成、再点撤销，
+    // 进度会从 1/2 变成 0/2 —— 撤销把用户的一次勾选抹了。
+    //
+    // 而父任务（或这一次）的状态现在跟着阶段走（task-lifecycle §4.1），
+    // 所以把阶段放回原样，状态自己就回来了，不必也不该再发一条状态命令。
+    final undoStages = row.stages.isEmpty ? null : _restoreStages(row);
+
     if (key == null) {
       final to = isDone ? TaskStatus.pending : TaskStatus.done;
       final back = isDone ? TaskStatus.done : TaskStatus.pending;
       await dispatcher.dispatch(
         ChangeTaskStatusCommand(taskId: row.taskId, status: to),
       );
-      return () => dispatcher.dispatch(
-        ChangeTaskStatusCommand(taskId: row.taskId, status: back),
-      );
+      return undoStages ??
+          () => dispatcher.dispatch(
+            ChangeTaskStatusCommand(taskId: row.taskId, status: back),
+          );
     }
 
     // 取消完成时传 null = 删掉那条例外，回到跟随规则 ——
@@ -74,13 +85,55 @@ final class ToggleTaskDone {
         status: to,
       ),
     );
-    return () => dispatcher.dispatch(
-      SetOccurrenceStatusCommand(
-        taskId: row.taskId,
-        occurrenceKey: key,
-        status: back,
-      ),
-    );
+    return undoStages ??
+        () => dispatcher.dispatch(
+          SetOccurrenceStatusCommand(
+            taskId: row.taskId,
+            occurrenceKey: key,
+            status: back,
+          ),
+        );
+  }
+
+  /// 一个把这一行的阶段状态原样写回去的闭包。
+  ///
+  /// 快照在**切换之前**取（`row` 就是那一刻的），两条路各自写回自己那半：
+  /// 不重复的整表替换 `Stage.status`，某一次的逐个写
+  /// `stage_occurrence_states`（判据见 `stageStatusFor`）。
+  VoidCallback _restoreStages(TaskOccurrence row) {
+    final dispatcher = _ref.read(taskCommandDispatcherProvider);
+    // **问行不问阶段**：`row.stageStatus` 才是「这一行的这一步做完没有」，
+    // 直接读 `s.status` 对重复任务读的是那个没人看的字段。
+    final before = {for (final s in row.stages) s.id: row.stageStatus(s)};
+    final key = row.key;
+
+    if (key == null) {
+      final specs = [
+        for (final s in row.stages)
+          StageSpec(
+            id: s.id,
+            title: s.title,
+            orderIndex: s.orderIndex,
+            startOffsetMinutes: s.startOffsetMinutes,
+            durationMinutes: s.durationMinutes,
+            colorArgb: s.colorArgb,
+            status: before[s.id]!,
+          ),
+      ];
+      return () => dispatcher.dispatch(
+        ReplaceStagesCommand(taskId: row.taskId, stages: specs),
+      );
+    }
+
+    return () => dispatcher.dispatchAll([
+      for (final s in row.stages)
+        SetStageOccurrenceStatusCommand(
+          taskId: row.taskId,
+          stageId: s.id,
+          occurrenceKey: key,
+          status: before[s.id]!,
+        ),
+    ]);
   }
 }
 

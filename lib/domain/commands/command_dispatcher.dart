@@ -20,6 +20,7 @@ import '../recurrence/recurrence_engine.dart';
 import '../repositories/task_repository.dart';
 import '../services/all_day_conversion.dart';
 import '../services/recurrence_conversion.dart';
+import '../services/stage_occurrence_status.dart';
 import '../value_objects/occurrence_key.dart';
 import '../value_objects/recurrence.dart';
 import '../value_objects/task_status.dart';
@@ -165,6 +166,7 @@ final class CommandDispatcher {
         key: c.occurrenceKey,
         action: OverrideAction.modify,
         status: prior?.status,
+        completedAt: prior?.completedAt,
         titleOverride: prior?.titleOverride,
         noteOverride: prior?.noteOverride,
         planDateOverride: c.planDate,
@@ -190,6 +192,11 @@ final class CommandDispatcher {
   Future<void> _setStageOccurrenceStatus(
     SetStageOccurrenceStatusCommand c,
   ) async {
+    // **整条命令只读一次钟。** 阶段的完成时刻要与这一次的完成时刻对得上 ——
+    // 「取消完成时收回哪一批阶段」正是靠两者相等认出来的。
+    // 各读各的话，两次读之间差一毫秒，那一批就一个都认不出来。
+    final now = _now();
+
     await _repo.saveStageState(
       StageOccurrenceState(
         id: StageOccurrenceState.idFor(c.stageId, c.occurrenceKey),
@@ -200,26 +207,161 @@ final class CommandDispatcher {
         // 与 `applyStatusChange` 同一条不变量：completedAt 与 status
         // 同进同退。取消完成时必须清掉，否则下次它会显示成
         // 「未完成，但完成于上周三」。
-        completedAt: c.status == TaskStatus.done ? _clock.nowUtc() : null,
+        completedAt: c.status == TaskStatus.done ? now : null,
+      ),
+    );
+
+    // 勾满这一次的全部阶段，这一次就算完成（§4.2 的另一半）。
+    // 推导出 pending 时写 null = 删掉状态那一格，而不是留一条
+    // 「等于没改」的例外 —— 与取消完成走的是同一个写法。
+    final states = await _statesOfOccurrence(c.taskId, c.occurrenceKey);
+    final derived = deriveOccurrenceStatusFor(
+      await _repo.findStagesOfTask(c.taskId),
+      occurrenceStates: states,
+    );
+    await _writeOccurrenceStatus(
+      c.taskId,
+      c.occurrenceKey,
+      derived == OccurrenceStatus.pending ? null : derived,
+      // 与任务侧同一条：完成时刻取**最后一步做完的那一刻**，
+      // 不是「算这一下的那一刻」（见 `projectStagesOntoTask`）。
+      completedAt: _latestStateCompletion(states) ?? now,
+    );
+  }
+
+  Future<StageStatesOfOccurrence> _statesOfOccurrence(
+    String taskId,
+    OccurrenceKey key,
+  ) async =>
+      groupByOccurrence(await _repo.findStageStatesOfTask(taskId))[key] ??
+      const {};
+
+  /// 这一次里最晚的阶段完成时刻；一个都没完成时 null。
+  DateTime? _latestStateCompletion(StageStatesOfOccurrence states) {
+    DateTime? latest;
+    for (final st in states.values) {
+      if (st.status != TaskStatus.done) continue;
+      final at = st.completedAt;
+      if (at == null) continue;
+      if (latest == null || at.isAfter(latest)) latest = at;
+    }
+    return latest;
+  }
+
+  /// 只改某一次的**状态那一格**，行上其余字段原样留着。
+  ///
+  /// 直接 `saveOverride(OccurrenceOverride(status: ...))` 是**整行覆盖**
+  /// —— 行 id 由 `taskId#key` 派生，而映射器每一列都写 `Value(...)`。
+  /// 于是把一条推迟过的重复任务标完成，推迟就没了。
+  /// `_moveOccurrence` 早就是「在已有例外之上叠加」，这里补上同一条。
+  ///
+  /// 清空状态时：行上还有别的改动就只清状态，什么都不剩才删整行。
+  /// 「回到跟随规则」说的是状态那一格，不是把用户挪过的日期一起撤掉。
+  Future<void> _writeOccurrenceStatus(
+    String taskId,
+    OccurrenceKey key,
+    OccurrenceStatus? status, {
+    required DateTime completedAt,
+  }) async {
+    final existing = await _repo.findOverridesOfTask(taskId);
+    final prior = existing.where((o) => o.key == key).firstOrNull;
+
+    if (status == null && (prior == null || !prior.hasEditsBesidesStatus)) {
+      await _repo.removeOverride(taskId, key);
+      return;
+    }
+    await _repo.saveOverride(
+      OccurrenceOverride(
+        taskId: taskId,
+        key: key,
+        action: OverrideAction.modify,
+        status: status,
+        completedAt: status == OccurrenceStatus.done ? completedAt : null,
+        titleOverride: prior?.titleOverride,
+        noteOverride: prior?.noteOverride,
+        planDateOverride: prior?.planDateOverride,
+        startMinuteOverride: prior?.startMinuteOverride,
+        endDateOverride: prior?.endDateOverride,
+        endMinuteOverride: prior?.endMinuteOverride,
       ),
     );
   }
 
   Future<void> _setOccurrenceStatus(SetOccurrenceStatusCommand c) async {
-    final status = c.status;
-    if (status == null) {
-      await _repo.removeOverride(c.taskId, c.occurrenceKey);
-      return;
+    final now = _now();
+    final prior = (await _repo.findOverridesOfTask(c.taskId))
+        .where((o) => o.key == c.occurrenceKey)
+        .firstOrNull;
+
+    // 标完成要级联；**清空只在这一次本来是完成的时候**才级联。
+    //
+    // 同一个 null 还表示「撤回跳过」（`OccurrenceActions.unskip`）。
+    // 一条被跳过的发生，它的阶段没被这条命令动过 ——
+    // 撤回跳过时顺手清掉，等于把用户在那一次上勾过的进度抹了。
+    if (c.status == OccurrenceStatus.done ||
+        (c.status == null && prior?.status == OccurrenceStatus.done)) {
+      await _cascadeStagesOfOccurrence(
+        c.taskId,
+        c.occurrenceKey,
+        c.status,
+        now: now,
+        // 收回时只认「让这一次变成已完成的那一批」，判据同任务侧。
+        writtenAt: prior?.completedAt,
+      );
     }
-    await _repo.saveOverride(
-      OccurrenceOverride(
-        taskId: c.taskId,
-        key: c.occurrenceKey,
-        action: OverrideAction.modify,
-        status: status,
-      ),
-      completedAt: status == OccurrenceStatus.done ? _now() : null,
+    await _writeOccurrenceStatus(
+      c.taskId,
+      c.occurrenceKey,
+      c.status,
+      completedAt: now,
     );
+  }
+
+  /// 把「这一次完成 / 取消完成」推到它的每个阶段上（§4.2）。
+  ///
+  /// 与不重复那条路同一套规则，只是状态落在
+  /// `stage_occurrence_states` 而不是 `Stage.status`：
+  /// 待办阶段跟着 done，已完成阶段跟着回 pending，**跳过的不动**。
+  ///
+  /// **该不该级联由调用方决定**，这里只管照做：判断要看这一次原来的
+  /// 状态，而那个值调用方已经读出来了 —— 在这里再读一遍，两处的判据
+  /// 迟早对不上。
+  Future<void> _cascadeStagesOfOccurrence(
+    String taskId,
+    OccurrenceKey key,
+    OccurrenceStatus? status, {
+    required DateTime now,
+    DateTime? writtenAt,
+  }) async {
+    final stages = await _repo.findStagesOfTask(taskId);
+    if (stages.isEmpty) return;
+
+    final states = await _statesOfOccurrence(taskId, key);
+    final to = status == null ? TaskStatus.pending : TaskStatus.done;
+
+    for (final stage in stages) {
+      final was = stageStatusFor(stage, occurrenceStates: states);
+      if (was == TaskStatus.skipped || was == to) continue;
+      // **收回时只动「让这一次变成已完成的那一批」**（任务侧同一条判据，
+      // 见 `uncompleteTaskWithStages`）：用户在那之前自己勾好的留着。
+      // `writtenAt` 取不到时全收回 —— 宁可多收，也不要留下
+      // 「取消了却还是完成」的一次。
+      if (to == TaskStatus.pending &&
+          writtenAt != null &&
+          states[stage.id]?.completedAt != writtenAt) {
+        continue;
+      }
+      await _repo.saveStageState(
+        StageOccurrenceState(
+          id: StageOccurrenceState.idFor(stage.id, key),
+          taskId: taskId,
+          stageId: stage.id,
+          occurrenceKey: key,
+          status: to,
+          completedAt: to == TaskStatus.done ? now : null,
+        ),
+      );
+    }
   }
 
   /// 按顺序执行一串命令。
@@ -310,20 +452,41 @@ final class CommandDispatcher {
       return;
     }
     // 一个事务：任务改了而阶段没迁的话，那段时间里读到的是空进度。
-    await _repo.applyRecurrenceConversion(
-      updated,
-      migration.stages,
-      migration.states,
-    );
+    await _repo.applyRecurrenceConversion(migration);
   }
 
+  /// 改任务状态。阶段任务的 done 与它的阶段**绑死**（§4.2）。
+  ///
+  /// 标完成 → 待办阶段全 done；取消完成 → 已完成阶段全回 pending。
+  /// **两个方向都在这里**，而不是把「完成」那一半分给
+  /// `CompleteTaskWithStagesCommand`：那条命令是给显式表达意图的调用方
+  /// （导入、Agent）留的，界面上勾一下发的是这一条。
+  /// 级联各写一遍的话，迟早只有一条记得取消时也要回滚。
   Future<void> _changeStatus(ChangeTaskStatusCommand c) async {
     final task = await _require(c.taskId);
-    final updated = applyStatusChange(task, c.status, now: _now());
+    final now = _now();
 
-    // 阶段任务标完成时必须连阶段一起处理，否则父子状态不一致。
-    // 这里只处理「非完成」的迁移；完成走 CompleteTaskWithStagesCommand。
-    await _repo.saveTask(updated);
+    // 「取消完成」专指 done → pending。`inProgress → pending`
+    // （用户把「进行中」点掉）不该回滚阶段 —— 那会把已经勾好的步骤清空，
+    // 而用户只是想撤掉一个标记。
+    //
+    // 重复任务在这里会被 `applyStatusChange` 直接拒掉（status 恒 pending），
+    // 所以先排除掉，否则白读一次阶段表。
+    if (!task.isRecurring &&
+        (c.status == TaskStatus.done ||
+            (c.status == TaskStatus.pending &&
+                task.status == TaskStatus.done))) {
+      final stages = await _repo.findStagesOfTask(c.taskId);
+      if (stages.isNotEmpty) {
+        final r = c.status == TaskStatus.done
+            ? completeTaskWithStages(task, stages, now: now)
+            : uncompleteTaskWithStages(task, stages, now: now);
+        await _repo.saveTaskWithStages(r.task, r.stages);
+        return;
+      }
+    }
+
+    await _repo.saveTask(applyStatusChange(task, c.status, now: now));
   }
 
   /// 全天 ⇄ 定时切换（R-27）。
@@ -453,7 +616,17 @@ final class CommandDispatcher {
           old.copyWith(deletedAt: _now()),
     ];
 
-    await _repo.saveTaskWithStages(task, stages);
+    // 阶段是父任务状态的**来源**，不是它的附属（§4.1）：
+    // 勾满就完成、取消一个就不再完成，全靠这一步把新的阶段状态投影回去。
+    //
+    // 放在整表替换里而不是只放在「勾一个阶段」那条路上，是因为
+    // 不重复任务的勾选**走的就是整表替换**（没有单阶段命令，
+    // 见 `OccurrenceActions.setStageDone`）。挑一条路写的话，
+    // 编辑页里勾完保存和列表里勾一下会得出两种父任务状态。
+    await _repo.saveTaskWithStages(
+      projectStagesOntoTask(task, stages, now: _now()),
+      stages,
+    );
   }
 
   /// 阶段数只能是 **0 或 ≥2**（FR-TASK-02：「包含 2..N 个有序阶段」）。
@@ -483,10 +656,13 @@ final class CommandDispatcher {
     }
   }
 
-  Future<void> _completeWithStages(CompleteTaskWithStagesCommand c) async {
-    final task = await _require(c.taskId);
-    final stages = await _repo.findStagesOfTask(c.taskId);
-    final result = completeTaskWithStages(task, stages, now: _now());
-    await _repo.saveTaskWithStages(result.task, result.stages);
-  }
+  /// 与 `ChangeTaskStatusCommand(done)` **是同一件事**，转给它。
+  ///
+  /// 命令留着是因为它在协议里（`TaskCommand.allTypes`，导入与 Agent
+  /// 都会构造），删掉是破坏性变更；但实现只能有一份 ——
+  /// 两份的话，级联规则改一次就得记得改两处。
+  Future<void> _completeWithStages(CompleteTaskWithStagesCommand c) =>
+      _changeStatus(
+        ChangeTaskStatusCommand(taskId: c.taskId, status: TaskStatus.done),
+      );
 }

@@ -14,8 +14,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
-import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/task/application/recurrence_draft.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 
 import '../support/app_harness.dart';
@@ -32,11 +32,15 @@ Future<Harness> _pumpApp(WidgetTester tester) async {
 
 /// 每 2 天重复，从今天起。
 Future<void> _createEvery2Days(WidgetTester tester) async {
-  await tester.tap(find.byKey(AppShell.fabKey));
-  await tester.pumpAndSettle();
+  await tapCreate(tester, TaskShape.recurringSingle);
+  // **拨成全天。** 这一份的断言里写着 `2026-09-07=done` 这样的
+  // 发生标识；定时任务的标识带时刻（`2026-09-07T12:00`），
+  // 而那个时刻来自「下一个整点」—— 跟着跑测试的钟点走，不该进断言。
+  // 全天让标识退回纯日期，与这一份要验的「取消完成之后还能再标完成」
+  // 无关的变量就少一个。
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '吃药');
   await tester.pump();
-  await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+  await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
   await tapVisible(
     tester,
     TaskEditorPage.frequencyKey(RecurrenceFrequency.daily),

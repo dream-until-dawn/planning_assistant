@@ -33,6 +33,7 @@ TaskCardData _data({
   String? timeLabel = '14:00',
   String categoryName = '工作',
   (int, int)? stageProgress,
+  List<TaskCardStage> stages = const [],
   bool isDone = false,
   bool isOverdue = false,
   bool isRecurring = false,
@@ -42,10 +43,16 @@ TaskCardData _data({
   categoryColor: const Color(0xFF7FD1C1),
   timeLabel: timeLabel,
   stageProgress: stageProgress,
+  stages: stages,
   isDone: isDone,
   isOverdue: isOverdue,
   isRecurring: isRecurring,
 );
+
+const _stages = [
+  TaskCardStage(id: 's1', title: '打包', isDone: true),
+  TaskCardStage(id: 's2', title: '搬运', isDone: false),
+];
 
 /// 在指定字号缩放与主题下渲染一张卡片。
 Future<void> _pumpCard(
@@ -68,7 +75,11 @@ Future<void> _pumpCard(
         child: Scaffold(
           body: Padding(
             padding: const EdgeInsets.all(Spacing.pageHorizontal),
-            child: TaskCard(data: data, onToggleDone: () {}),
+            child: TaskCard(
+              data: data,
+              onToggleDone: () {},
+              onToggleStage: (_, _) {},
+            ),
           ),
         ),
       ),
@@ -121,6 +132,58 @@ void main() {
         );
       });
     }
+  });
+
+  group('阶段子项（用户第 ② 条）', () {
+    for (final scale in FontScale.goldenScales) {
+      testWidgets('缩放 $scale：子项的勾选框也 ≥48dp', (tester) async {
+        // 完成钮量过了，子项**没量过就等于没有** ——
+        // 它是卡片上第二种可点的东西，而且是更小的那一种。
+        await _pumpCard(
+          tester,
+          data: _data(stages: _stages),
+          textScale: scale,
+        );
+        final size = tester.getSize(find.byKey(TaskCard.stageKey('s1')));
+        expect(size.width, greaterThanOrEqualTo(Spacing.minTouchTarget));
+        expect(size.height, greaterThanOrEqualTo(Spacing.minTouchTarget));
+      });
+
+      testWidgets('缩放 $scale：子项标题不出屏', (tester) async {
+        await _pumpCard(
+          tester,
+          data: _data(
+            stages: const [
+              TaskCardStage(id: 's1', title: _longTitle, isDone: false),
+            ],
+          ),
+          textScale: scale,
+        );
+        // 长标题**截断**而不是把卡片顶宽 —— 子项只有一行。
+        expect(_paragraphOf(tester, _longTitle).didExceedMaxLines, isTrue);
+        expect(
+          tester.getRect(find.byType(TaskCard)).right,
+          lessThanOrEqualTo(tester.view.physicalSize.width),
+        );
+      });
+    }
+
+    testWidgets('没有回调时子项只读', (tester) async {
+      // 卡片被当成纯展示用（比如将来的只读预览）时，
+      // 勾选框不能看着能点、点了没反应。
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light(),
+          home: Scaffold(
+            body: TaskCard(data: _data(stages: _stages)),
+          ),
+        ),
+      );
+      expect(
+        tester.widget<Checkbox>(find.byKey(TaskCard.stageKey('s1'))).onChanged,
+        isNull,
+      );
+    });
   });
 
   group('触控目标：任何缩放下都 ≥48dp', () {

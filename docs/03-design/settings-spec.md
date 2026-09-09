@@ -142,7 +142,7 @@ Stream<T> watchSetting<T>(SettingSpec<T> spec);
 
 | key | 类型 | 默认值 | 暴露 | 说明 |
 |---|---|---|---|---|
-| `behavior.defaultDurationMinutes` | int | `60` | ✅ | 新任务默认时长 |
+| `behavior.defaultDuration` | enum | `24h` | ✅ | 新建**单事项**时，结束时间默认离开始多远：`1h` / `3h` / `24h` / `endOfDay`。用户的原话：「抽离为设置中的配置项吧交给用户决定，默认设置就是 +24 小时」<br>**不是一个分钟数**（初版写的是 `defaultDurationMinutes`）：「到当天结束」不是固定时长 —— 早上 9 点建的任务与晚上 9 点建的，它离开始分别是 15 小时和 3 小时。写成分钟数就表达不了这一档，而这一档恰恰是「今天之内做完」最常用的那个意思 |
 | `behavior.defaultCategoryId` | string | `uncategorized` | 🔒* | *不在设置页里，入口是[分类管理](#3-分类管理fr-cfg-03)每一行上的星标 —— 它的选项是用户自己的分类（运行时数据），而注册表里的 `select` 只能列静态选项。值为 `uncategorized` 时表示未分类；**这只是这一项配置的取值，不是第三种「未分类」的编码**（§3.0 仍然只认 `categoryId IS NULL`）。读出来时若指向一个已被删除的分类，回落成未分类 |
 | `behavior.defaultPriority` | int | `2` | ✅ | 普通 |
 | `behavior.swipeRight` | enum | `complete` | ✅ | complete / postpone / delete / none |

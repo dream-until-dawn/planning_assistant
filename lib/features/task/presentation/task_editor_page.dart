@@ -432,21 +432,47 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
                   onPick: controller.setEndMinute,
                 ),
             ],
-            const SizedBox(height: Spacing.xl),
-            _RecurrenceSection(
-              draft: draft.recurrence,
-              unsupported: draft.unsupportedRecurrence,
-              // 打开重复时控制器会补上日期，所以这里几乎总是非空；
-              // 兜底用今天，与 `setRecurrence` 补的是同一天。
-              anchor: draft.planDate ?? _today(),
-              controller: controller,
-            ),
-            const SizedBox(height: Spacing.xl),
-            _StageSection(
-              draft: draft,
-              today: _today(),
-              controller: controller,
-            ),
+            // ## 按形态显示区块（FR-TASK-01/02/03）
+            //
+            // 新建时用户已经在面板上选过了「是哪一样」，表单再把
+            // 五样的全部控件都摆出来，那次选择就白选了 ——
+            // 建一条临时事项时不必看见重复规则，建单事项时不必看见阶段。
+            //
+            // **认不出来的重复规则要例外**（`unsupportedRecurrence`）：
+            // 那时形态反推成「不重复」，而任务身上确实挂着一条规则。
+            // 不显示的话，用户打开它、保存，规则就被悄悄抹掉了 ——
+            // 那正是 `unsupportedRecurrence` 这个字段当初存在的理由。
+            //
+            // **只在新建时收窄。** 编辑一条已有任务时两个区块都留着 ——
+            // 「给这条任务加上重复」「把它拆成几个阶段」是正当的编辑，
+            // 而按形态藏起来的话那两条路就断了（形态是从当前字段
+            // 反推的，`TaskShape.of` 只看它现在是什么样）。
+            if (draft.isEditing ||
+                draft.shape.isRecurring ||
+                draft.unsupportedRecurrence != null) ...[
+              const SizedBox(height: Spacing.xl),
+              _RecurrenceSection(
+                draft: draft.recurrence,
+                unsupported: draft.unsupportedRecurrence,
+                // 打开重复时控制器会补上日期，所以这里几乎总是非空；
+                // 兜底用今天，与 `setRecurrence` 补的是同一天。
+                anchor: draft.planDate ?? _today(),
+                controller: controller,
+              ),
+            ],
+            // 阶段区同理。**已有阶段时也显示** —— 旧数据里可能有
+            // 「单项任务却挂着阶段」的行（早期版本没有这条约束），
+            // 藏起来的话那些阶段在界面上就再也够不着了。
+            if (draft.isEditing ||
+                draft.shape.hasStages ||
+                draft.stages.isNotEmpty) ...[
+              const SizedBox(height: Spacing.xl),
+              _StageSection(
+                draft: draft,
+                today: _today(),
+                controller: controller,
+              ),
+            ],
             const SizedBox(height: Spacing.xl),
             _ChecklistSection(draft: draft, controller: controller),
             const SizedBox(height: Spacing.xxxl),

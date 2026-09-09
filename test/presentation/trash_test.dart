@@ -36,8 +36,7 @@ Future<Harness> _pumpApp(WidgetTester tester) async {
 }
 
 Future<void> _createTask(WidgetTester tester, String title) async {
-  await tester.tap(find.byKey(AppShell.fabKey));
-  await tester.pumpAndSettle();
+  await tapCreate(tester);
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), title);
   await tester.pump();
   await tapVisible(tester, TaskEditorPage.saveButtonKey);
@@ -59,8 +58,7 @@ Future<void> _backdate(WidgetTester tester, Duration ago) async {
 }
 
 Future<void> _deleteFirst(WidgetTester tester) async {
-  await tester.tap(find.byType(TaskCard));
-  await tester.pumpAndSettle();
+  await openEditorFromCard(tester);
   await tester.tap(find.byKey(TaskEditorPage.deleteButtonKey));
   await tester.pumpAndSettle();
 }
@@ -77,8 +75,7 @@ void main() {
     await _createTask(tester, '买菜');
     expect(find.byType(TaskCard), findsOneWidget);
 
-    await tester.tap(find.byType(TaskCard));
-    await tester.pumpAndSettle();
+    await openEditorFromCard(tester);
     await tester.tap(find.byKey(TaskEditorPage.deleteButtonKey));
     await tester.pumpAndSettle();
 
@@ -96,8 +93,7 @@ void main() {
     await _pumpApp(tester);
     await _createTask(tester, '买菜');
 
-    await tester.tap(find.byType(TaskCard));
-    await tester.pumpAndSettle();
+    await openEditorFromCard(tester);
     await tester.tap(find.byKey(TaskEditorPage.deleteButtonKey));
     await tester.pumpAndSettle();
 
@@ -111,8 +107,7 @@ void main() {
 
   testAppWidgets('新建页上没有删除入口 —— 那儿没东西可删', (tester) async {
     await _pumpApp(tester);
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester);
     expect(find.byKey(TaskEditorPage.deleteButtonKey), findsNothing);
   });
 

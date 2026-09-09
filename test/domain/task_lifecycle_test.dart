@@ -300,8 +300,14 @@ void main() {
     });
   });
 
-  group('L-05 / L-06 父任务与阶段的不对称', () {
-    test('L-05 父任务标完成 → 所有阶段变 done', () {
+  group('L-05 / L-06 父任务与阶段双向同步（§4.2）', () {
+    // **这一组原本锁的是相反的规则**：取消父任务完成时不回滚阶段。
+    // 那条不对称的理由（「破坏用户已记录的阶段进度更糟」）站不住 ——
+    // 详见 `uncompleteTaskWithStages` 的注释。规则翻过来了，
+    // 这组测试跟着改写成锁新规则，而不是删掉：
+    // 删掉的话，将来谁把它改回不对称，没有任何东西会红。
+
+    test('L-05 父任务标完成 → 待办阶段全变 done', () {
       final r = completeTaskWithStages(task(kind: TaskKind.staged), [
         stage(0, TaskStatus.pending),
         stage(1, TaskStatus.inProgress),
@@ -314,24 +320,236 @@ void main() {
       expect(r.stages[0].completedAt, _later);
     });
 
-    test('L-06 父任务取消完成 → 阶段状态**保持不变**', () {
-      // 这条不对称是刻意的（§4.2）：破坏用户已记录的阶段进度，
-      // 比留下「父任务未完成但阶段全完成」更糟。
-      // 将来有人「顺手统一一下」改成回滚阶段，这条会变红。
-      final stages = [stage(0, TaskStatus.done), stage(1, TaskStatus.done)];
-      final r = uncompleteTaskKeepingStages(
+    test('L-05 标完成时**跳过的阶段不动**', () {
+      // 「跳过」是用户对那一步的判断，盖成 done 是替他改结论。
+      // 全 settled 且有 done，推导出来照样是 done，所以不会不一致。
+      final r = completeTaskWithStages(task(kind: TaskKind.staged), [
+        stage(0, TaskStatus.skipped),
+        stage(1, TaskStatus.pending),
+      ], now: _later);
+      expect(r.task.status, TaskStatus.done);
+      expect(r.stages[0].status, TaskStatus.skipped, reason: '跳过被盖成完成了');
+      expect(r.stages[1].status, TaskStatus.done);
+      expect(
+        deriveStatusFromStages(r.stages),
+        TaskStatus.done,
+        reason: '级联写出来的阶段，推导回去必须还是 done，否则父子对不上',
+      );
+    });
+
+    test('L-06 父任务取消完成 → 已完成的阶段一并回 pending', () {
+      final r = uncompleteTaskWithStages(
         task(status: TaskStatus.done, kind: TaskKind.staged),
-        stages,
+        [stage(0, TaskStatus.done), stage(1, TaskStatus.done)],
         now: _later,
       );
       expect(r.task.status, TaskStatus.pending);
       expect(r.task.completedAt, isNull, reason: '取消完成必须清 completedAt');
+      expect(r.stages.every((s) => s.status == TaskStatus.pending), isTrue);
       expect(
-        r.stages.every((s) => s.status == TaskStatus.done),
+        r.stages.every((s) => s.completedAt == null),
         isTrue,
-        reason: '阶段状态不该被回滚',
+        reason: 'completedAt 与 status 同进同退，回 pending 就该清掉',
       );
-      expect(r.stages, same(stages), reason: '连列表都不该重建');
+    });
+
+    test('L-06 取消完成时**跳过的阶段也不动**', () {
+      final r = uncompleteTaskWithStages(
+        task(status: TaskStatus.done, kind: TaskKind.staged),
+        [stage(0, TaskStatus.done), stage(1, TaskStatus.skipped)],
+        now: _later,
+      );
+      expect(r.stages[0].status, TaskStatus.pending);
+      expect(r.stages[1].status, TaskStatus.skipped, reason: '一来一回，跳过的还是跳过');
+    });
+
+    test('**一来一回，阶段回到原样**', () {
+      // 两个方向合起来才是「可逆」。任一方向漏了，这条就红。
+      final before = [
+        stage(0, TaskStatus.pending),
+        stage(1, TaskStatus.skipped),
+      ];
+      final done = completeTaskWithStages(
+        task(kind: TaskKind.staged),
+        before,
+        now: _later,
+      );
+      final back = uncompleteTaskWithStages(
+        done.task,
+        done.stages,
+        now: _later,
+      );
+
+      expect(
+        [for (final s in back.stages) s.status],
+        [for (final s in before) s.status],
+      );
+      // **任务落在这几个阶段推出来的那个值上，不一定是 pending。**
+      // 这里是 `inProgress`：有一步被跳过了，按 §4.1 那条
+      // 「部分 settled → inProgress」它就不是「一步都没动」。
+      // 起手那个 pending 本来就不是投影一致的状态（构造出来的），
+      // 所以一来一回之后落到 inProgress 不是没回来，是回到了对的地方。
+      expect(back.task.status, deriveStatusFromStages(back.stages));
+      expect(back.task.status, TaskStatus.inProgress);
+      expect(back.task.completedAt, isNull);
+    });
+
+    test('**用户自己勾过的那一步，取消完成时留着**（评审打回的 M-B1）', () {
+      // 级联**刻意跳过已经 done 的阶段**，所以对它们
+      // 「那份进度在标完成的那一下就被盖掉了」是假的 —— 一次都没碰过。
+      // 判据是完成时刻：级联写的那些与任务同一个 `now`。
+      final before = [
+        stage(0, TaskStatus.done), // 用户自己勾的，完成于 _now
+        stage(1, TaskStatus.skipped),
+        stage(2, TaskStatus.pending),
+      ];
+      final done = completeTaskWithStages(
+        task(kind: TaskKind.staged),
+        before,
+        now: _later,
+      );
+      expect(done.task.completedAt, _later);
+      expect(done.stages[2].completedAt, _later, reason: '级联补的那一步');
+      expect(done.stages[0].completedAt, _now, reason: '前提：两者完成时刻不同');
+
+      final back = uncompleteTaskWithStages(
+        done.task,
+        done.stages,
+        now: _later,
+      );
+      expect(
+        [for (final s in back.stages) s.status],
+        [
+          TaskStatus.done, // 留着
+          TaskStatus.skipped, // 留着
+          TaskStatus.pending, // 级联补的，收回
+        ],
+      );
+      expect(back.stages[0].completedAt, _now, reason: '连完成时刻都不该动');
+    });
+
+    test('对照组：全是级联写的，就全收回', () {
+      // 少了它，上一条分不清「只收回级联写的」与「什么都不收回」。
+      final done = completeTaskWithStages(task(kind: TaskKind.staged), [
+        stage(0, TaskStatus.pending),
+        stage(1, TaskStatus.pending),
+      ], now: _later);
+      final back = uncompleteTaskWithStages(
+        done.task,
+        done.stages,
+        now: _later,
+      );
+
+      expect(
+        [for (final s in back.stages) s.status],
+        [TaskStatus.pending, TaskStatus.pending],
+      );
+      expect(back.task.status, TaskStatus.pending);
+    });
+
+    test('逐个勾满推出来的 done，取消时收回最后勾的那一个', () {
+      // 这种来法里没有「级联写的那一批」，任务的完成时刻取自
+      // **最后一步**（`projectStagesOntoTask`），于是收回的就是它。
+      // 不收回任何东西的话，存的是 pending 而推出来还是 done ——
+      // 那正是初版规则留下的自相矛盾。
+      final stages = [
+        stage(0, TaskStatus.done), // 完成于 _now
+        stage(1, TaskStatus.done).copyWith(completedAt: _later),
+      ];
+      final projected = projectStagesOntoTask(
+        task(kind: TaskKind.staged),
+        stages,
+        now: _later,
+      );
+      expect(projected.status, TaskStatus.done);
+      expect(projected.completedAt, _later, reason: '完成于最后一步做完的那一刻');
+
+      final back = uncompleteTaskWithStages(projected, stages, now: _later);
+      expect(
+        [for (final s in back.stages) s.status],
+        [TaskStatus.done, TaskStatus.pending],
+      );
+      expect(back.task.status, TaskStatus.inProgress);
+    });
+  });
+
+  group('阶段投影回父任务（§4.1）', () {
+    test('勾满 → done；取消一个 → 不再是 done', () {
+      final t = task(kind: TaskKind.staged);
+      final full = projectStagesOntoTask(t, [
+        stage(0, TaskStatus.done),
+        stage(1, TaskStatus.done),
+      ], now: _later);
+      expect(full.status, TaskStatus.done);
+      // **取最后一步做完的那一刻，不是算这一下的那一刻**（两个阶段都
+      // 完成于 `_now`，所以是 `_now` 而不是传进去的 `_later`）。
+      // 这不只是语义更准：`uncompleteTaskWithStages` 靠
+      // 「完成时刻与任务相同」认出该收回哪一批。
+      expect(full.completedAt, _now);
+
+      final partial = projectStagesOntoTask(full, [
+        stage(0, TaskStatus.done),
+        stage(1, TaskStatus.pending),
+      ], now: _later);
+      expect(partial.status, TaskStatus.inProgress);
+      expect(partial.completedAt, isNull, reason: '不再是 done 就该清掉完成时刻');
+    });
+
+    test('**迁移表挡不住投影**：最后一个 done 改成跳过', () {
+      // `done → skipped` 在迁移表里是禁的（直接按出来多半是误操作）。
+      // 但把最后一个 done 的阶段改成跳过之后，父任务除了 skipped
+      // 没有别的值可取 —— 走 `applyStatusChange` 会抛，
+      // 于是用户看到的是「这个阶段改不动」。
+      final t = task(status: TaskStatus.done, kind: TaskKind.staged);
+      expect(
+        projectStagesOntoTask(t, [
+          stage(0, TaskStatus.skipped),
+          stage(1, TaskStatus.skipped),
+        ], now: _later).status,
+        TaskStatus.skipped,
+      );
+    });
+
+    test('墓碑阶段不算数', () {
+      // 整表替换会把刚删掉的阶段带在列表里。算进去的话，
+      // 删掉一个未完成的阶段不会让任务变完成。
+      final t = task(kind: TaskKind.staged);
+      final removed = stage(1, TaskStatus.pending).copyWith(deletedAt: _later);
+      expect(
+        projectStagesOntoTask(t, [
+          stage(0, TaskStatus.done),
+          removed,
+        ], now: _later).status,
+        TaskStatus.done,
+      );
+    });
+
+    test('三种情况原样返回：无阶段 / 重复 / 已归档', () {
+      final plain = task(status: TaskStatus.inProgress);
+      expect(projectStagesOntoTask(plain, [], now: _later), same(plain));
+
+      final recurring = task(rrule: 'RRULE:FREQ=DAILY');
+      expect(
+        projectStagesOntoTask(recurring, [
+          stage(0, TaskStatus.done),
+          stage(1, TaskStatus.done),
+        ], now: _later).status,
+        TaskStatus.pending,
+        reason: '重复任务的 status 恒为 pending，投影不该动它',
+      );
+
+      final archived = archive(
+        task(status: TaskStatus.pending, kind: TaskKind.staged),
+        now: _now,
+      );
+      expect(
+        projectStagesOntoTask(archived, [
+          stage(0, TaskStatus.done),
+          stage(1, TaskStatus.done),
+        ], now: _later).status,
+        TaskStatus.pending,
+        reason: '归档期间状态冻结，跟着阶段改会把「取消归档还原成什么」改掉',
+      );
     });
   });
 

@@ -5,6 +5,8 @@
 /// 空态不是占位符，它是规格里要求的一屏（§8.2）。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -19,6 +21,7 @@ import '../../shared/application/task_providers.dart';
 import '../../shared/application/view_shared_state.dart';
 import '../../shared/presentation/occurrence_card_data.dart';
 import '../../shared/presentation/toggle_done_action.dart';
+import '../../shared/presentation/toggle_stage_action.dart';
 import '../application/bulk_selection.dart';
 import '../application/task_grouping.dart';
 import '../application/task_list_providers.dart';
@@ -147,7 +150,15 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
                 // 列表复用时会认错行：勾一行动的是另一行。
                 key: ValueKey(task.id),
                 child: TaskCard(
-                  data: cardDataOf(ref, task),
+                  // **只有列表把阶段摊成子项**（用户第 ② 条）。
+                  data: cardDataOf(ref, task, withStages: true),
+                  // 多选模式下子项也不响应，同完成钮那条理由：
+                  // 模式开着时卡片上的每个框都该表示「选中」这一件事。
+                  onToggleStage: selection.isEmpty
+                      ? (id, done) => unawaited(
+                          toggleStageDone(context, ref, task, id, done: done),
+                        )
+                      : null,
                   // 就地完成（view-specs §0.3）。
                   //
                   // 完成后**不立即消失**（design-system §8.1）——
@@ -179,13 +190,14 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
                       ref.read(selectionProvider.notifier).toggle(task.id);
                       return;
                     }
-                    task.isOccurrence
-                        ? showOccurrenceActions(
-                            context,
-                            task,
-                            onEditSeries: widget.onEditTask,
-                          )
-                        : widget.onEditTask?.call(task.taskId);
+                    // **一律弹动作抽屉**（用户第①条，四个视图同一套）。
+                    unawaited(
+                      showOccurrenceActions(
+                        context,
+                        task,
+                        onEditSeries: widget.onEditTask,
+                      ),
+                    );
                   },
                 ),
               ),

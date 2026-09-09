@@ -36,11 +36,13 @@ TaskCardData cardDataOf(
   WidgetRef ref,
   TaskOccurrence row, {
   bool withTime = true,
+  bool withStages = false,
 }) => occurrenceCardData(
   row,
   ref.watch(categoryByIdProvider),
   today: ref.watch(todayProvider),
   withTime: withTime,
+  withStages: withStages,
 );
 
 /// 领域实体 → 卡片展示数据。
@@ -55,6 +57,14 @@ TaskCardData occurrenceCardData(
   /// 时间轴自己有一条时间栏，卡片再写一遍就是同一个时刻在一行里
   /// 出现两次。只有那一个视图关这个开关。
   bool withTime = true,
+
+  /// 把阶段摊成子项（用户第 ② 条）。**只有列表开**。
+  ///
+  /// 日历与甘特的卡片挤在格子里，多摞几行会把同一天的其它任务顶出
+  /// 可视区 —— 那两个视图回答的是「这一天有什么」。时间轴另有安排：
+  /// 它把阶段摆成了独立的卡片（上一批做的），再摊一次就是同一件事
+  /// 在一屏里出现两遍。
+  bool withStages = false,
 }) {
   final task = row.task;
   // `categoryId == null` 就是未分类（settings-spec §3.0）——
@@ -79,6 +89,18 @@ TaskCardData occurrenceCardData(
       null => null,
       final p => (p.done, p.total),
     },
+    // 子项的勾选状态**问行不问阶段**（同 `stageProgress` 那条）：
+    // 重复任务的 `Stage.status` 没人读，这一次的状态在另一张表。
+    stages: !withStages
+        ? const []
+        : [
+            for (final stage in row.stages)
+              TaskCardStage(
+                id: stage.id,
+                title: stage.title,
+                isDone: row.stageStatus(stage) == TaskStatus.done,
+              ),
+          ],
     isRecurring: task.isRecurring,
     // 「普通」不显示（见 `TaskCardData.priorityLabel`）。
     priorityLabel: task.priority == TaskPriority.normal

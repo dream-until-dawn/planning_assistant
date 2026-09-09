@@ -12,6 +12,7 @@ import '../entities/stage.dart';
 import '../entities/stage_occurrence_state.dart';
 import '../entities/task.dart';
 import '../services/all_day_conversion.dart';
+import '../services/recurrence_conversion.dart';
 import '../value_objects/occurrence_key.dart';
 
 /// 查询任务时的可见性范围（task-lifecycle §1.1 的三个谓词）。
@@ -79,11 +80,12 @@ abstract interface class TaskRepository {
   /// 写一条例外。
   ///
   /// **按 `(taskId, key)` 覆盖**，不是每次插一行 —— 一次发生只该有一条
-  /// 例外（data-model §4.3.1）。[completedAt] 只在状态转 done 时有意义。
-  Future<void> saveOverride(
-    OccurrenceOverride override, {
-    DateTime? completedAt,
-  });
+  /// 例外（data-model §4.3.1）。
+  ///
+  /// 完成时刻在 `override.completedAt` 上，**不再单独作参数传** ——
+  /// 单独传的那阵子，读路径没把它取回实体，凡是「在已有例外上叠加」
+  /// 的调用点都会把它悄悄丢掉。
+  Future<void> saveOverride(OccurrenceOverride override);
 
   /// 清掉一条例外，让那一次回到「跟随规则」。
   ///
@@ -134,11 +136,7 @@ abstract interface class TaskRepository {
   ///
   /// **必须原子**：任务改了而阶段状态没迁，那段时间里用户看到的是
   /// 「我做完的东西没了」——数据其实还在，只是读路径改看另一张表。
-  Future<void> applyRecurrenceConversion(
-    Task task,
-    List<Stage> stages,
-    List<StageOccurrenceState> states,
-  );
+  Future<void> applyRecurrenceConversion(RecurrenceConversion conversion);
 
   /// 写入任务及其阶段（同一事务）。
   ///

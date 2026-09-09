@@ -131,8 +131,7 @@ void main() {
       final harness = await _pumpApp(tester);
 
       // 先建一条有分类的任务，好让「按分类」分组有东西可分。
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '写周报');
       await tester.pump();
       await tester.tap(

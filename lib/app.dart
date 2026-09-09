@@ -38,6 +38,8 @@ import 'features/settings/presentation/category_manager_page.dart';
 import 'features/settings/presentation/settings_page.dart';
 import 'features/shell/presentation/app_shell.dart';
 import 'features/task/application/task_editor_controller.dart';
+import 'features/task/application/task_shape.dart';
+import 'features/task/presentation/create_task_menu.dart';
 import 'features/task/presentation/task_editor_page.dart';
 import 'features/trash/application/trash_purge.dart';
 import 'features/trash/presentation/trash_page.dart';
@@ -125,10 +127,18 @@ abstract final class AppRoutes {
   ///
   /// 与 [editTask] 的 `from` 同一个做法：改的是同一个页面的初值，
   /// 不是另一个页面，所以用查询参数而不是另开一条路由。
-  static String newTaskAt({PlanDate? date, MinuteOfDay? minute}) {
+  static String newTaskAt({
+    PlanDate? date,
+    MinuteOfDay? minute,
+    TaskShape? shape,
+  }) {
     final q = <String>[
       if (date != null) 'date=$date',
       if (minute != null) 'minute=${minute.value}',
+      // 新建时选的那一样（FR-TASK-01/02/03）。走查询参数而不是全局状态：
+      // 编辑页是一条**路由**，它的初值就该由路由带全 ——
+      // 从别处塞进一个 provider 的话，直接敲 `/task/new` 会拿到上一次的残留。
+      if (shape != null) 'shape=${shape.name}',
     ];
     return q.isEmpty ? newTask : '$newTask?${q.join('&')}';
   }
@@ -301,8 +311,12 @@ class _ShellRoute extends ConsumerStatefulWidget {
   ConsumerState<_ShellRoute> createState() => _ShellRouteState();
 }
 
-void _openEditor(BuildContext context, {PlanDate? date, MinuteOfDay? minute}) =>
-    context.go(AppRoutes.newTaskAt(date: date, minute: minute));
+void _openEditor(
+  BuildContext context, {
+  PlanDate? date,
+  MinuteOfDay? minute,
+  TaskShape? shape,
+}) => context.go(AppRoutes.newTaskAt(date: date, minute: minute, shape: shape));
 
 /// 查询参数 → 新建初值。**读不懂的参数一律当没给**。
 ///
@@ -325,8 +339,16 @@ NewTaskSeed? _seedFrom(Map<String, String> query) {
       rawMinute <= MinuteOfDay.maxValue) {
     minute = MinuteOfDay(rawMinute);
   }
-  if (date == null && minute == null) return null;
-  return (date: date, minute: minute);
+  TaskShape? shape;
+  final rawShape = query['shape'];
+  if (rawShape != null) {
+    for (final v in TaskShape.values) {
+      if (v.name == rawShape) shape = v;
+    }
+  }
+
+  if (date == null && minute == null && shape == null) return null;
+  return (date: date, minute: minute, shape: shape);
 }
 
 class _ShellRouteState extends ConsumerState<_ShellRoute> {
@@ -369,12 +391,24 @@ class _ShellRouteState extends ConsumerState<_ShellRoute> {
       header: const FilterBar(),
       // 加号带上**当前聚焦的那一天**，但只在对着某一天的视图里
       // （FR-VIEW-07，判据见 `ViewKind.anchorsToDay`）。
-      onCreateTask: () => _openEditor(
-        context,
-        date: current.anchorsToDay
-            ? ref.watch(viewSharedStateProvider).focusedDate
-            : null,
-      ),
+      // 加号：先弹面板选形态（FR-TASK-01/02/03），再进表单。
+      //
+      // 加号带上**当前聚焦的那一天**，但只在对着某一天的视图里
+      // （FR-VIEW-07，判据见 `ViewKind.anchorsToDay`）。
+      // 临时事项那一样例外 —— 它按定义不排时间，带日期就不是临时的了，
+      // 这一层由 `_newDraft` 按形态处理，这里照传即可。
+      onCreateTask: (fabContext) async {
+        final shape = await showCreateTaskMenu(fabContext);
+        // 点外面关掉 = 什么也不做。
+        if (shape == null || !context.mounted) return;
+        _openEditor(
+          context,
+          shape: shape,
+          date: current.anchorsToDay
+              ? ref.read(viewSharedStateProvider).focusedDate
+              : null,
+        );
+      },
       onOpenSettings: () => context.go(AppRoutes.settings),
     );
   }

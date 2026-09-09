@@ -12,6 +12,7 @@ import 'package:meta/meta.dart';
 
 import '../../../app_providers.dart';
 import '../../../core/patch/unset.dart';
+import '../../../core/time/date_and_minute.dart';
 import '../../../core/time/local_wall_time.dart';
 import '../../../core/time/minute_of_day.dart';
 import '../../../core/time/plan_date.dart';
@@ -22,9 +23,12 @@ import '../../../domain/entities/task.dart';
 import '../../../domain/value_objects/occurrence_key.dart';
 import '../../../domain/value_objects/recurrence.dart';
 import '../../../domain/value_objects/task_status.dart';
+import '../../settings/application/registry.dart';
+import '../../settings/application/settings_providers.dart';
 import '../../views/shared/application/category_providers.dart';
 import '../../views/shared/application/task_providers.dart';
 import 'recurrence_draft.dart';
+import 'task_shape.dart';
 
 /// 表单里的一个阶段（FR-TASK-02）。
 ///
@@ -118,6 +122,7 @@ final class StageDraft {
 /// 要么实体的不变量被放宽，要么表单没法表达「填一半」。
 final class TaskDraft {
   const TaskDraft({
+    this.shape = TaskShape.single,
     this.editingTaskId,
     this.splitAt,
     this.unsupportedRecurrence,
@@ -135,6 +140,14 @@ final class TaskDraft {
     this.recurrence = const RecurrenceDraft(),
     this.initialIsAllDay,
   });
+
+  /// 用户新建时选的那一样，或从已有任务反推出来的那一样
+  /// （[TaskShape.of]）。
+  ///
+  /// 它决定**表单长什么样、必填什么**：临时事项不显示日期区，
+  /// 单事项不显示阶段与重复区，等等。存下去之后它化进
+  /// `kind` / `recurrence` / `planDate` 三个字段里 —— 库里没有这个概念。
+  final TaskShape shape;
 
   /// 正在编辑哪条任务。**null = 新建**。
   ///
@@ -303,12 +316,25 @@ final class TaskDraft {
     if (stages.isNotEmpty && filledStages.length == 1) {
       return '阶段事项至少要两个阶段';
     }
+    // 起止必填 —— **临时事项除外**（FR-TASK-01，2026-09-09 用户改的验收）。
+    //
+    // 「仅填标题即可保存」现在是临时事项那一档的性质，不再是所有单项的。
+    // 只卡**新建**：库里已有起止为空的旧任务，编辑它们时再要求补齐，
+    // 等于拿新规矩去堵一条本来合法的旧数据（用户明确说「只管新建」）。
+    if (!isEditing && shape.needsSchedule) {
+      if (planDate == null) return '要先选开始日期';
+      if (endDate == null) return '要先选结束日期';
+      if (!isAllDay && (startMinute == null || endMinute == null)) {
+        return '要填开始与结束时刻，或者打开「全天」';
+      }
+    }
     if (_taskEndsBeforeStart) return '结束时间早于开始时间';
     if (_recurrenceEndsBeforeStart) return '重复的结束日期早于开始日期';
     return recurrence.blockedReason;
   }
 
   TaskDraft copyWith({
+    TaskShape? shape,
     String? title,
     String? note,
     bool? isAllDay,
@@ -323,6 +349,7 @@ final class TaskDraft {
     bool? initialIsAllDay,
     RecurrenceDraft? recurrence,
   }) => TaskDraft(
+    shape: shape ?? this.shape,
     editingTaskId: editingTaskId,
     splitAt: splitAt,
     unsupportedRecurrence: unsupportedRecurrence,
@@ -366,6 +393,9 @@ TaskDraft draftFromTask(
       : RecurrenceDraft.fromRrule(recurrence);
 
   return TaskDraft(
+    // 从已有任务反推是哪一样。**不是双射**，理由见 `TaskShape.of` ——
+    // 反推只看当前字段，不猜当初是怎么建的。
+    shape: TaskShape.of(task),
     editingTaskId: task.id,
     splitAt: splitAt,
     unsupportedRecurrence: recurrence != null && restored == null
@@ -424,7 +454,7 @@ final editingSplitAtProvider = Provider<OccurrenceKey?>((ref) => null);
 final newTaskSeedProvider = Provider<NewTaskSeed?>((ref) => null);
 
 /// 见 [newTaskSeedProvider]。两个分量都可缺。
-typedef NewTaskSeed = ({PlanDate? date, MinuteOfDay? minute});
+typedef NewTaskSeed = ({PlanDate? date, MinuteOfDay? minute, TaskShape? shape});
 
 /// 表单控制器。
 final class TaskEditorController extends Notifier<TaskDraft> {
@@ -438,20 +468,122 @@ final class TaskEditorController extends Notifier<TaskDraft> {
   /// `defaultCategoryIdProvider` 已经对着当前分类表校过了：
   /// 配置里指着一个被删掉的分类时回落成未分类，而不是造出一条
   /// 指向死分类的任务。
+  /// 新建表单的初值，按选的那一样给。
+  ///
+  /// ## 时间怎么来
+  ///
+  /// | | 日期 | 起止时刻 |
+  /// |---|---|---|
+  /// | 临时事项 | **不给** | 不给 |
+  /// | 其余四样 | 入口带的，否则今天 | 入口带的，否则**下一个整点** |
+  ///
+  /// 「下一个整点」是用户定的（2026-09-09）：新建时给一个当场就能用的
+  /// 起点，比给「此刻 14:37」这种数好 —— 没有人把事情排在 14:37。
+  /// 结束由配置项 `behavior.defaultDuration` 决定（默认 +24 小时）。
+  TaskDraft _newDraft(TaskShape shape, NewTaskSeed? seed) {
+    final categoryId = ref.read(defaultCategoryIdProvider);
+    if (!shape.needsSchedule) {
+      // 临时事项：不排时间，连日期都不给 —— 给了它就不是临时的了。
+      return TaskDraft(shape: shape, categoryId: categoryId);
+    }
+
+    final today = ref.read(todayProvider);
+    final date = seed?.date ?? today;
+    final duration = settingOf(ref, defaultTaskDuration);
+
+    // ## 只给了日期 = 那一天的**全天**任务
+    //
+    // 从日历翻到某天点加号，用户说的是「这一天」，不是「这一天的某点」。
+    // 补一个时刻的话它会跑到时间轴最顶上去（FR-VIEW-07 的验收里
+    // 专门有一条钉这个）。
+    //
+    // 反过来，面板上直接选「单事项」时没有任何日期语境 ——
+    // 那时按用户定的规矩给**下一个整点**，因为单事项要求具体起止。
+    final allDay = seed?.date != null && seed?.minute == null;
+    if (allDay) {
+      return TaskDraft(
+        shape: shape,
+        categoryId: categoryId,
+        planDate: date,
+        endDate: duration.endDateFrom(date),
+        recurrence: _seedRecurrence(shape),
+      );
+    }
+
+    // 入口带了时刻（时间轴/甘特上长按某一刻）就用它，否则下一个整点。
+    final start = seed?.minute ?? _nextWholeHour();
+    final end = duration.endFrom(DateAndMinute(date, start));
+
+    return TaskDraft(
+      shape: shape,
+      categoryId: categoryId,
+      planDate: date,
+      isAllDay: false,
+      startMinute: start,
+      endDate: end.date,
+      endMinute: end.minute,
+      recurrence: _seedRecurrence(shape),
+    );
+  }
+
+  /// 阶段形态**不预置空阶段**。
+  ///
+  /// 一度给了两个空的（想让「至少两个」这条要求在表单上自己说出来）。
+  /// 代价比收益大：用户按「加一个阶段」时，新的一行加在那两个空行**后面**，
+  /// 于是表单上是「两个空的 + 他填的那些」，而空的在保存时被丢掉 ——
+  /// 界面上的顺序与存下去的顺序对不上。
+  ///
+  /// 阶段区本身已经由形态显示出来了（那是选「阶段事项」的可见结果），
+  /// 「至少两个」由保存时的 `blockedReason` 说明。
+  /// 重复形态开局就**打开**重复开关。
+  ///
+  /// 不打开的话，「重复单事项」存下去是一条不重复的任务 ——
+  /// 用户在面板上说的那句话被丢掉了。默认「每天」是 `RecurrenceDraft`
+  /// 自己的默认频率，这里只把开关拨到 on。
+  RecurrenceDraft _seedRecurrence(TaskShape shape) => shape.isRecurring
+      ? const RecurrenceDraft(enabled: true)
+      : const RecurrenceDraft();
+
+  /// 此刻之后的下一个整点。23 点之后是次日 00:00 —— 由 `shiftFrom` 处理，
+  /// 这里只算分钟数，跨天交给调用方那次 `endFrom`。
+  MinuteOfDay _nextWholeHour() {
+    final resolver = ref.read(timeZoneResolverProvider);
+    final now = resolver.toWallTime(
+      ref.read(clockProvider).nowUtc(),
+      resolver.currentZoneId(),
+    );
+    final hour = now.minuteOfDay.value ~/ 60;
+    // 23:xx 的下一个整点是次日 00:00 —— 落回 0 点，日期那一半
+    // 由结束时间的偏移去处理（开始留在今天是对的：用户还在今天）。
+    return MinuteOfDay(hour >= 23 ? 0 : (hour + 1) * 60);
+  }
+
   @override
   TaskDraft build() {
     final editingId = ref.read(editingTaskIdProvider);
     if (editingId == null) {
       final seed = ref.read(newTaskSeedProvider);
-      return TaskDraft(
-        categoryId: ref.read(defaultCategoryIdProvider),
-        planDate: seed?.date,
-        // 给了时刻就是一条定时任务；只给日期的仍是全天
-        // （默认值 true）—— 从日历翻到某天点加号，用户表达的是
-        // 「这一天」，不是「这一天的 00:00」。
-        isAllDay: seed?.minute == null,
-        startMinute: seed?.minute,
-      );
+      // ## 没指定形态时按「临时事项」，不是「单事项」
+      //
+      // 界面上没有「不选」这条路（加号弹出的面板五选一），所以走到这里
+      // 的只有**不带形态的直接唤起**：手敲 `/task/new`、将来的小组件、
+      // 语音入口。
+      //
+      // 那时候正确的默认是**最不承诺的那一样**：临时事项什么都不必填，
+      // 而单事项要求起止 —— 拿一个我们并不知道用户想要的日期去预填，
+      // 再要求他必须填完才能存，是替他做了两次决定。
+      // 「随手记一件事」本来就是这类入口最常见的意图。
+      //
+      // **但入口带了日期/时刻就不一样**：甘特上长按 14:00、日历翻到
+      // 9/20 再点加号 —— 用户已经说出了「什么时候」，那就是一条单事项。
+      // 一律当临时事项的话，那句话会被直接丢掉（FR-VIEW-07 的验收
+      // 就是在说这件事）。
+      final shape =
+          seed?.shape ??
+          (seed?.date != null || seed?.minute != null
+              ? TaskShape.single
+              : TaskShape.scratch);
+      return _newDraft(shape, seed);
     }
     // **全程用 read，不用 watch。** watch 的话，库里任何一次推送
     // （别的任务变了、分类流来了一帧）都会重建 Notifier，

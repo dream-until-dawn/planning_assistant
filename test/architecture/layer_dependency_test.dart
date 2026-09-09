@@ -79,6 +79,30 @@ bool _isGeneratedPath(String relToLib) =>
 
 String _norm(String path) => path.replaceAll(r'\', '/');
 
+/// **豁免必须落在守卫的扫描范围里**，而且要按 lib 相对路径锚。
+///
+/// 两件事，都被踩过：
+///
+/// 一、`stage.status` 那条名单里原本有 `stage_occurrence_status.dart`，
+/// 而那个文件在 `domain/services/`，扫描只走 `features/views/` ——
+/// 它**永远轮不到被跳过**。反僵尸那条查不出来：它验的是
+/// 「文件还在、还在做那件事」，两样都成立。一条从来没生效过的豁免就这样
+/// 挂着，读的人以为那儿开了个口子，实际上守卫压根到不了那里。
+///
+/// 二、名单原本按 **basename** 比对。那样写一个 `foo.dart`，
+/// `features/views/**` 下**任何**一个 `foo.dart` 都被豁免 ——
+/// 豁免范围大于它写明的范围。评审提的。
+void _expectExemptionsAreReachable(Set<String> allowed, List<File> libFiles) {
+  final scanned = libFiles
+      .map((f) => _relToLib(f.path))
+      .whereType<String>()
+      .where((r) => r.startsWith('features/views/'))
+      .toSet();
+  for (final path in allowed) {
+    expect(scanned, contains(path), reason: '豁免 $path 落在扫描范围之外 —— 它从来没生效过，删掉它');
+  }
+}
+
 String? _relToLib(String path) {
   final p = _norm(path);
   final i = p.indexOf('lib/');
@@ -638,9 +662,9 @@ import
     // 白名单锚定确切文件名，每条写清理由。
     const allowed = {
       // 派生跨度的定义处：`endDate`/`endMinute` 的委托就在它身上。
-      'task_occurrence.dart',
+      'features/views/shared/application/task_occurrence.dart',
       // 展开时要把存储的起止算成原始跨度，那是 `span` 的**上游**。
-      'occurrence_expansion.dart',
+      'features/views/shared/application/occurrence_expansion.dart',
     };
 
     // **必须用 raw 串拼**：普通串里的 `\b` 是退格符，不是单词边界 ——
@@ -654,7 +678,7 @@ import
     for (final file in libFiles) {
       final rel = _relToLib(file.path);
       if (rel == null || !rel.startsWith('features/views/')) continue;
-      if (allowed.contains(rel.split('/').last)) continue;
+      if (allowed.contains(rel)) continue;
       scanned++;
       final lines = file.readAsLinesSync();
       for (var i = 0; i < lines.length; i++) {
@@ -674,9 +698,10 @@ import
           '视图侧直接读了原始结束时刻，请改用 row.span / effectiveEnd：\n'
           '${violations.join('\n')}',
     );
+    _expectExemptionsAreReachable(allowed, libFiles);
   });
 
-  test('视图侧不得直接读 stage.status（FR-TASK-07）', () {
+  test('视图侧不得自己判断阶段做完没有（FR-TASK-07）', () {
     // ## 它防的和上面那条是同一件事
     //
     // 阶段状态有两个存储位置：不重复的任务在 `Stage.status`，
@@ -689,23 +714,36 @@ import
     // 任务，列表说「阶段 1/2」、甘特说「0/2」，两边都不报错。
     // 当时全套测试是绿的。
     //
+    // ## 两种写法，同一条规则
+    //
+    // 它一度只盯 `stage.status`。可**直接调 `stageStatusFor` 一样能走偏**：
+    // 那个函数的 `occurrenceStates` 传 null 才表示「这条任务不重复」，
+    // 传空表表示「这一次一步都没做」。单次弹层把不重复的行传成了空表 ——
+    // 于是不重复任务的勾选框**打开是空的、勾完还是空的**，
+    // 而这条守卫全绿：它没读 `stage.status`。
+    //
+    // 规则本来就是「视图侧问『这一步做完没有』只许经
+    // `row.stageStatus`」，两种写法都违反它。盯字段不盯判据，
+    // 就只挡得住其中一种拼法。
+    //
     // 同上一条：**名字启发式，不是类型分析**。只盯 `stage.` / `s.`
     // 这两个接收者名 —— 这个仓库里表示一个阶段的就是它们。
     const receivers = ['stage', 's'];
     const allowed = {
-      // 分流本身住在这儿。
-      'stage_occurrence_status.dart',
-      // 行上的唯一入口，它调上面那个。
-      'task_occurrence.dart',
+      // 行上的唯一入口，分流（不重复看 `Stage.status`、重复看这一次）
+      // 就写在它里面。
+      'features/views/shared/application/task_occurrence.dart',
     };
 
-    final pattern = RegExp(r'\b(' + receivers.join('|') + r')\.status\b');
+    final pattern = RegExp(
+      r'\bstageStatusFor\s*\(|\b(' + receivers.join('|') + r')\.status\b',
+    );
     final violations = <String>[];
     var scanned = 0;
     for (final file in libFiles) {
       final rel = _relToLib(file.path);
       if (rel == null || !rel.startsWith('features/views/')) continue;
-      if (allowed.contains(rel.split('/').last)) continue;
+      if (allowed.contains(rel)) continue;
       scanned++;
       final lines = file.readAsLinesSync();
       for (var i = 0; i < lines.length; i++) {
@@ -721,9 +759,11 @@ import
       violations,
       isEmpty,
       reason:
-          '视图侧直接读了阶段自己的状态，请改用 row.stageStatus(stage)：\n'
+          '视图侧自己判断了阶段做完没有，请改用 row.stageStatus(stage)：\n'
           '${violations.join('\n')}',
     );
+
+    _expectExemptionsAreReachable(allowed, libFiles);
   });
 
   test('两条视图侧 lint 的白名单文件都在，而且真的还在做被豁免的那件事', () {
@@ -752,8 +792,10 @@ import
       'occurrence_expansion.dart': RegExp(
         r'\b(row|task|occurrence)\.(endDate|endMinute)\b',
       ),
-      // `stage.status` lint：分流本身住在这儿。
-      'stage_occurrence_status.dart': RegExp(r'\b(stage|s)\.status\b'),
+      // `stage.status` lint 的豁免只剩 `task_occurrence.dart` 一处，
+      // 而它已经被上面那条 `endDate` 豁免锚住了。
+      // （原先这儿还有 `stage_occurrence_status.dart`，
+      // 那条豁免落在扫描范围之外，从来没生效过 —— 见那条守卫里的说明。）
     };
 
     final present = {

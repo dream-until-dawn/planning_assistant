@@ -19,6 +19,7 @@ import 'package:planning_assistant/app.dart';
 import 'package:planning_assistant/core/time/date_and_minute.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
+import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/domain/entities/category.dart';
 import 'package:planning_assistant/domain/entities/stage.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
@@ -28,6 +29,7 @@ import 'package:planning_assistant/features/views/gantt/presentation/gantt_paint
 import 'package:planning_assistant/features/views/gantt/presentation/gantt_view.dart';
 import 'package:planning_assistant/features/views/shared/application/view_kind.dart';
 import 'package:planning_assistant/features/views/shared/application/view_shared_state.dart';
+import 'package:planning_assistant/features/views/task_list/presentation/occurrence_actions_sheet.dart';
 import 'package:planning_assistant/features/views/timeline/application/timeline_providers.dart';
 import 'package:planning_assistant/features/views/timeline/presentation/timeline_page.dart';
 
@@ -276,6 +278,39 @@ void main() {
     final state = container.read(viewSharedStateProvider);
     expect(state.filter.categoryIds, {'life'});
     expect(state.focusedDate, const PlanDate(2026, 9, 20));
+  });
+
+  testAppWidgets('FR-VIEW-05 点一行：三个卡片视图弹的是同一个抽屉', (tester) async {
+    // 用户第①条：「统一任务点击，无论是否重复任务都出现抽屉选项」。
+    //
+    // 从前不重复的任务点一下直接进编辑页 —— 于是同一行上「完成」要点
+    // 卡片左边那个小圆钮、「编辑」要点卡片本身，而重复任务那边两个
+    // 动作都在抽屉里。**一个视图里两套交互**，切到另一个视图又不一样。
+    //
+    // 这一条遍历三个有卡片的视图（甘特画的是条，不是卡片）——
+    // 一条规格说「四视图一致」，守卫的宇宙就该跟着规格划。
+    final container = await _pumpShell(tester);
+    expect(container, isNotNull);
+
+    for (final kind in [ViewKind.list, ViewKind.timeline, ViewKind.calendar]) {
+      await _switchTo(tester, kind);
+      await tester.tap(find.byType(TaskCard).first);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(OccurrenceSheetKeys.sheet),
+        findsOneWidget,
+        reason: '${kind.label}视图里点一行没弹抽屉',
+      );
+      expect(
+        find.byKey(OccurrenceSheetKeys.toggleDone),
+        findsOneWidget,
+        reason: '${kind.label}视图的抽屉里没有「完成」',
+      );
+
+      Navigator.of(tester.element(find.byKey(OccurrenceSheetKeys.sheet))).pop();
+      await tester.pumpAndSettle();
+    }
   });
 
   testAppWidgets('J-03 的一半：末阶段超出 endDate 时，甘特与时间轴同一个跨度', (tester) async {

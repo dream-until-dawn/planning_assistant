@@ -22,8 +22,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
-import 'package:planning_assistant/design/components/task_card.dart';
-import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 
 import '../support/app_harness.dart';
@@ -55,8 +54,7 @@ Future<void> _createWithChecklist(
   String title,
   List<String> items,
 ) async {
-  await tester.tap(find.byKey(AppShell.fabKey));
-  await tester.pumpAndSettle();
+  await tapCreate(tester);
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), title);
   await tester.pump();
   for (final i in items) {
@@ -66,8 +64,7 @@ Future<void> _createWithChecklist(
 }
 
 Future<void> _reopen(WidgetTester tester) async {
-  await tester.tap(find.byType(TaskCard).first);
-  await tester.pumpAndSettle();
+  await openEditorFromCard(tester);
 }
 
 /// 把清单区滚进视野。
@@ -155,8 +152,7 @@ void main() {
 
   testAppWidgets('空行不落库 —— 点了「加一项」没打字不算一项', (tester) async {
     final harness = await _pumpApp(tester);
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester);
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '出门');
     await tester.pump();
     await tapVisible(tester, TaskEditorPage.addChecklistKey);
@@ -204,8 +200,7 @@ void main() {
   testAppWidgets('清单与阶段可以同时有，互不影响', (tester) async {
     // 两者是**并列**的两种拆分，不是二选一。
     final harness = await _pumpApp(tester);
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester, TaskShape.staged);
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
     await tester.pump();
 

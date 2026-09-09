@@ -17,6 +17,24 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../tokens/dimensions.dart';
 
+/// 卡片上的一个阶段子项。
+///
+/// **只带勾选要用的三样**。阶段自己还有时间段与颜色，
+/// 但子项这一行不显示它们 —— 那两样是甘特与时间轴在排布时用的，
+/// 摆到列表的子项上只会把「这一步做没做」这句话淹掉。
+@immutable
+final class TaskCardStage {
+  const TaskCardStage({
+    required this.id,
+    required this.title,
+    required this.isDone,
+  });
+
+  final String id;
+  final String title;
+  final bool isDone;
+}
+
 /// 卡片要显示的一条任务。**不是领域实体**，是展示用的整形结果。
 @immutable
 final class TaskCardData {
@@ -26,6 +44,7 @@ final class TaskCardData {
     required this.categoryColor,
     this.timeLabel,
     this.stageProgress,
+    this.stages = const [],
     this.isDone = false,
     this.isOverdue = false,
     this.isRecurring = false,
@@ -44,6 +63,17 @@ final class TaskCardData {
 
   /// 阶段事项的 `(已完成, 总数)`；非阶段事项为 null。
   final (int done, int total)? stageProgress;
+
+  /// 摊开在卡片下方的阶段子项（用户第 ② 条）。
+  ///
+  /// **空表 = 不摊开**，与「这条任务没有阶段」是同一种表现，也确实是
+  /// 同一件事：只有列表视图传它。日历与甘特上的卡片本来就挤在格子里，
+  /// 再摞几行子项会把一天的其它任务挤出可视区，而那两个视图的重点是
+  /// **这一天有什么**，不是**这件事做到哪一步**。
+  ///
+  /// [stageProgress] 仍然照常显示 —— 两者一个是摘要一个是明细，
+  /// 摊开时上面那行 `阶段 1/2` 正好是这几行的合计。
+  final List<TaskCardStage> stages;
 
   final bool isDone;
   final bool isOverdue;
@@ -68,6 +98,7 @@ class TaskCard extends StatelessWidget {
   const TaskCard({
     required this.data,
     this.onToggleDone,
+    this.onToggleStage,
     this.onTap,
     this.onLongPress,
     this.selected = false,
@@ -76,6 +107,13 @@ class TaskCard extends StatelessWidget {
 
   final TaskCardData data;
   final VoidCallback? onToggleDone;
+
+  /// 勾/取消一个阶段子项。为 null 时子项只读（勾选框灰着）。
+  ///
+  /// **卡片自己不知道该往哪张表写**：不重复的任务状态在 `Stage.status`，
+  /// 重复的在这一次的 `stage_occurrence_states`。那条分岔在
+  /// `OccurrenceActions.setStageDone` 里，卡片只报「用户点了哪个」。
+  final void Function(String stageId, bool done)? onToggleStage;
 
   /// 点卡片本身（view-specs §0.3：点击实例 → 打开详情）。
   ///
@@ -102,6 +140,9 @@ class TaskCard extends StatelessWidget {
   /// widget 测试默认不建语义树，`bySemanticsLabel` 找不到东西，
   /// 而为了量个尺寸就去开语义树是把两件事混在一起。
   static const Key doneButtonKey = ValueKey('task-card-done-button');
+
+  /// 一个阶段子项的勾选框。
+  static Key stageKey(String stageId) => ValueKey('task-card-stage-$stageId');
 
   /// 重复标记的图标。
   ///
@@ -179,32 +220,54 @@ class TaskCard extends StatelessWidget {
                   ? null
                   : Text(data.timeLabel!, style: timeStyle);
 
-              return Row(
+              return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  DoneButton(
-                    key: TaskCard.doneButtonKey,
-                    isDone: data.isDone,
-                    onPressed: onToggleDone,
-                  ),
-                  const SizedBox(width: Spacing.iconToText),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _Body(data: data),
-                        if (stacked) ...[
-                          const SizedBox(height: Spacing.xs),
-                          time!,
-                        ],
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      DoneButton(
+                        key: TaskCard.doneButtonKey,
+                        isDone: data.isDone,
+                        onPressed: onToggleDone,
+                      ),
+                      const SizedBox(width: Spacing.iconToText),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _Body(data: data),
+                            if (stacked) ...[
+                              const SizedBox(height: Spacing.xs),
+                              time!,
+                            ],
+                          ],
+                        ),
+                      ),
+                      if (time != null && !stacked) ...[
+                        const SizedBox(width: Spacing.iconToText),
+                        time,
                       ],
-                    ),
+                    ],
                   ),
-                  if (time != null && !stacked) ...[
-                    const SizedBox(width: Spacing.iconToText),
-                    time,
-                  ],
+                  // 子项**缩进到与标题对齐**：左边让出完成钮那一格。
+                  // 顶格摆的话，子项和它上面那条任务看起来是平级的，
+                  // 而它们恰恰不是 —— 缩进就是「这几行属于上面那条」
+                  // 这句话本身。
+                  for (final stage in data.stages)
+                    Padding(
+                      padding: const EdgeInsets.only(
+                        left: Spacing.minTouchTarget + Spacing.iconToText,
+                      ),
+                      child: _StageRow(
+                        stage: stage,
+                        onToggle: onToggleStage == null
+                            ? null
+                            : (v) => onToggleStage!(stage.id, v),
+                      ),
+                    ),
                 ],
               );
             },
@@ -272,6 +335,55 @@ bool _timeCrowdsTitle(
 
 /// 时间最多可以占内容宽度的比例。超过就下沉到下一行。
 const double _timeWidthBudget = 0.4;
+
+/// 一行阶段子项：一个勾选框 + 标题。
+///
+/// **不用 `CheckboxListTile`**：那个组件自带 16dp 的水平内边距与
+/// 最小 56dp 的行高，摞三行就把一张卡片撑到两倍高，
+/// 而这里要的是「贴在任务下面的几小行」。
+class _StageRow extends StatelessWidget {
+  const _StageRow({required this.stage, this.onToggle});
+
+  final TaskCardStage stage;
+  final ValueChanged<bool>? onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        // 勾选框的触控区靠 `Checkbox` 自己的 padded 目标撑到 48dp，
+        // 不是画一个 48dp 的方框 —— 后者在视觉上会变成一个大色块。
+        //
+        // **不设 `visualDensity: compact`。** 一度设了，为的是让子项
+        // 挨得紧一点；那一档把触控目标从 48 缩到 40，断言当场变红。
+        // 子项行密不密是观感，40dp 的勾选框是**点不准**——
+        // 而这几行恰恰是要一路点下去的那种东西。
+        Checkbox(
+          key: TaskCard.stageKey(stage.id),
+          value: stage.isDone,
+          onChanged: onToggle == null ? null : (v) => onToggle!(v ?? false),
+        ),
+        Expanded(
+          child: Text(
+            stage.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: text.bodySmall?.copyWith(
+              // **只划线，不再调暗。** 子项本来就是 `bodySmall`
+              // （副信息那一档的颜色），在这个基础上再压一层，
+              // 走的就是标题那条注释里记下的老路 —— 淡到读不出，
+              // 而断言与 golden 都不会红。
+              decoration: stage.isDone ? TextDecoration.lineThrough : null,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 class _Body extends StatelessWidget {
   const _Body({required this.data});

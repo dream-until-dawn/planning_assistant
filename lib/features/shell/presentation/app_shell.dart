@@ -51,7 +51,14 @@ class AppShell extends ConsumerWidget {
 
   /// 视图上方的常驻条（筛选条）。由组合根提供，外壳不认识它。
   final Widget? header;
-  final VoidCallback? onCreateTask;
+
+  /// 点加号。**参数是加号自己的 context** —— 组合根要拿它当锚点，
+  /// 把新建面板从这个按钮上长出来（`showCreateTaskMenu`）。
+  ///
+  /// 传 context 而不是让外壳自己弹面板：面板上那五样是 task feature
+  /// 的概念，外壳不该认识它们（module-map §3，同 `viewBuilder`
+  /// 与筛选条的处理）。
+  final void Function(BuildContext fabContext)? onCreateTask;
   final VoidCallback? onOpenSettings;
 
   static const Key fabKey = ValueKey('shell-create-task');
@@ -109,30 +116,34 @@ class AppShell extends ConsumerWidget {
                 shape: BoxShape.circle,
                 boxShadow: colors.cardShadow,
               ),
-              child: FloatingActionButton(
-                key: fabKey,
-                onPressed: onCreateTask,
-                backgroundColor: colors.brandFill,
-                foregroundColor: colors.onBrand,
-                // Material 默认的 elevation 6 会在药丸边上压出一圈很硬的
-                // 深阴影，与 §6「不用锐利深阴影」的基调打架 ——
-                // golden 里那圈黑边一眼就能看见。
-                // 阴影统一由 token 画（cardShadow），这里关掉 Material 的。
-                elevation: 0,
-                highlightElevation: 0,
-                focusElevation: 0,
-                hoverElevation: 0,
-                // 正圆，不用 M3 默认的圆角方形 —— 后者偏硬，
-                // 与 §1「可爱清新」的基调不合。用 Radii.full 而不是写死
-                // `CircleBorder()`，是为了让它跟着圆角档位那套走
-                // （full 按 CornerStyle 的约定不参与缩放，永远是药丸/正圆）。
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(
-                    context.appShape.radius(Radii.full),
+              child: Builder(
+                // 单独包一层 `Builder`：`onCreateTask` 要的是**按钮自己**
+                // 的 context（用来定位面板），而不是整个 Scaffold 的。
+                builder: (fabContext) => FloatingActionButton(
+                  key: fabKey,
+                  onPressed: () => onCreateTask!(fabContext),
+                  backgroundColor: colors.brandFill,
+                  foregroundColor: colors.onBrand,
+                  // Material 默认的 elevation 6 会在药丸边上压出一圈很硬的
+                  // 深阴影，与 §6「不用锐利深阴影」的基调打架 ——
+                  // golden 里那圈黑边一眼就能看见。
+                  // 阴影统一由 token 画（cardShadow），这里关掉 Material 的。
+                  elevation: 0,
+                  highlightElevation: 0,
+                  focusElevation: 0,
+                  hoverElevation: 0,
+                  // 正圆，不用 M3 默认的圆角方形 —— 后者偏硬，
+                  // 与 §1「可爱清新」的基调不合。用 Radii.full 而不是写死
+                  // `CircleBorder()`，是为了让它跟着圆角档位那套走
+                  // （full 按 CornerStyle 的约定不参与缩放，永远是药丸/正圆）。
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(
+                      context.appShape.radius(Radii.full),
+                    ),
                   ),
+                  tooltip: '新建任务',
+                  child: const Icon(Icons.add),
                 ),
-                tooltip: '新建任务',
-                child: const Icon(Icons.add),
               ),
             ),
     );

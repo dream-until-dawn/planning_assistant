@@ -20,6 +20,7 @@ import 'package:planning_assistant/features/settings/application/settings_provid
 import 'package:planning_assistant/features/settings/domain/setting_spec.dart';
 import 'package:planning_assistant/features/settings/presentation/settings_page.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 import 'package:planning_assistant/features/views/task_list/presentation/task_list_page.dart';
 
@@ -55,13 +56,14 @@ Future<void> _create(
   bool recurring = false,
   bool withDate = true,
 }) async {
-  await tester.tap(find.byKey(AppShell.fabKey));
-  await tester.pumpAndSettle();
+  // 形态在面板上就选定了，进表单之后不必再拨重复开关。
+  await tapCreate(
+    tester,
+    recurring ? TaskShape.recurringSingle : TaskShape.scratch,
+  );
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), title);
   await tester.pump();
-  if (recurring) {
-    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
-  } else if (withDate) {
+  if (!recurring && withDate) {
     // 关掉全天会补上今天 —— 这是给它一个日期最省事的路径。
     await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
   }

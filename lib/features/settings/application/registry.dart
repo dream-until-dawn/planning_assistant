@@ -19,6 +19,7 @@ library;
 
 import '../../../core/time/weekday.dart';
 import '../../../design/tokens/dimensions.dart';
+import '../../task/application/default_duration.dart';
 import '../../views/calendar/application/calendar_split.dart';
 import '../../views/gantt/application/gantt_layout.dart';
 import '../../views/shared/application/view_kind.dart';
@@ -73,6 +74,13 @@ SettingSpec<T> _enumSpec<T>({
 );
 
 /// 全部配置声明。**顺序即设置页内的显示顺序**（同组内）。
+///
+/// 而且**同一组的项要连着写**：设置页按组渲染，而
+/// `settings_page_test` 的「每个暴露项都出现」是按这张表的顺序、
+/// 一路往下滚着找的。把一条 `behavior` 的项插在 `view` 那几条中间，
+/// 它渲染的位置在页面靠下、而下一条 `view` 的项在它上面 ——
+/// 滚动条已经到底，再往下滚也回不去，那条用例会报「找不到」。
+/// 加 `behavior.defaultDuration` 时就是这么红的一次。
 final List<SettingSpecBase> settingsRegistry = [
   themeMode,
   cornerStyle,
@@ -85,6 +93,7 @@ final List<SettingSpecBase> settingsRegistry = [
   ganttLaneBy,
   trashRetentionDays,
   defaultCategoryId,
+  defaultTaskDuration,
   swipeRight,
   swipeLeft,
 ];
@@ -292,6 +301,25 @@ final SettingSpec<int> trashRetentionDays = SettingSpec<int>(
   // 认不出的值回落到默认。**必须显式列出合法值** ——
   // 配置文件被手改成 0 的话，「删了立刻永久消失」就成了默认行为。
   decode: (json) => json is int && const [7, 30, 90].contains(json) ? json : 30,
+);
+
+/// 新建单事项时，默认的结束离开始多远（FR-TASK-01）。
+///
+/// 单事项现在必须有起止（2026-09-09 用户定的），所以新建时必须给一个
+/// 默认结束。第一版直接写死「+24 小时」，而那让**每一条默认新建的任务
+/// 都跨午夜**。用户的原话：「抽离为设置中的配置项吧交给用户决定，
+/// 默认设置就是 +24 小时」。
+///
+/// 档位的取值与「为什么不是一个分钟数」写在 [DefaultTaskDuration] 上。
+final SettingSpec<DefaultTaskDuration> defaultTaskDuration = _enumSpec(
+  key: 'behavior.defaultDuration',
+  defaultValue: DefaultTaskDuration.oneDay,
+  options: [for (final v in DefaultTaskDuration.values) (v, v.label)],
+  storageKeyOf: (v) => v.storageKey,
+  fromStorageKey: DefaultTaskDuration.fromStorageKey,
+  group: SettingGroup.behavior,
+  label: '新建任务默认时长',
+  description: '新建单事项时，结束时间默认离开始多远',
 );
 
 /// 甘特的泳道按什么分（view-specs §4.3）。
