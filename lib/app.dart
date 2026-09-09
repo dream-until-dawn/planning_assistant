@@ -38,6 +38,7 @@ import 'features/settings/presentation/category_manager_page.dart';
 import 'features/settings/presentation/settings_page.dart';
 import 'features/shell/presentation/app_shell.dart';
 import 'features/task/application/task_editor_controller.dart';
+import 'features/task/application/task_shape.dart';
 import 'features/task/presentation/task_editor_page.dart';
 import 'features/trash/application/trash_purge.dart';
 import 'features/trash/presentation/trash_page.dart';
@@ -125,10 +126,18 @@ abstract final class AppRoutes {
   ///
   /// 与 [editTask] 的 `from` 同一个做法：改的是同一个页面的初值，
   /// 不是另一个页面，所以用查询参数而不是另开一条路由。
-  static String newTaskAt({PlanDate? date, MinuteOfDay? minute}) {
+  static String newTaskAt({
+    PlanDate? date,
+    MinuteOfDay? minute,
+    TaskShape? shape,
+  }) {
     final q = <String>[
       if (date != null) 'date=$date',
       if (minute != null) 'minute=${minute.value}',
+      // 新建时选的那一样（FR-TASK-01/02/03）。走查询参数而不是全局状态：
+      // 编辑页是一条**路由**，它的初值就该由路由带全 ——
+      // 从别处塞进一个 provider 的话，直接敲 `/task/new` 会拿到上一次的残留。
+      if (shape != null) 'shape=${shape.name}',
     ];
     return q.isEmpty ? newTask : '$newTask?${q.join('&')}';
   }
@@ -301,8 +310,12 @@ class _ShellRoute extends ConsumerStatefulWidget {
   ConsumerState<_ShellRoute> createState() => _ShellRouteState();
 }
 
-void _openEditor(BuildContext context, {PlanDate? date, MinuteOfDay? minute}) =>
-    context.go(AppRoutes.newTaskAt(date: date, minute: minute));
+void _openEditor(
+  BuildContext context, {
+  PlanDate? date,
+  MinuteOfDay? minute,
+  TaskShape? shape,
+}) => context.go(AppRoutes.newTaskAt(date: date, minute: minute, shape: shape));
 
 /// 查询参数 → 新建初值。**读不懂的参数一律当没给**。
 ///
@@ -325,8 +338,16 @@ NewTaskSeed? _seedFrom(Map<String, String> query) {
       rawMinute <= MinuteOfDay.maxValue) {
     minute = MinuteOfDay(rawMinute);
   }
-  if (date == null && minute == null) return null;
-  return (date: date, minute: minute);
+  TaskShape? shape;
+  final rawShape = query['shape'];
+  if (rawShape != null) {
+    for (final v in TaskShape.values) {
+      if (v.name == rawShape) shape = v;
+    }
+  }
+
+  if (date == null && minute == null && shape == null) return null;
+  return (date: date, minute: minute, shape: shape);
 }
 
 class _ShellRouteState extends ConsumerState<_ShellRoute> {
