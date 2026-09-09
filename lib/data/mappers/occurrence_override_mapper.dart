@@ -37,6 +37,9 @@ OccurrenceOverride occurrenceOverrideFromRow(OccurrenceOverrideRow row) =>
       status: row.status == null
           ? null
           : OccurrenceStatus.fromWireName(row.status!),
+      completedAt: row.completedAt == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(row.completedAt!, isUtc: true),
       titleOverride: row.titleOverride,
       noteOverride: row.noteOverride,
       planDateOverride: row.planDateOverride == null
@@ -54,15 +57,14 @@ OccurrenceOverride occurrenceOverrideFromRow(OccurrenceOverrideRow row) =>
     );
 
 OccurrenceOverridesCompanion occurrenceOverrideToCompanion(
-  OccurrenceOverride o, {
-  DateTime? completedAt,
-}) => OccurrenceOverridesCompanion(
+  OccurrenceOverride o,
+) => OccurrenceOverridesCompanion(
   id: Value(overrideRowId(o.taskId, o.key)),
   taskId: Value(o.taskId),
   occurrenceKey: Value(o.key.value),
   action: Value(o.action.wireName),
   status: Value(o.status?.wireName),
-  completedAt: Value(completedAt?.millisecondsSinceEpoch),
+  completedAt: Value(o.completedAt?.millisecondsSinceEpoch),
   titleOverride: Value(o.titleOverride),
   noteOverride: Value(o.noteOverride),
   planDateOverride: Value(o.planDateOverride?.toString()),

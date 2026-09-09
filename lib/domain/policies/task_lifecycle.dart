@@ -157,8 +157,29 @@ Task projectStagesOntoTask(
   if (derived == null || derived == task.status) return task;
   return task.copyWith(
     status: derived,
-    completedAt: derived == TaskStatus.done ? (task.completedAt ?? now) : null,
+    // **完成时刻取「最后一步做完的那一刻」，不是「算这一下的那一刻」。**
+    //
+    // 语义上它就是对的：整件事完成于最后一步完成的时候。
+    // 而它还兼着一件事 —— [uncompleteTaskWithStages] 靠
+    // 「完成时刻与任务相同」认出「让这条任务变成已完成的那一批阶段」。
+    // 这里若写 `now`，那一批在钉死的时钟下与别的阶段无从分辨，
+    // 在会走的时钟下又可能差几毫秒而一个都认不出来。取 max 之后，
+    // 「最后那一批」在两种时钟下都是确定的。
+    completedAt: derived == TaskStatus.done
+        ? (_latestCompletion(alive) ?? now)
+        : null,
   )..checkInvariants();
+}
+
+/// 一组阶段里最晚的完成时刻；一个都没完成时 null。
+DateTime? _latestCompletion(List<Stage> stages) {
+  DateTime? latest;
+  for (final s in stages) {
+    final at = s.completedAt;
+    if (at == null) continue;
+    if (latest == null || at.isAfter(latest)) latest = at;
+  }
+  return latest;
 }
 
 /// 显式把父任务标完成：**所有待办阶段一并标 done**（§4.2、用例 L-05）。
@@ -184,35 +205,60 @@ Task projectStagesOntoTask(
   );
 }
 
-/// 取消父任务完成：**已完成的阶段一并回到 pending**（§4.2、用例 L-06）。
+/// 取消父任务完成：**只收回「让它变成已完成的那一批」阶段**（§4.2、L-06）。
 ///
-/// ## 这里原本是相反的
+/// 判据是**完成时刻等于任务的完成时刻**。这不是靠时间戳猜，是同一次操作
+/// 的两半：[completeTaskWithStages] 用同一个 `now` 写任务与它补上的阶段；
+/// 逐个勾满时任务的完成时刻取自最后那一步（[projectStagesOntoTask]）。
+/// 于是「最后那一批」在两种情形下都认得出来：
 ///
-/// 旧规则是「取消父任务时不回滚阶段」，理由写的是
-/// 「破坏用户已记录的阶段进度比留下不一致更糟」。
-/// 那条理由**不成立**：走到「取消完成」这一步，父任务是 done，
-/// 而 done 只有两种来法 —— 阶段全 settled 推出来的，或者
-/// [completeTaskWithStages] 盖上去的。前者阶段全都已完成，没有「进度」
-/// 可破坏；后者那份进度在**标完成的那一下就已经被盖掉了**。
-/// 旧规则保住的是级联自己写下的值，不是用户记的。
+///  · 显式标完成 → 级联补上的全部；
+///  · 逐个勾满 → 最后勾的那一个。
 ///
-/// 现在两个方向对称：勾上 → 待办阶段全 done，取消 → 已完成阶段全回 pending。
+/// **之前就勾好的、跳过的，一律留着。** 任务的状态随后由剩下的阶段推出来
+/// （所以取消一条 1/2 的任务会落在 `inProgress`，不是 `pending` ——
+/// 那正是它当时的样子）。
 ///
-/// `skipped` 同样不动，与 [completeTaskWithStages] 一致 ——
-/// 一来一回之后跳过的还是跳过。
+/// ## 这条规则被推翻过两次，记下来省得再绕
+///
+/// **初版**：取消时不回滚任何阶段，理由「破坏用户已记录的阶段进度比留下
+/// 不一致更糟」。它在「阶段全勾完推出 done」那种来法下会留下
+/// 「存的是 pending、推出来是 done」的自相矛盾。
+///
+/// **第二版（我改的）**：回滚**所有** done 的阶段，论证是「那份进度在标完成
+/// 的那一下就已经被盖掉了」。**对已经 done 的阶段这句是假的** ——
+/// [completeTaskWithStages] 刻意跳过它们，一次都没碰过。于是
+/// 「用户自己勾的第一步」被取消完成抹掉，正是初版那句话说的情形。
+/// 而且它和同一个改动里对 `skipped` 的处理自相矛盾：
+/// 「这一步跳过」保得住，「这一步做完了」保不住，两者都是用户亲手记的。
+/// 评审跑出了那个序列。
+///
+/// 教训：发现旧规则的一个反例，不等于可以换上另一个有反例的规则。
 ({Task task, List<Stage> stages}) uncompleteTaskWithStages(
   Task task,
   List<Stage> stages, {
   required DateTime now,
+  StageDerivationConfig config = kDefaultDerivationConfig,
 }) {
+  final at = task.completedAt;
   final updated = [
     for (final s in stages)
-      s.status == TaskStatus.done
+      s.status == TaskStatus.done && (at == null || s.completedAt == at)
+          // 完成时刻缺失（不变量本不允许）时全收回：宁可多收，
+          // 也不要留下一条「取消了却还是完成」的任务。
           ? s.copyWith(status: TaskStatus.pending, completedAt: null)
           : s,
   ];
   return (
-    task: applyStatusChange(task, TaskStatus.pending, now: now),
+    // 先落到 pending，再让推导按剩下的阶段说话。**不走
+    // `applyStatusChange`**：推导出的值不查迁移表（见
+    // [projectStagesOntoTask]），而这里正是一次推导。
+    task: projectStagesOntoTask(
+      task.copyWith(status: TaskStatus.pending, completedAt: null),
+      updated,
+      now: now,
+      config: config,
+    ),
     stages: updated,
   );
 }

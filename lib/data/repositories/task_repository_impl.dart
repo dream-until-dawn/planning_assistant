@@ -13,7 +13,6 @@ import 'package:drift/drift.dart';
 
 import '../../core/time/clock.dart';
 import '../../domain/entities/checklist_item.dart';
-import '../../domain/entities/occurrence.dart';
 import '../../domain/entities/occurrence_override.dart';
 import '../../domain/entities/stage.dart';
 import '../../domain/entities/stage_occurrence_state.dart';
@@ -151,12 +150,8 @@ final class DriftTaskRepository implements TaskRepository {
   }
 
   @override
-  Future<void> saveOverride(
-    OccurrenceOverride override, {
-    DateTime? completedAt,
-  }) => _overrides.upsert(
-    occurrenceOverrideToCompanion(override, completedAt: completedAt),
-  );
+  Future<void> saveOverride(OccurrenceOverride override) =>
+      _overrides.upsert(occurrenceOverrideToCompanion(override));
 
   @override
   Future<void> removeOverride(String taskId, OccurrenceKey key) =>
@@ -217,16 +212,7 @@ final class DriftTaskRepository implements TaskRepository {
         await _stageStates.upsert(stageStateToCompanion(s));
       }
       for (final o in c.overrides) {
-        // 任务原来的状态搬到「第一次」上。`completedAt` 跟着状态走，
-        // 与 `saveOverride` 同一条不变量。
-        await _overrides.upsert(
-          occurrenceOverrideToCompanion(
-            o,
-            completedAt: o.status == OccurrenceStatus.done
-                ? _clock.nowUtc()
-                : null,
-          ),
-        );
+        await _overrides.upsert(occurrenceOverrideToCompanion(o));
       }
     });
   }

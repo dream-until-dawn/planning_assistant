@@ -166,6 +166,7 @@ final class CommandDispatcher {
         key: c.occurrenceKey,
         action: OverrideAction.modify,
         status: prior?.status,
+        completedAt: prior?.completedAt,
         titleOverride: prior?.titleOverride,
         noteOverride: prior?.noteOverride,
         planDateOverride: c.planDate,
@@ -191,6 +192,11 @@ final class CommandDispatcher {
   Future<void> _setStageOccurrenceStatus(
     SetStageOccurrenceStatusCommand c,
   ) async {
+    // **整条命令只读一次钟。** 阶段的完成时刻要与这一次的完成时刻对得上 ——
+    // 「取消完成时收回哪一批阶段」正是靠两者相等认出来的。
+    // 各读各的话，两次读之间差一毫秒，那一批就一个都认不出来。
+    final now = _now();
+
     await _repo.saveStageState(
       StageOccurrenceState(
         id: StageOccurrenceState.idFor(c.stageId, c.occurrenceKey),
@@ -201,32 +207,45 @@ final class CommandDispatcher {
         // 与 `applyStatusChange` 同一条不变量：completedAt 与 status
         // 同进同退。取消完成时必须清掉，否则下次它会显示成
         // 「未完成，但完成于上周三」。
-        completedAt: c.status == TaskStatus.done ? _clock.nowUtc() : null,
+        completedAt: c.status == TaskStatus.done ? now : null,
       ),
     );
 
     // 勾满这一次的全部阶段，这一次就算完成（§4.2 的另一半）。
     // 推导出 pending 时写 null = 删掉状态那一格，而不是留一条
     // 「等于没改」的例外 —— 与取消完成走的是同一个写法。
-    final derived = await _deriveOccurrenceStatus(c.taskId, c.occurrenceKey);
+    final states = await _statesOfOccurrence(c.taskId, c.occurrenceKey);
+    final derived = deriveOccurrenceStatusFor(
+      await _repo.findStagesOfTask(c.taskId),
+      occurrenceStates: states,
+    );
     await _writeOccurrenceStatus(
       c.taskId,
       c.occurrenceKey,
       derived == OccurrenceStatus.pending ? null : derived,
+      // 与任务侧同一条：完成时刻取**最后一步做完的那一刻**，
+      // 不是「算这一下的那一刻」（见 `projectStagesOntoTask`）。
+      completedAt: _latestStateCompletion(states) ?? now,
     );
   }
 
-  /// 这一次的状态由它的阶段推出来；没有阶段时返回 null（不改）。
-  Future<OccurrenceStatus?> _deriveOccurrenceStatus(
+  Future<StageStatesOfOccurrence> _statesOfOccurrence(
     String taskId,
     OccurrenceKey key,
-  ) async {
-    final stages = await _repo.findStagesOfTask(taskId);
-    final states = groupByOccurrence(await _repo.findStageStatesOfTask(taskId));
-    return deriveOccurrenceStatusFor(
-      stages,
-      occurrenceStates: states[key] ?? const {},
-    );
+  ) async =>
+      groupByOccurrence(await _repo.findStageStatesOfTask(taskId))[key] ??
+      const {};
+
+  /// 这一次里最晚的阶段完成时刻；一个都没完成时 null。
+  DateTime? _latestStateCompletion(StageStatesOfOccurrence states) {
+    DateTime? latest;
+    for (final st in states.values) {
+      if (st.status != TaskStatus.done) continue;
+      final at = st.completedAt;
+      if (at == null) continue;
+      if (latest == null || at.isAfter(latest)) latest = at;
+    }
+    return latest;
   }
 
   /// 只改某一次的**状态那一格**，行上其余字段原样留着。
@@ -241,8 +260,9 @@ final class CommandDispatcher {
   Future<void> _writeOccurrenceStatus(
     String taskId,
     OccurrenceKey key,
-    OccurrenceStatus? status,
-  ) async {
+    OccurrenceStatus? status, {
+    required DateTime completedAt,
+  }) async {
     final existing = await _repo.findOverridesOfTask(taskId);
     final prior = existing.where((o) => o.key == key).firstOrNull;
 
@@ -256,6 +276,7 @@ final class CommandDispatcher {
         key: key,
         action: OverrideAction.modify,
         status: status,
+        completedAt: status == OccurrenceStatus.done ? completedAt : null,
         titleOverride: prior?.titleOverride,
         noteOverride: prior?.noteOverride,
         planDateOverride: prior?.planDateOverride,
@@ -263,11 +284,11 @@ final class CommandDispatcher {
         endDateOverride: prior?.endDateOverride,
         endMinuteOverride: prior?.endMinuteOverride,
       ),
-      completedAt: status == OccurrenceStatus.done ? _now() : null,
     );
   }
 
   Future<void> _setOccurrenceStatus(SetOccurrenceStatusCommand c) async {
+    final now = _now();
     final prior = (await _repo.findOverridesOfTask(c.taskId))
         .where((o) => o.key == c.occurrenceKey)
         .firstOrNull;
@@ -279,9 +300,21 @@ final class CommandDispatcher {
     // 撤回跳过时顺手清掉，等于把用户在那一次上勾过的进度抹了。
     if (c.status == OccurrenceStatus.done ||
         (c.status == null && prior?.status == OccurrenceStatus.done)) {
-      await _cascadeStagesOfOccurrence(c.taskId, c.occurrenceKey, c.status);
+      await _cascadeStagesOfOccurrence(
+        c.taskId,
+        c.occurrenceKey,
+        c.status,
+        now: now,
+        // 收回时只认「让这一次变成已完成的那一批」，判据同任务侧。
+        writtenAt: prior?.completedAt,
+      );
     }
-    await _writeOccurrenceStatus(c.taskId, c.occurrenceKey, c.status);
+    await _writeOccurrenceStatus(
+      c.taskId,
+      c.occurrenceKey,
+      c.status,
+      completedAt: now,
+    );
   }
 
   /// 把「这一次完成 / 取消完成」推到它的每个阶段上（§4.2）。
@@ -296,19 +329,28 @@ final class CommandDispatcher {
   Future<void> _cascadeStagesOfOccurrence(
     String taskId,
     OccurrenceKey key,
-    OccurrenceStatus? status,
-  ) async {
+    OccurrenceStatus? status, {
+    required DateTime now,
+    DateTime? writtenAt,
+  }) async {
     final stages = await _repo.findStagesOfTask(taskId);
     if (stages.isEmpty) return;
 
-    final states =
-        groupByOccurrence(await _repo.findStageStatesOfTask(taskId))[key] ??
-        const <String, StageOccurrenceState>{};
+    final states = await _statesOfOccurrence(taskId, key);
     final to = status == null ? TaskStatus.pending : TaskStatus.done;
 
     for (final stage in stages) {
       final was = stageStatusFor(stage, occurrenceStates: states);
       if (was == TaskStatus.skipped || was == to) continue;
+      // **收回时只动「让这一次变成已完成的那一批」**（任务侧同一条判据，
+      // 见 `uncompleteTaskWithStages`）：用户在那之前自己勾好的留着。
+      // `writtenAt` 取不到时全收回 —— 宁可多收，也不要留下
+      // 「取消了却还是完成」的一次。
+      if (to == TaskStatus.pending &&
+          writtenAt != null &&
+          states[stage.id]?.completedAt != writtenAt) {
+        continue;
+      }
       await _repo.saveStageState(
         StageOccurrenceState(
           id: StageOccurrenceState.idFor(stage.id, key),
@@ -316,7 +358,7 @@ final class CommandDispatcher {
           stageId: stage.id,
           occurrenceKey: key,
           status: to,
-          completedAt: to == TaskStatus.done ? _clock.nowUtc() : null,
+          completedAt: to == TaskStatus.done ? now : null,
         ),
       );
     }

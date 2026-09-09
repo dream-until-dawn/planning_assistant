@@ -21,9 +21,9 @@ import '../../shared/application/task_providers.dart';
 import '../../shared/application/view_shared_state.dart';
 import '../../shared/presentation/occurrence_card_data.dart';
 import '../../shared/presentation/toggle_done_action.dart';
+import '../../shared/presentation/toggle_stage_action.dart';
 import '../application/bulk_selection.dart';
 import '../application/task_grouping.dart';
-import '../application/task_list_actions.dart';
 import '../application/task_list_providers.dart';
 import 'occurrence_actions_sheet.dart';
 import 'swipe_row.dart';
@@ -156,9 +156,7 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
                   // 模式开着时卡片上的每个框都该表示「选中」这一件事。
                   onToggleStage: selection.isEmpty
                       ? (id, done) => unawaited(
-                          ref
-                              .read(occurrenceActionsProvider)
-                              .setStageDone(task, id, done),
+                          toggleStageDone(context, ref, task, id, done: done),
                         )
                       : null,
                   // 就地完成（view-specs §0.3）。

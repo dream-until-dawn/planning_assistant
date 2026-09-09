@@ -363,7 +363,7 @@ void main() {
       expect(r.stages[1].status, TaskStatus.skipped, reason: '一来一回，跳过的还是跳过');
     });
 
-    test('**一来一回，没被勾过的阶段回到原样**', () {
+    test('**一来一回，阶段回到原样**', () {
       // 两个方向合起来才是「可逆」。任一方向漏了，这条就红。
       final before = [
         stage(0, TaskStatus.pending),
@@ -380,11 +380,96 @@ void main() {
         now: _later,
       );
 
-      expect(back.task.status, TaskStatus.pending);
       expect(
         [for (final s in back.stages) s.status],
         [for (final s in before) s.status],
       );
+      // **任务落在这几个阶段推出来的那个值上，不一定是 pending。**
+      // 这里是 `inProgress`：有一步被跳过了，按 §4.1 那条
+      // 「部分 settled → inProgress」它就不是「一步都没动」。
+      // 起手那个 pending 本来就不是投影一致的状态（构造出来的），
+      // 所以一来一回之后落到 inProgress 不是没回来，是回到了对的地方。
+      expect(back.task.status, deriveStatusFromStages(back.stages));
+      expect(back.task.status, TaskStatus.inProgress);
+      expect(back.task.completedAt, isNull);
+    });
+
+    test('**用户自己勾过的那一步，取消完成时留着**（评审打回的 M-B1）', () {
+      // 级联**刻意跳过已经 done 的阶段**，所以对它们
+      // 「那份进度在标完成的那一下就被盖掉了」是假的 —— 一次都没碰过。
+      // 判据是完成时刻：级联写的那些与任务同一个 `now`。
+      final before = [
+        stage(0, TaskStatus.done), // 用户自己勾的，完成于 _now
+        stage(1, TaskStatus.skipped),
+        stage(2, TaskStatus.pending),
+      ];
+      final done = completeTaskWithStages(
+        task(kind: TaskKind.staged),
+        before,
+        now: _later,
+      );
+      expect(done.task.completedAt, _later);
+      expect(done.stages[2].completedAt, _later, reason: '级联补的那一步');
+      expect(done.stages[0].completedAt, _now, reason: '前提：两者完成时刻不同');
+
+      final back = uncompleteTaskWithStages(
+        done.task,
+        done.stages,
+        now: _later,
+      );
+      expect(
+        [for (final s in back.stages) s.status],
+        [
+          TaskStatus.done, // 留着
+          TaskStatus.skipped, // 留着
+          TaskStatus.pending, // 级联补的，收回
+        ],
+      );
+      expect(back.stages[0].completedAt, _now, reason: '连完成时刻都不该动');
+    });
+
+    test('对照组：全是级联写的，就全收回', () {
+      // 少了它，上一条分不清「只收回级联写的」与「什么都不收回」。
+      final done = completeTaskWithStages(task(kind: TaskKind.staged), [
+        stage(0, TaskStatus.pending),
+        stage(1, TaskStatus.pending),
+      ], now: _later);
+      final back = uncompleteTaskWithStages(
+        done.task,
+        done.stages,
+        now: _later,
+      );
+
+      expect(
+        [for (final s in back.stages) s.status],
+        [TaskStatus.pending, TaskStatus.pending],
+      );
+      expect(back.task.status, TaskStatus.pending);
+    });
+
+    test('逐个勾满推出来的 done，取消时收回最后勾的那一个', () {
+      // 这种来法里没有「级联写的那一批」，任务的完成时刻取自
+      // **最后一步**（`projectStagesOntoTask`），于是收回的就是它。
+      // 不收回任何东西的话，存的是 pending 而推出来还是 done ——
+      // 那正是初版规则留下的自相矛盾。
+      final stages = [
+        stage(0, TaskStatus.done), // 完成于 _now
+        stage(1, TaskStatus.done).copyWith(completedAt: _later),
+      ];
+      final projected = projectStagesOntoTask(
+        task(kind: TaskKind.staged),
+        stages,
+        now: _later,
+      );
+      expect(projected.status, TaskStatus.done);
+      expect(projected.completedAt, _later, reason: '完成于最后一步做完的那一刻');
+
+      final back = uncompleteTaskWithStages(projected, stages, now: _later);
+      expect(
+        [for (final s in back.stages) s.status],
+        [TaskStatus.done, TaskStatus.pending],
+      );
+      expect(back.task.status, TaskStatus.inProgress);
     });
   });
 
@@ -396,7 +481,11 @@ void main() {
         stage(1, TaskStatus.done),
       ], now: _later);
       expect(full.status, TaskStatus.done);
-      expect(full.completedAt, _later);
+      // **取最后一步做完的那一刻，不是算这一下的那一刻**（两个阶段都
+      // 完成于 `_now`，所以是 `_now` 而不是传进去的 `_later`）。
+      // 这不只是语义更准：`uncompleteTaskWithStages` 靠
+      // 「完成时刻与任务相同」认出该收回哪一批。
+      expect(full.completedAt, _now);
 
       final partial = projectStagesOntoTask(full, [
         stage(0, TaskStatus.done),

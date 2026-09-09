@@ -26,6 +26,7 @@ import '../../../../domain/value_objects/task_status.dart';
 import '../../shared/application/task_occurrence.dart';
 import '../../shared/application/task_providers.dart';
 import '../../shared/presentation/toggle_done_action.dart';
+import '../../shared/presentation/toggle_stage_action.dart';
 import '../application/task_list_actions.dart';
 
 /// 弹层里各行的 Key。
@@ -239,7 +240,6 @@ class _StageChecklist extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
-    final actions = ref.read(occurrenceActionsProvider);
 
     // **弹层拿到的 `row` 是打开那一刻的快照**，勾一下之后它不会自己变新。
     //
@@ -283,7 +283,9 @@ class _StageChecklist extends ConsumerWidget {
             title: Text(stage.title),
             // **喂 `live` 不是 `row`**：不重复那条路要拿这一行的全部阶段
             // 去整表替换，用快照的话，勾第二步会把第一步写回未完成。
-            onChanged: (v) => actions.setStageDone(live, stage.id, v ?? false),
+            onChanged: (v) => unawaited(
+              toggleStageDone(context, ref, live, stage.id, done: v ?? false),
+            ),
           ),
         const Divider(height: 1),
       ],

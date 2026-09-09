@@ -16,8 +16,10 @@ import 'package:planning_assistant/data/database/dao/synced_dao.dart';
 import 'package:planning_assistant/data/repositories/task_repository_impl.dart';
 import 'package:planning_assistant/domain/commands/command_dispatcher.dart';
 import 'package:planning_assistant/domain/commands/task_command.dart';
+import 'package:planning_assistant/domain/entities/occurrence.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/domain/repositories/task_repository.dart';
+import 'package:planning_assistant/domain/value_objects/occurrence_key.dart';
 import 'package:planning_assistant/domain/value_objects/recurrence.dart';
 import 'package:planning_assistant/domain/value_objects/task_status.dart';
 
@@ -43,6 +45,54 @@ void main() {
     dispatcher = CommandDispatcher(repo, _clock);
   });
   tearDown(() => db.close());
+
+  group('单次例外：叠加而不是整行覆盖', () {
+    final recurring = CreateTaskCommand(
+      taskId: 'r1',
+      title: '周报',
+      kind: TaskKind.single,
+      timeZoneId: 'Asia/Shanghai',
+      planDate: const PlanDate(2026, 3, 9),
+      startMinute: MinuteOfDay.of(9, 0),
+      recurrenceRule: 'RRULE:FREQ=WEEKLY',
+    );
+    final key = OccurrenceKey.timed(
+      const PlanDate(2026, 3, 9),
+      MinuteOfDay.of(9, 0),
+    );
+
+    test('**把标完成的那一次挪走，完成时刻还在**', () {
+      // `occurrence_overrides.completed_at` 一度是「写了没人读」：
+      // 写路径把它当参数传给 `saveOverride`，读路径没把它取回实体。
+      // 于是 `_moveOccurrence`（在已有例外之上叠加）复制不到它 ——
+      // 推迟一下，完成时刻就没了，而没有任何报错。
+      return () async {
+        await dispatcher.dispatch(recurring);
+        await dispatcher.dispatch(
+          SetOccurrenceStatusCommand(
+            taskId: 'r1',
+            occurrenceKey: key,
+            status: OccurrenceStatus.done,
+          ),
+        );
+        final before = (await repo.findOverridesOfTask('r1')).single;
+        expect(before.completedAt, _now, reason: '前提：标完成时记下了时刻');
+
+        await dispatcher.dispatch(
+          MoveOccurrenceCommand(
+            taskId: 'r1',
+            occurrenceKey: key,
+            planDate: const PlanDate(2026, 3, 10),
+          ),
+        );
+
+        final after = (await repo.findOverridesOfTask('r1')).single;
+        expect(after.planDateOverride, const PlanDate(2026, 3, 10));
+        expect(after.status, OccurrenceStatus.done, reason: '挪一下把完成也弄丢了');
+        expect(after.completedAt, _now, reason: '挪一下把完成时刻弄丢了');
+      }();
+    });
+  });
 
   group('建任务', () {
     test('ID 来自命令，不由 dispatcher 现场生成', () async {
