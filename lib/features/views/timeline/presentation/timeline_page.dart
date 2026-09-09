@@ -27,9 +27,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app_providers.dart';
 import '../../../../core/time/date_and_minute.dart';
 import '../../../../core/time/plan_date.dart';
+import '../../../../design/components/empty_illustration.dart';
 import '../../../../design/components/empty_state.dart';
 import '../../../../design/components/task_card.dart';
-import '../../../../design/components/undo_snackbar.dart';
 import '../../../../design/theme/app_theme.dart';
 import '../../../../design/tokens/dimensions.dart';
 import '../../../../domain/value_objects/task_status.dart';
@@ -37,6 +37,7 @@ import '../../shared/application/create_task_at.dart';
 import '../../shared/application/task_occurrence.dart';
 import '../../shared/application/task_providers.dart';
 import '../../shared/presentation/occurrence_card_data.dart';
+import '../../shared/presentation/toggle_done_action.dart';
 import '../../task_list/application/task_list_actions.dart';
 import '../../task_list/presentation/occurrence_actions_sheet.dart';
 import '../application/agenda_entries.dart';
@@ -157,7 +158,7 @@ class _TimelinePageState extends ConsumerState<TimelinePage> {
     if (ref.watch(visibleTasksProvider).hasError) {
       return const EmptyState(
         key: TimelinePage.errorKey,
-        illustration: EmptyIllustration(icon: Icons.cloud_off_outlined),
+        illustration: EmptyIllustration(motif: EmptyMotif.offline),
         message: '没能读出你的安排。\n重开一次试试？',
       );
     }
@@ -166,7 +167,7 @@ class _TimelinePageState extends ConsumerState<TimelinePage> {
     if (entries.isEmpty) {
       return EmptyState(
         key: TimelinePage.emptyKey,
-        illustration: const EmptyIllustration(icon: Icons.wb_sunny_outlined),
+        illustration: const EmptyIllustration(motif: EmptyMotif.calm),
         message: '接下来没有排着的事，\n要加点什么吗？',
         actionLabel: widget.onCreateTask == null ? null : '新建任务',
         // **不带日期。** 议程横跨多天，用户在这儿点新建没有指向任何一天，
@@ -490,7 +491,7 @@ class _TaskLine extends ConsumerWidget {
       // 时刻已经写在左边那栏里了，卡片上再写一遍就是同一个时刻
       // 在一行里出现两次。
       data: cardDataOf(ref, row, withTime: false),
-      onToggleDone: () => _toggleDone(context, ref, row),
+      onToggleDone: () => toggleDoneWithUndo(context, ref, row),
       onTap: () => _openRow(context, row, onEditTask),
     );
   }
@@ -585,26 +586,6 @@ class _StageLine extends ConsumerWidget {
       ),
     );
   }
-}
-
-/// 勾完成，并给撤销。
-///
-/// **议程里勾掉的行会当场消失**（这个视图只装未完成的），所以撤销
-/// 不是锦上添花：没有它的话，误触之后那一行去哪了都不知道。
-/// 列表那边的完成钮一度就漏了这一条。
-Future<void> _toggleDone(
-  BuildContext context,
-  WidgetRef ref,
-  TaskOccurrence row,
-) async {
-  final messenger = ScaffoldMessenger.of(context);
-  final done = row.status == TaskStatus.done;
-  final undo = await ref.read(toggleTaskDoneProvider)(row);
-  showUndoSnackBar(
-    messenger,
-    done ? '已标为未完成：${row.title}' : '已完成：${row.title}',
-    onUndo: undo,
-  );
 }
 
 /// 点一行：不重复的直接开编辑，重复的先问「改哪一次」。

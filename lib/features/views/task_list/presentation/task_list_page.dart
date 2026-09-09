@@ -8,6 +8,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../design/components/empty_illustration.dart';
 import '../../../../design/components/empty_state.dart';
 import '../../../../design/components/task_card.dart';
 import '../../../../design/components/undo_snackbar.dart';
@@ -17,9 +18,9 @@ import '../../shared/application/create_task_at.dart';
 import '../../shared/application/task_providers.dart';
 import '../../shared/application/view_shared_state.dart';
 import '../../shared/presentation/occurrence_card_data.dart';
+import '../../shared/presentation/toggle_done_action.dart';
 import '../application/bulk_selection.dart';
 import '../application/task_grouping.dart';
-import '../application/task_list_actions.dart';
 import '../application/task_list_providers.dart';
 import 'occurrence_actions_sheet.dart';
 import 'swipe_row.dart';
@@ -98,9 +99,7 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
       data: (list) => list.isEmpty
           ? EmptyState(
               key: TaskListPage.emptyKey,
-              illustration: const EmptyIllustration(
-                icon: Icons.wb_sunny_outlined,
-              ),
+              illustration: const EmptyIllustration(motif: EmptyMotif.note),
               message: '今天还空着，\n要不要添一件想做的事？',
               actionLabel: widget.onCreateTask == null ? null : '新建任务',
               onAction: widget.onCreateTask,
@@ -108,7 +107,7 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
           : groups.isEmpty
           ? EmptyState(
               key: TaskListPage.noMatchKey,
-              illustration: const EmptyIllustration(icon: Icons.filter_alt_off),
+              illustration: const EmptyIllustration(motif: EmptyMotif.filtered),
               message: '这个筛选下没有任务。\n换个条件看看？',
               actionLabel: '清除筛选',
               onAction: () =>
@@ -159,7 +158,7 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
                   // 一个框在两种模式里表示两件事，是最容易点错的
                   // 那种设计。模式开着时它整个不响应。
                   onToggleDone: selection.isEmpty
-                      ? () => ref.read(toggleTaskDoneProvider).call(task)
+                      ? () => toggleDoneWithUndo(context, ref, task)
                       : null,
                   selected: selection.contains(task.id),
                   // 长按进多选（view-specs §2.4）。
@@ -260,7 +259,7 @@ class _LoadFailed extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const EmptyState(
-    illustration: EmptyIllustration(icon: Icons.cloud_off_outlined),
+    illustration: EmptyIllustration(motif: EmptyMotif.offline),
     message: '没能读出任务列表。\n重开一次试试？',
   );
 }

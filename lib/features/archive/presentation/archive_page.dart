@@ -6,6 +6,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../design/components/empty_illustration.dart';
 import '../../../design/components/empty_state.dart';
 import '../../../design/theme/app_theme.dart';
 import '../../../design/tokens/dimensions.dart';
@@ -40,12 +41,12 @@ class ArchivePage extends ConsumerWidget {
         AsyncLoading() => const SizedBox.shrink(),
         AsyncError() => const EmptyState(
           key: errorKey,
-          illustration: EmptyIllustration(icon: Icons.cloud_off_outlined),
+          illustration: EmptyIllustration(motif: EmptyMotif.offline),
           message: '没能读出归档列表。\n重开一次试试？',
         ),
         AsyncData(:final value) when value.isEmpty => const EmptyState(
           key: emptyKey,
-          illustration: EmptyIllustration(icon: Icons.inventory_2_outlined),
+          illustration: EmptyIllustration(motif: EmptyMotif.box),
           message: '还没有归档的任务。',
         ),
         AsyncData(:final value) => _ArchiveList(tasks: value),

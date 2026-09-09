@@ -23,6 +23,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app_providers.dart';
 import '../../../../core/time/plan_date.dart';
 import '../../../../design/components/app_chip.dart';
+import '../../../../design/components/empty_illustration.dart';
 import '../../../../design/components/empty_state.dart';
 import '../../../../design/components/task_card.dart';
 import '../../../../design/theme/app_theme.dart';
@@ -37,7 +38,7 @@ import '../../shared/application/task_occurrence.dart';
 import '../../shared/application/task_providers.dart';
 import '../../shared/application/view_shared_state.dart';
 import '../../shared/presentation/occurrence_card_data.dart';
-import '../../task_list/application/task_list_actions.dart';
+import '../../shared/presentation/toggle_done_action.dart';
 import '../../task_list/presentation/occurrence_actions_sheet.dart';
 import '../application/calendar_providers.dart';
 import '../application/calendar_split.dart';
@@ -97,7 +98,7 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
     if (ref.watch(visibleTasksProvider).hasError) {
       return const EmptyState(
         key: CalendarPage.errorKey,
-        illustration: EmptyIllustration(icon: Icons.cloud_off_outlined),
+        illustration: EmptyIllustration(motif: EmptyMotif.offline),
         message: '没能读出这个月的安排。\n重开一次试试？',
       );
     }
@@ -656,7 +657,7 @@ class _SelectedDayList extends ConsumerWidget {
     if (rows.isEmpty) {
       return EmptyState(
         key: CalendarPage.selectedEmptyKey,
-        illustration: const EmptyIllustration(icon: Icons.event_available),
+        illustration: const EmptyIllustration(motif: EmptyMotif.calm),
         message: '这一天还空着。',
         actionLabel: onCreateTask == null ? null : '新建任务',
         // **带上选中的那一天**（FR-VIEW-07）。这句话说的就是「这一天」——
@@ -679,7 +680,7 @@ class _SelectedDayList extends ConsumerWidget {
         return TaskCard(
           key: ValueKey(row.id),
           data: cardDataOf(ref, row),
-          onToggleDone: () => ref.read(toggleTaskDoneProvider)(row),
+          onToggleDone: () => toggleDoneWithUndo(context, ref, row),
           onTap: () => _openRow(context, row, onEditTask),
         );
       },

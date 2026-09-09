@@ -24,7 +24,7 @@ import 'package:planning_assistant/app_providers.dart';
 import 'package:planning_assistant/core/time/clock.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
-import 'package:planning_assistant/design/components/empty_state.dart';
+import 'package:planning_assistant/design/components/empty_illustration.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/design/theme/app_theme.dart';
 import 'package:planning_assistant/domain/commands/task_command.dart';

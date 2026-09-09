@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../design/components/app_button.dart';
+import '../../../design/components/empty_illustration.dart';
 import '../../../design/components/empty_state.dart';
 import '../../../design/theme/app_theme.dart';
 import '../../../design/tokens/colors.dart';
@@ -70,9 +71,7 @@ class CategoryManagerPage extends ConsumerWidget {
               child: categories.isEmpty
                   ? const EmptyState(
                       key: emptyKey,
-                      illustration: EmptyIllustration(
-                        icon: Icons.label_outline,
-                      ),
+                      illustration: EmptyIllustration(motif: EmptyMotif.box),
                       // 全删光是合法状态（§3.1）：那时所有任务都是未分类。
                       // 所以这里不催促，只说明。
                       message: '还没有分类。\n没有也行 —— 那时任务都是「未分类」。',
