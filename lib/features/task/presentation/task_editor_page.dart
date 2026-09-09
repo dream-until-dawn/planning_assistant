@@ -1045,22 +1045,53 @@ class _StageSection extends StatelessWidget {
                   children: [
                     // 勾完成。序号让位给它 —— 序号在时间按钮那一行
                     // 也能看出来（第几个），而「做完没有」没有别处可看。
-                    Semantics(
-                      label: '第 ${i + 1} 个阶段完成',
-                      child: Checkbox(
-                        key: TaskEditorPage.stageDoneKey(stage.id),
-                        value: stage.isDone,
-                        onChanged: (v) =>
-                            controller.setStageDone(stage.id, v ?? false),
+                    //
+                    // **重复任务这里不给勾**（FR-TASK-07）：编辑器编的是
+                    // 整条任务，而重复任务的阶段状态是**按每一次**存的。
+                    // 在这儿勾写进的是 `Stage.status`，那一列对重复任务
+                    // 没人读 —— 勾了没反应，比没有这个框更糟。
+                    // 它的正确位置是单次动作弹层（view-specs §4.3）。
+                    if (draft.isRecurring)
+                      SizedBox(
+                        width: 48,
+                        child: Center(
+                          child: Text('${i + 1}', style: text.bodySmall),
+                        ),
+                      )
+                    else
+                      Semantics(
+                        label: '第 ${i + 1} 个阶段完成',
+                        child: Checkbox(
+                          key: TaskEditorPage.stageDoneKey(stage.id),
+                          value: stage.isDone,
+                          onChanged: (v) =>
+                              controller.setStageDone(stage.id, v ?? false),
+                        ),
                       ),
-                    ),
                     Expanded(
                       child: TextField(
                         key: TaskEditorPage.stageFieldKey(stage.id),
                         decoration: const InputDecoration(hintText: '这一步做什么'),
+                        // **编辑模式必须有 controller。**
+                        //
+                        // 页面开头那段注释早就写明了这件事（标题与备注
+                        // 因此各有一个 controller），而阶段这一行漏了 ——
+                        // 于是打开一条已有的阶段事项，几行阶段全是空的，
+                        // 看起来像内容丢了。存下去倒是不丢（草稿里还在），
+                        // 但用户看到的是一张空表单。
+                        //
+                        // 一直没被发现，是因为没有任何一条用例断言过
+                        // 「重新打开时阶段标题显示出来」—— 勾选、排序、
+                        // 时间那几条都只按 Key 找控件，不看里面的字。
+                        controller: TextEditingController(text: stage.title)
+                          ..selection = TextSelection.collapsed(
+                            offset: stage.title.length,
+                          ),
                         // 划掉是**辅助**，不是唯一标记 —— 勾选框自己
                         // 就带着状态（§8.1 那条原则）。
-                        style: stage.isDone
+                        // 重复任务不显示划掉 —— 那个 `isDone` 对它
+                        // 没有意义（状态按每一次存）。
+                        style: !draft.isRecurring && stage.isDone
                             ? TextStyle(
                                 decoration: TextDecoration.lineThrough,
                                 color: context.appColors.disabledText,

@@ -165,7 +165,7 @@ void main() {
     ).upsert(TaskTagsCompanion.insert(taskId: 't1', tagId: 'tag-1'));
   }
 
-  group('回放一致性（V3 验收项）', () {
+  group('FR-DATA-03 回放一致性（V3 验收项）', () {
     test('清库后按 seq 回放 → 逐表逐列与原状态字节相等', () async {
       await runScript();
       final before = await snapshot(db);

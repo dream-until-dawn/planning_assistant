@@ -676,6 +676,74 @@ import
     );
   });
 
+  test('视图侧不得直接读 stage.status（FR-TASK-07）', () {
+    // ## 它防的和上面那条是同一件事
+    //
+    // 阶段状态有两个存储位置：不重复的任务在 `Stage.status`，
+    // 重复的在 `stage_occurrence_states`。分流只写在
+    // `stageStatusFor` / `TaskOccurrence.stageStatus` 两处。
+    //
+    // **这条 lint 是补上来的，而且是补给一个真发生过的缺陷。**
+    // 补 FR-TASK-07 时卡片与单次弹层都改走了新判据，**甘特没改** ——
+    // 它自己 `stage.status == done` 算分段着色与进度。于是同一条重复
+    // 任务，列表说「阶段 1/2」、甘特说「0/2」，两边都不报错。
+    // 当时全套测试是绿的。
+    //
+    // 同上一条：**名字启发式，不是类型分析**。只盯 `stage.` / `s.`
+    // 这两个接收者名 —— 这个仓库里表示一个阶段的就是它们。
+    const receivers = ['stage', 's'];
+    const allowed = {
+      // 分流本身住在这儿。
+      'stage_occurrence_status.dart',
+      // 行上的唯一入口，它调上面那个。
+      'task_occurrence.dart',
+    };
+
+    final pattern = RegExp(r'\b(' + receivers.join('|') + r')\.status\b');
+    final violations = <String>[];
+    var scanned = 0;
+    for (final file in libFiles) {
+      final rel = _relToLib(file.path);
+      if (rel == null || !rel.startsWith('features/views/')) continue;
+      if (allowed.contains(rel.split('/').last)) continue;
+      scanned++;
+      final lines = file.readAsLinesSync();
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i].trim().startsWith('//')) continue;
+        if (pattern.hasMatch(lines[i])) {
+          violations.add('  - lib/$rel:${i + 1}  ${lines[i].trim()}');
+        }
+      }
+    }
+
+    expect(scanned, greaterThan(5), reason: '视图层只扫到 $scanned 个文件，守卫大概率失效了');
+    expect(
+      violations,
+      isEmpty,
+      reason:
+          '视图侧直接读了阶段自己的状态，请改用 row.stageStatus(stage)：\n'
+          '${violations.join('\n')}',
+    );
+  });
+
+  test('两条视图侧 lint 的白名单文件都真的存在（防止白名单变僵尸）', () {
+    // 白名单锚的是文件名。文件改了名而白名单没跟着改的话，
+    // 那一条豁免会**静默失效**：守卫开始扫一个本该豁免的文件，
+    // 或者更糟 —— 一条早就不存在的豁免留在表里，
+    // 下一个人以为它还在挡着什么。
+    const named = {
+      'task_occurrence.dart',
+      'occurrence_expansion.dart',
+      'stage_occurrence_status.dart',
+    };
+    final present = {
+      for (final f in _dartFiles('lib')) _norm(f.path).split('/').last,
+    };
+    for (final name in named) {
+      expect(present, contains(name), reason: '白名单里的 $name 已经不存在了');
+    }
+  });
+
   test('lib/ 下有可供扫描的源码（守卫不能对着空目录报绿）', () {
     expect(libFiles, isNotEmpty, reason: '守卫扫描到 0 个文件时，它的「通过」没有任何信息量');
   });
@@ -698,7 +766,7 @@ import
     );
   });
 
-  test('分层依赖与跨 feature 规则（module-map §3）', () {
+  test('NFR-MAINT-01 分层依赖与跨 feature 规则（module-map §3）', () {
     final violations = <String>[];
     for (final file in libFiles) {
       final rel = _relToLib(file.path);
@@ -815,7 +883,7 @@ import
     );
   });
 
-  test('纯 Dart 验收测试不得沾 Flutter（overview §6，V2 那一格）', () {
+  test('NFR-MAINT-02 纯 Dart 验收测试不得沾 Flutter（overview §6，V2 那一格）', () {
     // V2 的桌面小组件跑在后台 isolate、甚至另一个进程，那里没有 binding。
     // 「读取路径不依赖 Widget」这句话必须由**可执行的东西**守住，
     // 否则某次重构顺手 import 了 flutter/foundation，谁也不会注意到。

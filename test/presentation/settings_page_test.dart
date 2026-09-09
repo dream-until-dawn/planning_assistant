@@ -44,7 +44,7 @@ Future<void> _openSettings(WidgetTester tester) async {
 }
 
 void main() {
-  group('页面由注册表渲染（FR-CFG-07）', () {
+  group('页面由注册表渲染（FR-CFG-07、NFR-MAINT-04）', () {
     testAppWidgets('每个暴露项都出现，隐藏项不出现', (tester) async {
       await _pumpApp(tester);
       await _openSettings(tester);

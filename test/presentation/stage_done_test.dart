@@ -59,6 +59,29 @@ Future<void> _reopen(WidgetTester tester) async {
 }
 
 void main() {
+  testAppWidgets('重新打开时，阶段标题要显示出来（不是空白行）', (tester) async {
+    // **这是个真发生过的缺陷。** 阶段那一行的 `TextField` 没有
+    // controller —— 页面开头那段注释早就写明「编辑模式必须有」
+    // （标题与备注因此各有一个），阶段漏了。
+    // 于是打开一条已有的阶段事项，几行阶段全是空的，像内容丢了。
+    //
+    // 一直没被发现，是因为勾选/排序/时间那几条用例都只按 Key 找控件，
+    // **没有一条看过里面的字**。
+    await _pumpApp(tester);
+    await _createStaged(tester, 2);
+    await _reopen(tester);
+
+    await tester.scrollUntilVisible(
+      find.byKey(TaskEditorPage.stageSectionKey),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('第 1 步'), findsOneWidget);
+    expect(find.text('第 2 步'), findsOneWidget);
+  });
+
   testAppWidgets('勾一个阶段 → 落库 → 卡片上的进度跟着变', (tester) async {
     final harness = await _pumpApp(tester);
     await _createStaged(tester, 3);

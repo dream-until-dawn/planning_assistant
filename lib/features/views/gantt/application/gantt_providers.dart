@@ -62,6 +62,7 @@ final ganttOccurrencesProvider = Provider<List<TaskOccurrence>>((ref) {
         engine: RecurrenceEngine(ref.watch(timeZoneResolverProvider)),
         // 阶段进来算有效跨度（§4.7）—— 甘特的条长必须与时间轴一致。
         stagesByTask: ref.watch(stagesByTaskProvider),
+        stageStatesByTask: ref.watch(stageStatesByTaskProvider),
         includeSkipped: filter.statuses.contains(TaskStatus.skipped),
       ),
       filter,

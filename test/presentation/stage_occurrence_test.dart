@@ -216,6 +216,72 @@ void main() {
     expect(states.single.completedAt, isNull);
   });
 
+  testAppWidgets('**编辑器里不给重复任务勾阶段** —— 那一列没人读', (tester) async {
+    // `Stage.status` 对重复任务是**死数据**：状态按每一次存
+    // （data-model §3.2 的「死数据」那一段）。编辑器编的是整条任务，
+    // 在那儿勾写进的是那一列 —— 勾了没反应，比没有这个框更糟。
+    //
+    // 序号顶上原来那个框的位置（它本来就是让位给勾选框的）。
+    final harness = await _pumpApp(tester);
+    await _createRecurringStaged(tester);
+    final stages = await _stageIds(harness);
+
+    await tester.tap(find.byType(TaskCard).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(OccurrenceSheetKeys.editSeries));
+    await tester.pumpAndSettle();
+
+    // **先滚到阶段区。** 不滚的话它压根没建出来，
+    // 下面那句 `findsNothing` 就是自证（§1.11 那族）。
+    await tester.scrollUntilVisible(
+      find.byKey(TaskEditorPage.stageSectionKey),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('热身'), findsOneWidget, reason: '阶段区没渲染，下面那条就是自证');
+
+    for (final id in stages) {
+      expect(
+        find.byKey(TaskEditorPage.stageDoneKey(id)),
+        findsNothing,
+        reason: '重复任务的编辑器里出现了阶段勾选框 —— 勾了不会有任何效果',
+      );
+    }
+  });
+
+  testAppWidgets('对照组：不重复的阶段任务里，编辑器照常给勾', (tester) async {
+    // 少了这条，一个「一律不显示勾选框」的实现能让上面绿 ——
+    // 而那会把不重复任务的阶段完成入口一起端掉（那是 M3 补过的债）。
+    final harness = await _pumpApp(tester);
+    await tester.tap(find.byKey(AppShell.fabKey));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
+    await tester.pump();
+    for (final name in ['打包', '搬运']) {
+      await tapVisible(tester, TaskEditorPage.addStageKey);
+      final fields = find.descendant(
+        of: find.byKey(TaskEditorPage.stageSectionKey),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(fields.last, name);
+      await tester.pump();
+    }
+    await tapVisible(tester, TaskEditorPage.saveButtonKey);
+
+    await tester.tap(find.byType(TaskCard).first);
+    await tester.pumpAndSettle();
+
+    final ids = await _stageIds(harness);
+    await tester.scrollUntilVisible(
+      find.byKey(TaskEditorPage.stageSectionKey),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(TaskEditorPage.stageDoneKey(ids.first)), findsOneWidget);
+  });
+
   testAppWidgets('对照组：不重复的阶段任务不弹这个弹层', (tester) async {
     // 它没有「某一次」，阶段状态就在阶段自己身上 ——
     // 勾选仍在编辑器里（`stage_done_test.dart` 验那条路）。

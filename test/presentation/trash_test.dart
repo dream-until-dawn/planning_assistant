@@ -72,7 +72,7 @@ Future<void> _openTrash(WidgetTester tester) async {
 }
 
 void main() {
-  testAppWidgets('删掉之后列表里没有了，而库里是墓碑不是真删', (tester) async {
+  testAppWidgets('FR-TASK-08 删掉之后列表里没有了，而库里是墓碑不是真删', (tester) async {
     final harness = await _pumpApp(tester);
     await _createTask(tester, '买菜');
     expect(find.byType(TaskCard), findsOneWidget);

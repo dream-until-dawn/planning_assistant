@@ -296,7 +296,10 @@ List<GanttSegment> _segmentsOf(TaskOccurrence row, int barStart, int total) {
         stage: stage,
         startMinute: segStart < 0 ? 0 : segStart,
         endMinute: segEnd > total ? total : segEnd,
-        done: stage.status == TaskStatus.done,
+        // **问行，不问阶段自己。** 重复任务的阶段状态按发生分别存
+        // （FR-TASK-07），读 `stage.status` 会拿到整条任务共用的那一份 ——
+        // 于是同一条任务在列表上是 1/2、在这里是 0/2。
+        done: row.stageStatus(stage) == TaskStatus.done,
       ),
     );
   }
@@ -307,9 +310,8 @@ List<GanttSegment> _segmentsOf(TaskOccurrence row, int barStart, int total) {
 /// 已完成的阶段占几成。没有阶段时为 null（不是 0 —— 「没有阶段」
 /// 与「一个都没做」是两回事，画出来也该不一样）。
 double? _progressOf(TaskOccurrence row) {
-  if (row.stages.isEmpty) return null;
-  final done = row.stages.where((s) => s.status == TaskStatus.done).length;
-  return done / row.stages.length;
+  final p = row.stageProgress;
+  return p == null ? null : p.done / p.total;
 }
 
 Category? _categoryOf(String? key, List<Category> categories) {

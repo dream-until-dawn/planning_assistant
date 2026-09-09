@@ -90,7 +90,7 @@ Rect _cell(WidgetTester tester, PlanDate date) =>
     tester.getRect(find.byKey(CalendarPage.dayKey(date)));
 
 void main() {
-  group('格子画对了', () {
+  group('FR-VIEW-03 格子画对了', () {
     testAppWidgets('六行七列，第一格是上个月的 8-31', (tester) async {
       await _pump(tester);
       expect(

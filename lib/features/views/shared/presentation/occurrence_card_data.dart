@@ -15,14 +15,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../design/components/app_chip.dart';
 import '../../../../design/components/task_card.dart';
 import '../../../../domain/entities/category.dart';
-import '../../../../domain/entities/stage.dart';
 import '../../../../domain/entities/task.dart';
-import '../../../../domain/services/stage_occurrence_status.dart';
 import '../../../../domain/value_objects/task_status.dart';
 import '../../../task/application/recurrence_draft.dart';
 import '../application/category_providers.dart';
 import '../application/task_occurrence.dart';
-import '../application/task_providers.dart';
 
 /// 一行卡片要的全部展示数据 —— **视图统一走这个入口**。
 ///
@@ -33,19 +30,8 @@ import '../application/task_providers.dart';
 ///
 /// 所以把「要喂哪些东西」收在这里，视图只给一行。
 /// 纯函数版 [occurrenceCardData] 留着给测试直接构造用。
-TaskCardData cardDataOf(WidgetRef ref, TaskOccurrence row) {
-  final stages = ref.watch(stagesByTaskProvider)[row.taskId];
-  return occurrenceCardData(
-    row,
-    ref.watch(categoryByIdProvider),
-    stages,
-    // 不重复的任务没有「某一次」，传 null 让判据回落到 `Stage.status`。
-    occurrenceStages: row.key == null
-        ? null
-        : ref.watch(stageStatesByTaskProvider)[row.taskId]?[row.key] ??
-              const {},
-  );
-}
+TaskCardData cardDataOf(WidgetRef ref, TaskOccurrence row) =>
+    occurrenceCardData(row, ref.watch(categoryByIdProvider));
 
 /// 领域实体 → 卡片展示数据。
 ///
@@ -54,15 +40,7 @@ TaskCardData cardDataOf(WidgetRef ref, TaskOccurrence row) {
 TaskCardData occurrenceCardData(
   TaskOccurrence row,
   Map<String, Category> categories,
-  List<Stage>? stages, {
-
-  /// 这一次的阶段状态（FR-TASK-07）。**重复任务必须传** ——
-  /// 不传的话进度看的是 `Stage.status`，那是整条任务共用的一份，
-  /// 于是每一次都显示成同一个进度。
-  ///
-  /// 不重复的任务传 null：它没有「某一次」，状态就在阶段自己身上。
-  StageStatesOfOccurrence? occurrenceStages,
-}) {
+) {
   final task = row.task;
   // `categoryId == null` 就是未分类（settings-spec §3.0）——
   // 查不到也当未分类：那说明分类被删了，而删分类不该让任务消失。
@@ -80,7 +58,12 @@ TaskCardData occurrenceCardData(
         ? Uncategorized.color
         : Color(category.colorArgb),
     timeLabel: timeLabelOf(row),
-    stageProgress: progressOf(stages, occurrenceStages: occurrenceStages),
+    // **进度问行自己**（`TaskOccurrence.stageProgress`）——
+    // 那里面才知道这一行是不是「某一次」，以及该看哪一份状态。
+    stageProgress: switch (row.stageProgress) {
+      null => null,
+      final p => (p.done, p.total),
+    },
     isRecurring: task.isRecurring,
     // 「普通」不显示（见 `TaskCardData.priorityLabel`）。
     priorityLabel: task.priority == TaskPriority.normal
@@ -116,17 +99,6 @@ String describeRule(Task task) {
 ///
 /// **没有阶段就是 null**，不是 `(0, 0)` —— 后者会让卡片显示「阶段 0/0」，
 /// 而单项任务压根没有阶段这个概念。
-/// [occurrenceStages] 非 null 时按**这一次**算（FR-TASK-07）；
-/// null 表示这条任务不重复，看阶段自己。判据只在
-/// `stageStatusFor` 一处，这里不重写一遍。
-(int, int)? progressOf(
-  List<Stage>? stages, {
-  StageStatesOfOccurrence? occurrenceStages,
-}) {
-  if (stages == null || stages.isEmpty) return null;
-  final p = stageProgressFor(stages, occurrenceStates: occurrenceStages);
-  return p == null ? null : (p.done, p.total);
-}
 
 /// 卡片右侧那个时间标签。
 ///

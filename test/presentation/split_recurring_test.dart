@@ -85,7 +85,7 @@ Future<void> _openSheet(WidgetTester tester) async {
 }
 
 void main() {
-  testAppWidgets('弹层里有「本次及以后」，且说明不改历史', (tester) async {
+  testAppWidgets('FR-TASK-06 弹层里有「本次及以后」，且说明不改历史', (tester) async {
     // 不说的话，用户会担心之前做过的记录被一起改掉 ——
     // 而那正是这套做法要保住的东西。
     await _pumpEstablishedDaily(tester);

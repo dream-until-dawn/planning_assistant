@@ -229,6 +229,14 @@ final class TaskDraft {
   /// 重复规则（FR-TASK-03/04）。
   final RecurrenceDraft recurrence;
 
+  /// 这条任务重不重复。
+  ///
+  /// **界面表达不了的规则也算重复**（`unsupportedRecurrence`）——
+  /// 那条规则确实在，只是这个编辑器改不了它。
+  /// 漏掉它的话，一条 `BYSETPOS` 的重复任务会被当成不重复，
+  /// 于是又显示出那个对它没有意义的阶段勾选框。
+  bool get isRecurring => recurrence.enabled || unsupportedRecurrence != null;
+
   /// 重复任务**必须有日期**：RRULE 的展开以 DTSTART 为锚点，
   /// 没有起点就无从展开。与「非全天必须有日期」是同一类约束。
   bool get needsDateForRecurrence => recurrence.enabled && planDate == null;

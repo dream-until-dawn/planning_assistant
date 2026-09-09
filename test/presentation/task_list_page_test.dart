@@ -86,7 +86,7 @@ Future<void> _pump(
 }
 
 void main() {
-  group('分组标题', () {
+  group('FR-VIEW-02 分组标题', () {
     testWidgets('每组一个标题，带条数', (tester) async {
       await _pump(tester, [
         _task('$_titlePrefix今天甲', date: _today),

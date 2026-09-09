@@ -41,7 +41,7 @@ RecurrenceContext ctx({
 void main() {
   setUpAll(tzdata.initializeTimeZones);
 
-  group('R-40 设备换时区，墙钟不变', () {
+  group('NFR-REL-03 / R-40 设备换时区，墙钟不变', () {
     test('北京设的「每天 09:00」，设备切到伦敦后仍是 09:00', () {
       // **这是 ADR-0005 存在的全部理由。** 存 UTC 时间戳的话，
       // 换时区后同一条任务会显示成别的时刻 —— 用户搬个家，
