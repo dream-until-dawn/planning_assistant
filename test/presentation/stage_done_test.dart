@@ -17,7 +17,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
-import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 
 import '../support/app_harness.dart';
@@ -36,8 +36,7 @@ Future<Harness> _pumpApp(WidgetTester tester, {bool advancing = false}) async {
 
 /// 建一条带 [count] 个阶段的任务，回到列表。
 Future<void> _createStaged(WidgetTester tester, int count) async {
-  await tester.tap(find.byKey(AppShell.fabKey));
-  await tester.pumpAndSettle();
+  await tapCreate(tester, TaskShape.staged);
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
   await tester.pump();
   for (var i = 0; i < count; i++) {

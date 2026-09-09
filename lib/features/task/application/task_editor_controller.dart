@@ -506,6 +506,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
         categoryId: categoryId,
         planDate: date,
         endDate: duration.endDateFrom(date),
+        recurrence: _seedRecurrence(shape),
       );
     }
 
@@ -521,8 +522,27 @@ final class TaskEditorController extends Notifier<TaskDraft> {
       startMinute: start,
       endDate: end.date,
       endMinute: end.minute,
+      recurrence: _seedRecurrence(shape),
     );
   }
+
+  /// 阶段形态**不预置空阶段**。
+  ///
+  /// 一度给了两个空的（想让「至少两个」这条要求在表单上自己说出来）。
+  /// 代价比收益大：用户按「加一个阶段」时，新的一行加在那两个空行**后面**，
+  /// 于是表单上是「两个空的 + 他填的那些」，而空的在保存时被丢掉 ——
+  /// 界面上的顺序与存下去的顺序对不上。
+  ///
+  /// 阶段区本身已经由形态显示出来了（那是选「阶段事项」的可见结果），
+  /// 「至少两个」由保存时的 `blockedReason` 说明。
+  /// 重复形态开局就**打开**重复开关。
+  ///
+  /// 不打开的话，「重复单事项」存下去是一条不重复的任务 ——
+  /// 用户在面板上说的那句话被丢掉了。默认「每天」是 `RecurrenceDraft`
+  /// 自己的默认频率，这里只把开关拨到 on。
+  RecurrenceDraft _seedRecurrence(TaskShape shape) => shape.isRecurring
+      ? const RecurrenceDraft(enabled: true)
+      : const RecurrenceDraft();
 
   /// 此刻之后的下一个整点。23 点之后是次日 00:00 —— 由 `shiftFrom` 处理，
   /// 这里只算分钟数，跨天交给调用方那次 `endFrom`。

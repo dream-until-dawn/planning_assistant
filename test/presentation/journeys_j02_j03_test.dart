@@ -21,6 +21,7 @@ import 'package:planning_assistant/data/database/app_database.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/task/application/recurrence_draft.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 import 'package:planning_assistant/features/views/gantt/presentation/gantt_painter.dart';
 import 'package:planning_assistant/features/views/gantt/presentation/gantt_view.dart';
@@ -38,9 +39,13 @@ Future<Harness> _pumpApp(WidgetTester tester) async {
   return harness;
 }
 
-Future<void> _newTask(WidgetTester tester, String title) async {
-  await tester.tap(find.byKey(AppShell.fabKey));
-  await tester.pumpAndSettle();
+Future<void> _newTask(
+  WidgetTester tester,
+  String title, {
+  // J-02 是重复任务、J-03 是阶段事项 —— 形态在面板上就选定了。
+  TaskShape shape = TaskShape.scratch,
+}) async {
+  await tapCreate(tester, shape);
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), title);
   await tester.pump();
 }
@@ -63,8 +68,7 @@ void main() {
     final harness = await _pumpApp(tester);
 
     // ── 建一条每周重复的任务 ─────────────────────────────────
-    await _newTask(tester, '周报');
-    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+    await _newTask(tester, '周报', shape: TaskShape.recurringSingle);
     await tapVisible(
       tester,
       TaskEditorPage.frequencyKey(RecurrenceFrequency.weekly),
@@ -120,7 +124,7 @@ void main() {
     final harness = await _pumpApp(tester);
 
     // ── 建一条三阶段的任务 ───────────────────────────────────
-    await _newTask(tester, '搬家');
+    await _newTask(tester, '搬家', shape: TaskShape.staged);
     // **先给它一个日期。** 甘特是按时间跨度画的，没有日期的任务
     // 压根不进甘特（view-specs §4.3 最后一行）——
     // 第一版没设日期，甘特是空态，报的是「找不到画布」。

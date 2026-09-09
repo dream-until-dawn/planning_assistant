@@ -26,7 +26,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
-import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 
 import '../support/app_harness.dart';
@@ -43,10 +43,14 @@ Future<Harness> _pumpApp(WidgetTester tester) async {
 
 /// 建一条两阶段的任务，并给第二个阶段定上「任务开始起、一小时」。
 Future<List<String>> _createStaged(WidgetTester tester) async {
-  await tester.tap(find.byKey(AppShell.fabKey));
-  await tester.pumpAndSettle();
+  await tapCreate(tester, TaskShape.staged);
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
   await tester.pump();
+  // **拨成全天**：这一份验的是「任务整体挪动时阶段偏移不动」，
+  // 而它下面有一条前提断言「这条任务还是全天的」。
+  // 新建默认是定时的（起止必填那条改动之后），所以要拨回来 ——
+  // 全天与偏移无关，换成定时只会给这份夹具多两个变量。
+  await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
 
   final ids = <String>[];
   for (final name in ['打包', '搬运']) {
@@ -139,8 +143,9 @@ void main() {
     // （没保存），要么直接发命令（没走编辑器这条「改形态 + 改字段」
     // 同时发生的路）。
     final harness = await _pumpApp(tester);
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    // 这一条与阶段无关，用临时事项起手 —— 它默认就是全天、没日期，
+    // 正好是「关掉全天」这个动作的起点。
+    await tapCreate(tester, TaskShape.scratch);
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
     await tester.pump();
     await tapVisible(tester, TaskEditorPage.saveButtonKey);

@@ -21,8 +21,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
+import 'package:planning_assistant/features/settings/application/registry.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/task/application/default_duration.dart';
 import 'package:planning_assistant/features/task/application/recurrence_draft.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 import 'package:planning_assistant/features/views/calendar/presentation/calendar_page.dart';
 import 'package:planning_assistant/features/views/shared/application/view_kind.dart';
@@ -42,6 +45,16 @@ Future<Harness> _pumpApp(WidgetTester tester) async {
     ProviderScope(overrides: harness.overrides, child: PlanningAssistantApp()),
   );
   await tester.pumpAndSettle();
+  // **默认时长改成「到当天结束」。**
+  //
+  // 出厂默认是 +24 小时（用户定的），于是每一次发生都盖到第二天 ——
+  // 一条每天重复的任务，两次在日历上叠着。这一份要「连着两天各看一次」，
+  // 叠着就分不清点开的是哪一次了。
+  //
+  // 这不是绕开那个默认值，是**把它从这一份的变量里拿掉**：
+  // 这里验的是每次发生各存各的阶段状态（FR-TASK-07），
+  // 跟默认时长没关系。跨天叠加本身另有用例管。
+  await seedSetting(tester, defaultTaskDuration, DefaultTaskDuration.endOfDay);
   return harness;
 }
 
@@ -50,8 +63,7 @@ Future<Harness> _pumpApp(WidgetTester tester) async {
 /// **用「每天」而不是「每周」**：要连着两天各看一次，
 /// 而每周的下一次在七天后。
 Future<void> _createRecurringStaged(WidgetTester tester) async {
-  await tester.tap(find.byKey(AppShell.fabKey));
-  await tester.pumpAndSettle();
+  await tapCreate(tester, TaskShape.recurringStaged);
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '健身');
   await tester.pump();
 
@@ -65,7 +77,6 @@ Future<void> _createRecurringStaged(WidgetTester tester) async {
     await tester.pump();
   }
 
-  await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
   await tapVisible(
     tester,
     TaskEditorPage.frequencyKey(RecurrenceFrequency.daily),
@@ -254,8 +265,7 @@ void main() {
     // 少了这条，一个「一律不显示勾选框」的实现能让上面绿 ——
     // 而那会把不重复任务的阶段完成入口一起端掉（那是 M3 补过的债）。
     final harness = await _pumpApp(tester);
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester, TaskShape.staged);
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
     await tester.pump();
     for (final name in ['打包', '搬运']) {
@@ -290,8 +300,7 @@ void main() {
     final harness = await _pumpApp(tester);
 
     // 建一条不重复的两阶段任务，勾掉第一步。
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester, TaskShape.staged);
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
     await tester.pump();
     for (final name in ['打包', '搬运']) {
@@ -312,7 +321,8 @@ void main() {
     await tapVisible(tester, TaskEditorPage.saveButtonKey);
     expect(find.textContaining('阶段 1/2'), findsOneWidget, reason: '前提：勾上了');
 
-    // 改成每天重复。
+    // 改成每天重复。**这一处要真的去拨开关** —— 它是从「不重复」
+    // 转成「重复」，而不是新建时就选了重复形态。
     await tester.tap(find.byType(TaskCard).first);
     await tester.pumpAndSettle();
     await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
@@ -369,7 +379,6 @@ void main() {
     await tester.tap(find.byKey(OccurrenceSheetKeys.editSeries));
     await tester.pumpAndSettle();
     await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
-    await tester.pumpAndSettle();
 
     // **保存之前**，勾选框就该已经带着那份进度了。
     await tester.scrollUntilVisible(
@@ -477,7 +486,6 @@ void main() {
     await _openSheet(tester);
     await tester.tap(find.byKey(OccurrenceSheetKeys.editSeries));
     await tester.pumpAndSettle();
-    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
     await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
     final row = (await harness.db.select(harness.db.stages).get()).firstWhere(
@@ -490,8 +498,7 @@ void main() {
     // 它没有「某一次」，阶段状态就在阶段自己身上 ——
     // 勾选仍在编辑器里（`stage_done_test.dart` 验那条路）。
     await _pumpApp(tester);
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester, TaskShape.staged);
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
     await tester.pump();
     await tapVisible(tester, TaskEditorPage.addStageKey);

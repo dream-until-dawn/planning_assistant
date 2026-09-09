@@ -15,7 +15,7 @@ import 'package:planning_assistant/app.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/data/database/app_database.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
-import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 import 'package:planning_assistant/features/views/task_list/presentation/occurrence_actions_sheet.dart';
 import 'package:planning_assistant/features/views/task_list/presentation/task_list_page.dart';
@@ -42,11 +42,9 @@ Future<Harness> _pumpEstablishedDaily(WidgetTester tester) async {
   );
   await tester.pumpAndSettle();
 
-  await tester.tap(find.byKey(AppShell.fabKey));
-  await tester.pumpAndSettle();
+  await tapCreate(tester, TaskShape.recurringSingle);
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
   await tester.pump();
-  await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
   await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
   await tester.pumpAndSettle();
 
@@ -192,11 +190,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester, TaskShape.recurringSingle);
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
     await tester.pump();
-    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
     await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
     await tester.pumpAndSettle();
 
@@ -227,8 +223,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester, TaskShape.scratch);
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '买菜');
     await tester.pump();
     await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));

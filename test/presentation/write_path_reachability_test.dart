@@ -43,7 +43,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
 import 'package:planning_assistant/data/database/app_database.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
-import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/task/application/recurrence_draft.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 
 import '../support/app_harness.dart';
@@ -197,7 +198,12 @@ final List<_Entry> _taskFields = [
     kind: _Kind.reachable,
     why: '',
     // 各个部件的探针在 recurrence_reachability_test.dart，这里只验这一维接上了。
-    drive: (t) => tapVisible(t, TaskEditorPage.recurrenceSwitchKey),
+    //
+    // **不去拨开关**：新建面板选的是「重复单事项」，开关开局就是开的，
+    // 再点一下反而关掉。改成拨一下频率 —— 同样是「界面上够得着」，
+    // 而且拨的是真的会进规则的那一维。
+    drive: (t) =>
+        tapVisible(t, TaskEditorPage.frequencyKey(RecurrenceFrequency.weekly)),
     check: (task, _) => expect(task.recurrenceRule, startsWith('RRULE:')),
   ),
   (
@@ -284,7 +290,8 @@ final List<_Entry> _stageFields = [
 Finder _stageTitleFields() => find.byWidgetPredicate(
   (w) =>
       w is TextField &&
-      (w.key as ValueKey<String>?)?.value.startsWith('editor-stage-') == true,
+      (w.key is ValueKey<String> &&
+          (w.key! as ValueKey<String>).value.startsWith('editor-stage-')),
 );
 
 Finder _lastStageField(WidgetTester tester) => _stageTitleFields().last;
@@ -297,7 +304,15 @@ String _stageIdOf(WidgetTester tester, {required bool first}) {
   return key.value.replaceFirst('editor-stage-', '');
 }
 
-Future<Harness> _pumpEditor(WidgetTester tester) async {
+/// 开一张新建表单。
+///
+/// [shape] 决定表单长什么样：阶段区、重复区都按形态显示
+/// （FR-TASK-01/02/03），所以每组探针要挑对自己那一样 ——
+/// 拿临时事项去验 `recurrenceRule` 的话，重复区根本不在表单上。
+Future<Harness> _pumpEditor(
+  WidgetTester tester, [
+  TaskShape shape = TaskShape.scratch,
+]) async {
   await setScreenSize(tester, const Size(390, 844));
   final harness = appHarness();
   await seedCategories(harness);
@@ -305,8 +320,7 @@ Future<Harness> _pumpEditor(WidgetTester tester) async {
     ProviderScope(overrides: harness.overrides, child: PlanningAssistantApp()),
   );
   await tester.pumpAndSettle();
-  await tester.tap(find.byKey(AppShell.fabKey));
-  await tester.pumpAndSettle();
+  await tapCreate(tester, shape);
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
   await tester.pump();
   return harness;
@@ -328,7 +342,15 @@ void main() {
   group('CreateTaskCommand 的每个字段', () {
     for (final e in _taskFields.where((e) => e.kind == _Kind.reachable)) {
       testAppWidgets('${e.field}：界面上拨得到，而且落库', (tester) async {
-        final harness = await _pumpEditor(tester);
+        // 每条探针挑自己那一样：`recurrenceRule` 要重复区在场，
+        // `kind` 要阶段区在场（它靠「填够两个阶段」拨出来），
+        // 其余按临时事项起手 —— 那是最空的一张表，别的字段都从
+        // 默认值拨起。
+        final harness = await _pumpEditor(tester, switch (e.field) {
+          'recurrenceRule' => TaskShape.recurringSingle,
+          'kind' => TaskShape.staged,
+          _ => TaskShape.scratch,
+        });
         await e.drive!(tester);
 
         await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
@@ -347,7 +369,7 @@ void main() {
     // 分开写三条会把同一串操作抄三遍，而它们验的是同一次保存的不同侧面。
     for (final e in _stageFields.where((e) => e.kind == _Kind.reachable)) {
       testAppWidgets('${e.field}：界面上拨得到，而且落库', (tester) async {
-        final harness = await _pumpEditor(tester);
+        final harness = await _pumpEditor(tester, TaskShape.staged);
         await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
 
         for (final title in ['第一步', '第二步']) {

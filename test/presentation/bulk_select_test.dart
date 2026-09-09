@@ -21,6 +21,7 @@ import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/task/application/recurrence_draft.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 import 'package:planning_assistant/features/views/task_list/presentation/task_list_page.dart';
 
@@ -42,14 +43,15 @@ Future<void> _create(
   bool recurring = false,
   bool dated = false,
 }) async {
-  await tester.tap(find.byKey(AppShell.fabKey));
-  await tester.pumpAndSettle();
+  await tapCreate(
+    tester,
+    recurring ? TaskShape.recurringSingle : TaskShape.scratch,
+  );
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), title);
   await tester.pump();
   // 关掉全天会补上今天 —— 给它一个日期最省事的路径。
   if (dated) await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
   if (recurring) {
-    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
     await tapVisible(
       tester,
       TaskEditorPage.frequencyKey(RecurrenceFrequency.daily),

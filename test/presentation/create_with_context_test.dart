@@ -28,6 +28,7 @@ import 'package:planning_assistant/app.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 import 'package:planning_assistant/features/views/shared/application/view_kind.dart';
 import 'package:planning_assistant/features/views/shared/application/view_shared_state.dart';
@@ -116,39 +117,61 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testAppWidgets('日历翻到 9/20 再点加号，建出来的落在 9/20', (tester) async {
+    testAppWidgets('日历翻到 9/20 再点加号选「单事项」，建出来的落在 9/20', (tester) async {
       // 这是这条需求最常撞见的形态：用户明明正看着 9/20，
-      // 建出来的任务却落在「随时」区，得再手动选一次日期。
+      // 建出来的任务却落在「无日期」，得再手动选一次日期。
+      //
+      // **要选一个排时间的形态**：临时事项按定义不排时间，
+      // 它会把加号带来的日期丢掉 —— 那是对的，但验不了这条需求。
       final harness = await _pump(tester);
       await tapVisible(tester, AppShell.viewTabKey(ViewKind.calendar));
       await focus(tester, const PlanDate(2026, 9, 20));
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester, TaskShape.single);
       await _saveAs(tester, '那天的事');
 
       final row = (await harness.db.select(harness.db.tasks).get()).single;
       expect(row.planDate, '2026-09-20');
     });
 
-    testAppWidgets('**列表里点加号照旧建得出「随时」任务**', (tester) async {
-      // 列表横跨所有日期，用户在那儿点加号没有指向任何一天。
-      // 一律盖上「今天」的话，「随时」这一档就再也建不出来了 ——
-      // 而它是 FR-VIEW-01 点了名的一档。
+    testAppWidgets('**列表里选「单事项」落在今天，不是聚焦日**', (tester) async {
+      // 列表横跨所有日期，用户在那儿点加号没有指向任何一天
+      // （`ViewKind.anchorsToDay` 为 false）。所以加号不把聚焦日带过去 ——
+      // 带过去的话，别处（日历）翻到 9/20 会让列表里建的任务
+      // 莫名其妙落在 9/20。
       //
-      // 这条不是补充，是**这次改动差点造成的回归**：
-      // 加号先前无条件带上了聚焦日，两条既有测试
-      // （swipe_test「没有日期的任务」、settings_page_test「无日期分组」）
-      // 一起变红，指的就是这件事。
+      // **注意验的是「不是 9/20」，不是「没有日期」**：
+      // 单事项要求起止，拿不到语境时它落在今天。
+      // 「没有日期」现在是临时事项那一档的事，见下一条。
       final harness = await _pump(tester);
       await focus(tester, const PlanDate(2026, 9, 20));
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester, TaskShape.single);
+      await _saveAs(tester, '今天的事');
+
+      final row = (await harness.db.select(harness.db.tasks).get()).single;
+      expect(row.planDate, isNot('2026-09-20'), reason: '列表里的加号把聚焦日带过去了');
+      expect(row.planDate, isNotNull, reason: '单事项要求有日期');
+    });
+
+    testAppWidgets('**「随时」任务由临时事项这一档建出来**', (tester) async {
+      // 上一版里它是靠「列表的加号不带日期」间接达成的 ——
+      // 加号先前无条件带上聚焦日时，两条既有测试
+      // （swipe_test「没有日期的任务」、settings_page_test「无日期分组」）
+      // 一起变红，指的就是这件事。
+      //
+      // 现在它有了自己的入口，而且**在哪个视图里都建得出来**：
+      // 这一条在日历里建（那是最「对着某一天」的视图），
+      // 建出来的照样没有日期。
+      final harness = await _pump(tester);
+      await tapVisible(tester, AppShell.viewTabKey(ViewKind.calendar));
+      await focus(tester, const PlanDate(2026, 9, 20));
+
+      await tapCreate(tester, TaskShape.scratch);
       await _saveAs(tester, '想想去哪玩');
 
       final row = (await harness.db.select(harness.db.tasks).get()).single;
-      expect(row.planDate, isNull, reason: '列表里的加号把「随时」任务堵死了');
+      expect(row.planDate, isNull, reason: '临时事项被塞了一个日期');
     });
 
     testAppWidgets('**时间轴里点加号也建得出「随时」任务**', (tester) async {
@@ -159,8 +182,7 @@ void main() {
       await tapVisible(tester, AppShell.viewTabKey(ViewKind.timeline));
       await focus(tester, const PlanDate(2026, 9, 20));
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
       await _saveAs(tester, '想想去哪玩');
 
       final row = (await harness.db.select(harness.db.tasks).get()).single;

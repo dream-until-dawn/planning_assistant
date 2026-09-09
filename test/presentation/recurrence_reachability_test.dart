@@ -32,8 +32,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
 import 'package:planning_assistant/core/time/weekday.dart';
-import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/task/application/recurrence_draft.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 
 import '../support/app_harness.dart';
@@ -51,8 +51,7 @@ Future<Harness> _pumpEditor(WidgetTester tester) async {
   );
   await tester.pumpAndSettle();
 
-  await tester.tap(find.byKey(AppShell.fabKey));
-  await tester.pumpAndSettle();
+  await tapCreate(tester, TaskShape.recurringSingle);
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
   await tester.pump();
   return harness;
@@ -202,7 +201,6 @@ void main() {
     for (final probe in _probes) {
       testAppWidgets(probe.field, (tester) async {
         final harness = await _pumpEditor(tester);
-        await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
         await probe.drive(tester);
 
         // 界面上没被挡住 —— 挡住的话下面读到的会是 null，
@@ -221,7 +219,6 @@ void main() {
       // 它不是一个独立字段（走的还是 monthDay），所以完备性守卫盯不到它 ——
       // 而它恰恰是这批里最要紧的一档：想月末的人选 31 号会漏掉 5 个月。
       final harness = await _pumpEditor(tester);
-      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
       await tapVisible(
         tester,
         TaskEditorPage.frequencyKey(RecurrenceFrequency.monthly),
@@ -243,7 +240,6 @@ void main() {
       // `BYMONTHDAY=31` 只命中 7 次）。不说的话，选 31 号的人
       // 要到三月才发现二月没提醒 —— 而那时他会以为是应用坏了。
       await _pumpEditor(tester);
-      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
       await tapVisible(
         tester,
         TaskEditorPage.frequencyKey(RecurrenceFrequency.monthly),
@@ -265,9 +261,14 @@ void main() {
       expect(find.byKey(TaskEditorPage.monthSkipHintKey), findsOneWidget);
     });
 
-    testAppWidgets('对照组：开关不打开就没有规则', (tester) async {
+    testAppWidgets('对照组：把开关拨掉就没有规则', (tester) async {
       // 少了这条，一个「永远写死一条 RRULE」的实现能让上面七条全绿。
+      //
+      // 新建面板上选的是「重复单事项」，开关**开局就是开的** ——
+      // 所以这条对照组从「不去打开」改成「拨掉它」。
+      // 验的还是同一件事：那个开关真的管着规则写不写。
       final harness = await _pumpEditor(tester);
+      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
       expect(await _saveAndReadRule(tester, harness), isNull);
     });
   });

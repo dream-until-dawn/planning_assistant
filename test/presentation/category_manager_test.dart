@@ -204,8 +204,7 @@ void main() {
       final harness = await _pumpApp(tester);
 
       // 先建一条挂在「工作」下的任务，走真编辑器。
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '写周报');
       await tester.pump();
       await tapVisible(
@@ -263,8 +262,7 @@ void main() {
       WidgetTester tester,
       Harness harness,
     ) async {
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '随手记');
       await tester.pump();
       await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
@@ -452,8 +450,7 @@ void main() {
       await tester.tap(find.byType(BackButton).first);
       await tester.pumpAndSettle();
     }
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester);
 
     expect(find.text('阅读'), findsOneWidget);
   });

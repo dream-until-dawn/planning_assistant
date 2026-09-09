@@ -30,6 +30,10 @@ import 'package:planning_assistant/domain/entities/stage.dart';
 import 'package:planning_assistant/domain/entities/stage_occurrence_state.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/features/settings/application/settings_providers.dart';
+import 'package:planning_assistant/features/settings/domain/setting_spec.dart';
+import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
+import 'package:planning_assistant/features/task/presentation/create_task_menu.dart';
 import 'package:planning_assistant/features/views/shared/application/category_providers.dart';
 import 'package:planning_assistant/features/views/shared/application/task_providers.dart';
 import 'package:planning_assistant/features/views/shared/presentation/filter_bar.dart';
@@ -339,6 +343,47 @@ Future<void> tapVisible(WidgetTester tester, Key key) async {
   await tester.ensureVisible(finder);
   await tester.pumpAndSettle();
   await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
+/// 往库里写一条配置，然后等一帧让它流回界面。
+///
+/// 全应用的夹具（[appHarness]）里配置存在库里，没有 `settings:` 那种
+/// 直接注入的口子 —— 那个口子在 `viewPipelineOverrides` 上，
+/// 而那套夹具没有真的写路径。
+///
+/// **在 `pumpWidget` 之后调**：容器要先建起来才拿得到仓库。
+Future<void> seedSetting<T>(
+  WidgetTester tester,
+  SettingSpec<T> spec,
+  T value,
+) async {
+  // 锚在 `Navigator` 上：它一定在 `ProviderScope` **下面**。
+  // 锚在 scope 自己身上的话 `containerOf` 会往上找、然后报
+  // 「No ProviderScope found」。
+  final container = ProviderScope.containerOf(
+    tester.element(find.byType(Navigator).first),
+  );
+  await container.read(settingsWriterProvider).set(spec, value);
+  await tester.pumpAndSettle();
+}
+
+/// 点加号、在面板上选一样，落到新建表单上。
+///
+/// 加号改成「先选形态再进表单」之后（FR-TASK-01/02/03），
+/// 「点加号就到表单」这一步没有了 —— 全项目 67 处 `tap(fabKey)`
+/// 都要多走一步。收成一个夹具，而不是每处各写两行。
+///
+/// 默认选**临时事项**：它什么都不必填，与改动之前那张空白表单等价，
+/// 所以「只是想建一条任务」的用例换过来之后行为不变。
+/// 用例的主题**就是**某一种形态时，显式传那一样。
+Future<void> tapCreate(
+  WidgetTester tester, [
+  TaskShape shape = TaskShape.scratch,
+]) async {
+  await tester.tap(find.byKey(AppShell.fabKey));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(createShapeKey(shape)));
   await tester.pumpAndSettle();
 }
 

@@ -21,6 +21,7 @@ import 'package:planning_assistant/features/archive/presentation/archive_page.da
 import 'package:planning_assistant/features/settings/presentation/settings_page.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/task/application/recurrence_draft.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 import 'package:planning_assistant/features/views/task_list/presentation/occurrence_actions_sheet.dart';
 
@@ -41,12 +42,13 @@ Future<void> _createTask(
   String title, {
   bool recurring = false,
 }) async {
-  await tester.tap(find.byKey(AppShell.fabKey));
-  await tester.pumpAndSettle();
+  await tapCreate(
+    tester,
+    recurring ? TaskShape.recurringSingle : TaskShape.scratch,
+  );
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), title);
   await tester.pump();
   if (recurring) {
-    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
     await tapVisible(
       tester,
       TaskEditorPage.frequencyKey(RecurrenceFrequency.weekly),
@@ -165,8 +167,7 @@ void main() {
 
   testAppWidgets('新建页上没有归档入口', (tester) async {
     await _pumpApp(tester);
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester);
     expect(find.byKey(TaskEditorPage.archiveButtonKey), findsNothing);
   });
 }

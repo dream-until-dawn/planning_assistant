@@ -24,7 +24,6 @@ import 'package:planning_assistant/app.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
-import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 import 'package:planning_assistant/features/views/shared/presentation/filter_bar.dart';
 import 'package:planning_assistant/features/views/shared/presentation/filter_sheet.dart';
@@ -159,8 +158,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '交方案');
       await tester.pump();
       await tapVisible(

@@ -13,7 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/domain/value_objects/task_status.dart';
-import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 import 'package:planning_assistant/features/views/shared/presentation/filter_sheet.dart';
 import 'package:planning_assistant/features/views/task_list/presentation/occurrence_actions_sheet.dart';
@@ -29,11 +29,9 @@ Future<Harness> _pumpWithDaily(WidgetTester tester) async {
   );
   await tester.pumpAndSettle();
 
-  await tester.tap(find.byKey(AppShell.fabKey));
-  await tester.pumpAndSettle();
+  await tapCreate(tester, TaskShape.recurringSingle);
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
   await tester.pump();
-  await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
   await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
   await tester.pumpAndSettle();
   return harness;
@@ -183,8 +181,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester, TaskShape.scratch);
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '买菜');
     await tester.pump();
     await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));

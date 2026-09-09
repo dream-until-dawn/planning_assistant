@@ -17,8 +17,8 @@ import 'package:planning_assistant/core/time/weekday.dart';
 import 'package:planning_assistant/design/components/app_chip.dart';
 import 'package:planning_assistant/design/components/empty_state.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
-import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/task/application/recurrence_draft.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 
 import '../support/app_harness.dart';
@@ -47,8 +47,7 @@ void main() {
 
     // ── 三次点击落库（M2 验收：≤3 次）────────────────────────
     // 1. 悬浮加号
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester);
     expect(find.byType(TaskEditorPage), findsOneWidget);
 
     // 2. 打字（标题框自动聚焦，不额外花一次点击）
@@ -75,8 +74,7 @@ void main() {
   testAppWidgets('标题为空时保存按钮点不动', (tester) async {
     final harness = await _pumpApp(tester);
 
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester);
 
     // 一个字没打就点保存。
     await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
@@ -90,8 +88,7 @@ void main() {
     // 不 trim 的话能存出一条看着空白、却怎么也搜不到的任务。
     final harness = await _pumpApp(tester);
 
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester);
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '    ');
     await tester.pump();
     await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
@@ -106,15 +103,13 @@ void main() {
     // 标题框里还留着上一条的内容，用户会不小心建出重复任务。
     await _pumpApp(tester);
 
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester);
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '买菜');
     await tester.pump();
     await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester);
 
     // 保存按钮回到禁用态 = 草稿里的标题确实被清了。
     // 直接查输入框的文字不行：TextField 没有受控地绑定草稿，
@@ -132,8 +127,7 @@ void main() {
   testAppWidgets('勾完成：就地划掉，不立即消失（§8.1）', (tester) async {
     final harness = await _pumpApp(tester);
 
-    await tester.tap(find.byKey(AppShell.fabKey));
-    await tester.pumpAndSettle();
+    await tapCreate(tester);
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '交水电费');
     await tester.pump();
     await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
@@ -165,8 +159,7 @@ void main() {
     testAppWidgets('选一个分类，落库的是它的 id，列表上显示它的名字', (tester) async {
       final harness = await _pumpApp(tester, seed: true);
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '写周报');
       await tester.pump();
 
@@ -194,8 +187,7 @@ void main() {
       // 选中它必须产出 NULL。若哪天有人给它建了一行，这条会红。
       final harness = await _pumpApp(tester, seed: true);
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '随便记一笔');
       await tester.pump();
 
@@ -250,8 +242,7 @@ void main() {
     testAppWidgets('不选分类时默认就是未分类', (tester) async {
       final harness = await _pumpApp(tester, seed: true);
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '买菜');
       await tester.pump();
       await tapVisible(tester, TaskEditorPage.saveButtonKey);
@@ -270,8 +261,7 @@ void main() {
       // 后者配了但 supportedLocales 或 locale 不对，照样是英文。
       await _pumpApp(tester);
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
       await tester.tap(find.byKey(TaskEditorPage.dateFieldKey));
       await tester.pumpAndSettle();
 
@@ -291,8 +281,7 @@ void main() {
       // 但表单上不该出现那个瞬间 —— 用户看到的是「空着也能存」，
       // 存下去却有日期，两件事对不上。
       await _pumpApp(tester);
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
 
       // 关掉全天 → 自动补今天 → 清除按钮应当消失。
       await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
@@ -310,8 +299,7 @@ void main() {
     testAppWidgets('对照组：全天时可以清空日期', (tester) async {
       // 否则「一律不给清」也能让上面那条绿，而那样日期就永远去不掉了。
       await _pumpApp(tester);
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
 
       // 全天状态下先关再开，让日期被补上又保留（关时补今天，开时不清日期）。
       await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
@@ -332,8 +320,7 @@ void main() {
     testAppWidgets('建一条两阶段的任务，卡片上显示进度', (tester) async {
       final harness = await _pumpApp(tester);
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester, TaskShape.staged);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '写季度总结');
       await tester.pump();
 
@@ -366,8 +353,7 @@ void main() {
       // 不如当场挡住并告诉用户为什么。
       final harness = await _pumpApp(tester);
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester, TaskShape.staged);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '写季度总结');
       await tester.pump();
       await tapVisible(tester, TaskEditorPage.addStageKey);
@@ -388,8 +374,7 @@ void main() {
     testAppWidgets('对照组：不加阶段时不出现那句提示', (tester) async {
       // 否则「一直显示」也能让上面那条绿。
       await _pumpApp(tester);
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '买菜');
       await tester.pump();
 
@@ -400,8 +385,7 @@ void main() {
   group('阶段的时间段（FR-TASK-02：每阶段有独立时间段）', () {
     /// 建一条两阶段任务，并把标题填好。返回两个阶段行的 id。
     Future<List<String>> twoStages(WidgetTester tester) async {
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester, TaskShape.staged);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '写周报');
       await tester.pump();
       // 关掉全天才有「几点」可谈。
@@ -414,10 +398,10 @@ void main() {
             .byWidgetPredicate(
               (w) =>
                   w is TextField &&
-                  (w.key as ValueKey<String>?)?.value.startsWith(
+                  (w.key is ValueKey<String> &&
+                      (w.key! as ValueKey<String>).value.startsWith(
                         'editor-stage-',
-                      ) ==
-                      true,
+                      )),
             )
             .last;
         await tester.ensureVisible(field);
@@ -514,8 +498,7 @@ void main() {
     testAppWidgets('开结束开关 → 选日期与时刻 → 一起落库', (tester) async {
       final harness = await _pumpApp(tester);
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
       await tester.pump();
 
@@ -544,8 +527,7 @@ void main() {
     testAppWidgets('对照组：不开那个开关就没有结束', (tester) async {
       // 少了这条，一个「永远写一个结束时间」的实现也能让上面绿。
       final harness = await _pumpApp(tester);
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
       await tester.pump();
       await tapVisible(tester, TaskEditorPage.saveButtonKey);
@@ -559,8 +541,7 @@ void main() {
       // 留着的话就是一条「全天但 18:00 结束」的任务 ——
       // 领域不变量直接拒绝，而用户看到的只是保存时炸了一下。
       final harness = await _pumpApp(tester);
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
       await tester.pump();
 
@@ -588,12 +569,10 @@ void main() {
     testAppWidgets('建一条每周一三五的任务，规则以规范形落库', (tester) async {
       final harness = await _pumpApp(tester);
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester, TaskShape.recurringSingle);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
       await tester.pump();
 
-      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
       await tapVisible(
         tester,
         TaskEditorPage.frequencyKey(RecurrenceFrequency.weekly),
@@ -615,11 +594,9 @@ void main() {
       // 修改语义完全不同 —— 分不出来的话，用户会以为删的是一次。
       await _pumpApp(tester);
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester, TaskShape.recurringSingle);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
       await tester.pump();
-      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
       await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       // 图标 + 文字都有（§8.1：不靠图标单独承载）。
@@ -636,11 +613,9 @@ void main() {
       // 挑着认的部件拼出来的句子，缺的那部分不是没说，是说错了。
       await _pumpApp(tester);
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester, TaskShape.recurringSingle);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '周会');
       await tester.pump();
-      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
       await tapVisible(
         tester,
         TaskEditorPage.frequencyKey(RecurrenceFrequency.weekly),
@@ -670,11 +645,9 @@ void main() {
       // 用户点一下那个圈就抛 DomainInvariantViolation。
       final harness = await _pumpApp(tester);
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester, TaskShape.recurringSingle);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
       await tester.pump();
-      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
       await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       // **未来方向只展开一条**（view-specs §0.2.1）：新建的每日任务
@@ -712,11 +685,9 @@ void main() {
       // 「动过又撤回」在库里长得不一样，而它们对用户是同一件事。
       final harness = await _pumpApp(tester);
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester, TaskShape.recurringSingle);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
       await tester.pump();
-      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
       await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       final done = find.byKey(TaskCard.doneButtonKey).first;
@@ -737,8 +708,7 @@ void main() {
       // 完成状态会落在一张与它无关的表上，列表看起来毫无反应。
       final harness = await _pumpApp(tester);
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '买菜');
       await tester.pump();
       await tapVisible(tester, TaskEditorPage.saveButtonKey);
@@ -757,8 +727,7 @@ void main() {
 
     testAppWidgets('对照组：不重复的任务没有那个标记', (tester) async {
       await _pumpApp(tester);
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '买菜');
       await tester.pump();
       await tapVisible(tester, TaskEditorPage.saveButtonKey);
@@ -770,11 +739,9 @@ void main() {
       // 存下去会得到一条永不结束的规则，而用户以为它会停。
       final harness = await _pumpApp(tester);
 
-      await tester.tap(find.byKey(AppShell.fabKey));
-      await tester.pumpAndSettle();
+      await tapCreate(tester, TaskShape.recurringSingle);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '晨会');
       await tester.pump();
-      await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
       await tapVisible(
         tester,
         TaskEditorPage.endModeKey(RecurrenceEndMode.until),

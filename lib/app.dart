@@ -39,6 +39,7 @@ import 'features/settings/presentation/settings_page.dart';
 import 'features/shell/presentation/app_shell.dart';
 import 'features/task/application/task_editor_controller.dart';
 import 'features/task/application/task_shape.dart';
+import 'features/task/presentation/create_task_menu.dart';
 import 'features/task/presentation/task_editor_page.dart';
 import 'features/trash/application/trash_purge.dart';
 import 'features/trash/presentation/trash_page.dart';
@@ -390,12 +391,24 @@ class _ShellRouteState extends ConsumerState<_ShellRoute> {
       header: const FilterBar(),
       // 加号带上**当前聚焦的那一天**，但只在对着某一天的视图里
       // （FR-VIEW-07，判据见 `ViewKind.anchorsToDay`）。
-      onCreateTask: () => _openEditor(
-        context,
-        date: current.anchorsToDay
-            ? ref.watch(viewSharedStateProvider).focusedDate
-            : null,
-      ),
+      // 加号：先弹面板选形态（FR-TASK-01/02/03），再进表单。
+      //
+      // 加号带上**当前聚焦的那一天**，但只在对着某一天的视图里
+      // （FR-VIEW-07，判据见 `ViewKind.anchorsToDay`）。
+      // 临时事项那一样例外 —— 它按定义不排时间，带日期就不是临时的了，
+      // 这一层由 `_newDraft` 按形态处理，这里照传即可。
+      onCreateTask: (fabContext) async {
+        final shape = await showCreateTaskMenu(fabContext);
+        // 点外面关掉 = 什么也不做。
+        if (shape == null || !context.mounted) return;
+        _openEditor(
+          context,
+          shape: shape,
+          date: current.anchorsToDay
+              ? ref.read(viewSharedStateProvider).focusedDate
+              : null,
+        );
+      },
       onOpenSettings: () => context.go(AppRoutes.settings),
     );
   }

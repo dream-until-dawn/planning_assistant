@@ -57,7 +57,7 @@ Future<void> _pumpShell(
   required List<ViewKind> available,
   ViewKind current = ViewKind.list,
   ValueChanged<ViewKind>? onViewSelected,
-  VoidCallback? onCreateTask,
+  void Function(BuildContext)? onCreateTask,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -209,7 +209,7 @@ void main() {
       await _pumpShell(
         tester,
         available: const [ViewKind.list],
-        onCreateTask: () => taps++,
+        onCreateTask: (_) => taps++,
       );
       expect(find.byKey(AppShell.fabKey), findsOneWidget);
       await tester.tap(find.byKey(AppShell.fabKey));
