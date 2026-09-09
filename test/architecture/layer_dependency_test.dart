@@ -1087,7 +1087,19 @@ import
     //
     // 这条守两件事：
     //  1. Repository 的写方法只能由 dispatcher 与实现自身调用；
-    //  2. DAO 的写方法（upsert / softDelete）不得在 data/ 之外出现。
+    //  2. DAO 的写方法（upsert / softDelete）只能由 `data/repositories/`
+    //     下的仓储实现、或 `allowedDaoWriters` 名单里的文件调用。
+    //
+    // 第 2 条一度写成、也一度报成「**不得在 `data/` 之外**出现」，
+    // 那与实现的规则不是一回事：`data/` 里一个既不在名单、
+    // 又不是仓储实现的文件照样会被判违规 —— 评审往
+    // `table_daos.dart`（它就在 `data/` 里）注入一处 `upsert(` 时，
+    // 守卫确实报了，而报出来的文案却说「不得在 data/ 之外」。
+    //
+    // **报错文案描述的规则必须就是被实现的规则。** 它比注释更要紧：
+    // 读它的人正处在「我该改什么」的当口，而照那句错文案去做，
+    // 会把代码往 `data/` 里挪 —— 挪完还是违规。
+    // 同 V-04 那条「注释写着一个不存在的机制」，只是位置更靠前。
     const repoWriteMethods = [
       'saveTask',
       'saveTaskWithStages',
@@ -1170,7 +1182,8 @@ import
           }
           violations.add(
             '  - lib/$rel:${i + 1}\n      $line\n'
-            '      违反: DAO 写方法 $m 不得在 data/ 之外直接调用',
+            '      违反: DAO 写方法 $m 只能由 data/repositories/ 下的仓储'
+            '实现、或 allowedDaoWriters 名单里的文件调用',
           );
         }
       }
