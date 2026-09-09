@@ -23,6 +23,7 @@ import '../../shared/presentation/occurrence_card_data.dart';
 import '../../shared/presentation/toggle_done_action.dart';
 import '../application/bulk_selection.dart';
 import '../application/task_grouping.dart';
+import '../application/task_list_actions.dart';
 import '../application/task_list_providers.dart';
 import 'occurrence_actions_sheet.dart';
 import 'swipe_row.dart';
@@ -149,7 +150,17 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
                 // 列表复用时会认错行：勾一行动的是另一行。
                 key: ValueKey(task.id),
                 child: TaskCard(
-                  data: cardDataOf(ref, task),
+                  // **只有列表把阶段摊成子项**（用户第 ② 条）。
+                  data: cardDataOf(ref, task, withStages: true),
+                  // 多选模式下子项也不响应，同完成钮那条理由：
+                  // 模式开着时卡片上的每个框都该表示「选中」这一件事。
+                  onToggleStage: selection.isEmpty
+                      ? (id, done) => unawaited(
+                          ref
+                              .read(occurrenceActionsProvider)
+                              .setStageDone(task, id, done),
+                        )
+                      : null,
                   // 就地完成（view-specs §0.3）。
                   //
                   // 完成后**不立即消失**（design-system §8.1）——

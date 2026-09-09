@@ -241,6 +241,100 @@ void main() {
     });
   });
 
+  group('列表上的阶段子项（用户第 ② 条）', () {
+    testAppWidgets('阶段摊在卡片下面，每一步一行', (tester) async {
+      final harness = await _pumpApp(tester);
+      await _createStaged(tester);
+      final stages = await _stageIds(harness);
+
+      expect(find.text('打包'), findsOneWidget);
+      expect(find.text('搬运'), findsOneWidget);
+      for (final id in stages) {
+        expect(find.byKey(TaskCard.stageKey(id)), findsOneWidget);
+      }
+      // 摘要那一行照常在 —— 子项是明细，它是合计。
+      expect(find.textContaining('阶段 0/2'), findsOneWidget);
+    });
+
+    testAppWidgets('在子项上勾一步，落库并且进度跟着变', (tester) async {
+      final harness = await _pumpApp(tester);
+      await _createStaged(tester);
+      final stages = await _stageIds(harness);
+
+      await tapVisible(tester, TaskCard.stageKey(stages[0]));
+      await tester.pumpAndSettle();
+
+      expect(await _stageStatuses(harness), ['done', 'pending']);
+      expect(find.textContaining('阶段 1/2'), findsOneWidget);
+      expect(_cardDone(tester), isFalse, reason: '只勾了一步就整条算完成了');
+
+      await tapVisible(tester, TaskCard.stageKey(stages[1]));
+      await tester.pumpAndSettle();
+      expect(_cardDone(tester), isTrue, reason: '两步都勾完了，整条还不算完成');
+    });
+
+    testAppWidgets('再点一下取消，事项也跟着不再完成', (tester) async {
+      final harness = await _pumpApp(tester);
+      await _createStaged(tester);
+      final stages = await _stageIds(harness);
+
+      for (final id in stages) {
+        await tapVisible(tester, TaskCard.stageKey(id));
+        await tester.pumpAndSettle();
+      }
+      expect(_cardDone(tester), isTrue, reason: '前提：先全勾上');
+
+      await tapVisible(tester, TaskCard.stageKey(stages[0]));
+      await tester.pumpAndSettle();
+      expect(await _stageStatuses(harness), ['pending', 'done']);
+      expect(_cardDone(tester), isFalse);
+    });
+
+    testAppWidgets('没有阶段的任务不摊出任何子项', (tester) async {
+      // 对照组。少了它，「摊子项」这条断言在一个**永远摊**的实现下
+      // 也全绿 —— 而那样每张卡片下面都会多出一片空白。
+      await _pumpApp(tester);
+      await tapCreate(tester);
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '买菜');
+      await tester.pump();
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
+
+      expect(find.byType(TaskCard), findsOneWidget, reason: '前提：卡片在');
+      expect(find.byType(Checkbox), findsNothing);
+    });
+
+    testAppWidgets('**只有列表摊**：日历上的同一条任务没有子项', (tester) async {
+      // 日历的卡片挤在格子里，多摞几行会把同一天的其它任务顶出去。
+      final harness = await _pumpApp(tester);
+      await _createStaged(tester);
+      final stages = await _stageIds(harness);
+      expect(find.byKey(TaskCard.stageKey(stages[0])), findsOneWidget);
+
+      await _goToDay(tester, _today);
+      expect(find.byType(TaskCard), findsWidgets, reason: '前提：日历上有这张卡片');
+      for (final id in stages) {
+        expect(find.byKey(TaskCard.stageKey(id)), findsNothing);
+      }
+    });
+
+    testAppWidgets('多选模式下子项不响应', (tester) async {
+      // 与完成钮同一条：模式开着时，卡片上的每个框都该表示「选中」。
+      final harness = await _pumpApp(tester);
+      await _createStaged(tester);
+      final stages = await _stageIds(harness);
+
+      await tester.longPress(find.byType(TaskCard).first);
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<Checkbox>(find.byKey(TaskCard.stageKey(stages[0])))
+            .onChanged,
+        isNull,
+      );
+    });
+  });
+
   group('重复的阶段事项：每一次各算各的', () {
     testAppWidgets('把某一次标完成 → 只有那一次的阶段跟着勾', (tester) async {
       final harness = await _pumpApp(tester);

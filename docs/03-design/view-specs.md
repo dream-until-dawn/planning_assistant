@@ -111,6 +111,7 @@ Stream<List<Occurrence>> visibleOccurrences(DateRange window, FilterSpec filter)
 | 交互 | 所有视图一致 |
 |---|---|
 | 点击实例 | 打开底部动作弹层 —— **不分重不重复**，见 §0.3.2 |
+| 阶段子项 | 只有列表摊开，见[设计系统 §8.1.1](design-system.md#811-阶段子项) |
 | 长按空白 | 在该时间点快速新增（FR-VIEW-07）—— 目前只有时间轴接了，见下 |
 | 完成钮 | 就地完成 + 撤销 Snackbar |
 | 顶部筛选条 | 同一个组件，同一份状态 |
