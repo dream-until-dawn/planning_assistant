@@ -864,6 +864,21 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     }
 
     if (draft.isEditing) {
+      // **形态切换必须排在改字段之前**（R-27）。
+      //
+      // 两个理由，第二个是撞出来的：
+      //
+      //  1. 迁移 key 要按任务**当前**的形态去读旧例外。改字段先跑的话，
+      //     任务已经是新形态，而例外还挂着旧 key。
+      //  2. `UpdateTaskFieldsCommand` 会带上 `startMinute`，而库里那条
+      //     还是全天 —— 于是 `checkInvariants` 当场抛
+      //     「是全天任务却带 startMinute」。也就是说：**关掉「全天」、
+      //     选个时刻、保存**，这条最普通不过的编辑会直接崩。
+      //
+      // 第 2 条是 R-52 的用例撞出来的。R-27 自己那批测试没覆盖它：
+      // 它们要么只验开关能拨（没保存），要么直接发命令（没走编辑器
+      // 这条「改形态 + 改字段」同时发生的路）。
+      await _convertAllDayMode(id, draft);
       await ref
           .read(taskCommandDispatcherProvider)
           .dispatch(
@@ -882,12 +897,6 @@ final class TaskEditorController extends Notifier<TaskDraft> {
                   : draft.endMinute,
             ),
           );
-      // **形态切换排在改字段之前**（R-27）。
-      //
-      // 顺序有关系：迁移 key 用的是任务**当前**的形态去读旧例外，
-      // 改字段那条如果先跑，任务已经是新形态，而例外还挂着旧 key ——
-      // 那时再迁就得靠猜「它原来是哪种」。
-      await _convertAllDayMode(id, draft);
       await _replaceStages(id, draft);
       await _replaceChecklist(id, draft);
       return id;
