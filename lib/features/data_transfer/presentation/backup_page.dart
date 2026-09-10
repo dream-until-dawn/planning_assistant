@@ -128,6 +128,9 @@ class _Header extends ConsumerWidget {
     final outcome = await ref
         .read(backupServiceProvider)
         .backupNow(keepCount: keep);
+    // await 之后这一页可能已经不在树上了（用户退了回去）——
+    // 那时候 `ref` 已经失效，读它会抛。
+    if (!context.mounted) return;
     ref.invalidate(backupListProvider);
     // **成败都说一声。** 这一下是用户主动按的，而没有回音的按钮
     // 会让人反复按 —— 每按一次就多一份备份。
@@ -207,9 +210,10 @@ class _BackupList extends ConsumerWidget {
       action: '删除',
       actionKey: BackupPage.deleteConfirmKey,
     );
-    if (!ok) return;
+    if (!ok || !context.mounted) return;
 
     await ref.read(backupServiceProvider).delete(file.name);
+    if (!context.mounted) return;
     ref.invalidate(backupListProvider);
   }
 }
