@@ -68,13 +68,7 @@ Future<void> _createRecurringStaged(WidgetTester tester) async {
   await tester.pump();
 
   for (final name in ['热身', '主训', '拉伸']) {
-    await tapVisible(tester, TaskEditorPage.addStageKey);
-    final fields = find.descendant(
-      of: find.byKey(TaskEditorPage.stageSectionKey),
-      matching: find.byType(TextField),
-    );
-    await tester.enterText(fields.last, name);
-    await tester.pump();
+    await addStage(tester, name);
   }
 
   await tapVisible(
@@ -267,13 +261,7 @@ void main() {
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
     await tester.pump();
     for (final name in ['打包', '搬运']) {
-      await tapVisible(tester, TaskEditorPage.addStageKey);
-      final fields = find.descendant(
-        of: find.byKey(TaskEditorPage.stageSectionKey),
-        matching: find.byType(TextField),
-      );
-      await tester.enterText(fields.last, name);
-      await tester.pump();
+      await addStage(tester, name);
     }
     await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
@@ -301,13 +289,7 @@ void main() {
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
     await tester.pump();
     for (final name in ['打包', '搬运']) {
-      await tapVisible(tester, TaskEditorPage.addStageKey);
-      final fields = find.descendant(
-        of: find.byKey(TaskEditorPage.stageSectionKey),
-        matching: find.byType(TextField),
-      );
-      await tester.enterText(fields.last, name);
-      await tester.pump();
+      await addStage(tester, name);
     }
     await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
@@ -392,6 +374,81 @@ void main() {
       (r) => r.id == stages.first,
     );
     expect(row.status, 'done', reason: '落库之后进度还是丢了');
+  });
+
+  testAppWidgets('**先把阶段时间清光、再拨上全天**，关掉重复照样搬得回来（评审 S-3）', (tester) async {
+    // ## 评审拼出来的一条链，这一条是去打它的
+    //
+    // `_stagesFromFirstOccurrence` 拿 `state.isAllDay` 去算「第一次」的
+    // `OccurrenceKey`。而 `occurrence_key.dart` 明写着「`isAllDay` 决定
+    // 形态，不可从 `minuteOfDay == 0` 反推」—— 所以旗标错了**不会报错**，
+    // 只会算出一个匹配不上的 key，`states == null`，进度**静默不搬**。
+    //
+    // 拨得上全天这件事本身是逃生口给的：阶段时间清光之后推不出起止，
+    // `_showsSpanFields` 让整个时间区回来，全天开关就在第一行。
+    //
+    // 阶段事项**没有资格带这个旗标**（`TaskShape.canBeAllDay`），
+    // 所以这里也要问它 —— 与对话框那一处、与新建草稿那一处是同一个动作。
+    final harness = await _pumpApp(tester);
+    await _createRecurringStaged(tester);
+    final stages = await _stageIds(harness);
+
+    await _goToDay(tester, _today);
+    await _openSheet(tester);
+    await _tick(tester, stages.first);
+    await _closeSheet(tester);
+    expect(find.textContaining('1/3'), findsOneWidget, reason: '前提：勾上了');
+
+    await _openSheet(tester);
+    await tester.tap(find.byKey(OccurrenceSheetKeys.editSeries));
+    await tester.pumpAndSettle();
+
+    // ① 把三个阶段的时间**全清掉** —— 于是推不出起止。
+    for (final id in stages) {
+      await tapVisible(tester, TaskEditorPage.stageTimeKey(id));
+      await tester.tap(find.byKey(TaskEditorPage.stageTimeClearKey));
+      await tester.pumpAndSettle();
+    }
+    // ② 逃生口打开了：时间区回来，全天开关在第一行。
+    //    **先滚上去再找** —— 表单是懒建的，清阶段时间时滚到了下半截，
+    //    直接 `findsOneWidget` 会把「还没建出来」读成「不在」。
+    await tester.scrollUntilVisible(
+      find.byKey(TaskEditorPage.titleFieldKey),
+      -200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(TaskEditorPage.startMomentKey),
+      findsOneWidget,
+      reason: '前提：推不出起止时逃生口该把时间区放出来',
+    );
+    // ③ **那个开关不该在这儿。** 逃生口放出来的是「起止」，
+    //    不是「全天与否」—— 而阶段事项没有「全天」这个概念。
+    //    链子断在这一环：拨不上，也就算不错那个 key。
+    expect(
+      find.byKey(TaskEditorPage.allDaySwitchKey),
+      findsNothing,
+      reason: '阶段事项拿到了全天开关 —— 拨上去就把「第一次」的 key 算错了',
+    );
+
+    // ④ 关掉重复。
+    await tapVisible(tester, TaskEditorPage.recurrenceSwitchKey);
+
+    await tester.scrollUntilVisible(
+      find.byKey(TaskEditorPage.stageSectionKey),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    final box = tester.widget<Checkbox>(
+      find.byKey(TaskEditorPage.stageDoneKey(stages.first)),
+    );
+    expect(
+      box.value,
+      isTrue,
+      reason: '拨过全天之后，那一次的进度就搬不回来了 —— key 算错了，而没有任何地方会报',
+    );
   });
 
   testAppWidgets('**用户手动取消之后，再次转换不会把它改回来**（§4.2）', (tester) async {
@@ -496,7 +553,12 @@ void main() {
     await tapCreate(tester, TaskShape.staged);
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
     await tester.pump();
-    await tapVisible(tester, TaskEditorPage.addStageKey);
+    // **两个真阶段** —— 阶段事项至少要两个，每个都要有时间
+    // （用户 2026-09-10「加强必填项校验」）。原来这里只点了一下
+    // 「加一个阶段」、连名字都不填，那条任务从此存不下去。
+    for (final name in ['打包', '搬运']) {
+      await addStage(tester, name);
+    }
     await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
     await openEditorFromCard(tester);

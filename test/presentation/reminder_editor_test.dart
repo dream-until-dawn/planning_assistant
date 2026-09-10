@@ -44,7 +44,12 @@ Future<void> _settleSync(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
-/// 建一条**单事项**（起止必填，默认从下一个整点起），并在编辑器里加提醒。
+/// 建一条**定时**单事项，并在编辑器里加提醒。
+///
+/// **必须拨掉全天**（2026-09-10 起全天是默认）。全天任务的提醒基准是配置里
+/// 那个绝对时刻（`reminder.allDayReminderMinute`，默认 09:00），而夹具的钟
+/// 停在 09-07 11:00 —— **今天那一条已经过去了，排不出任何东西**，
+/// 于是这一族用例全会报「一条都没排」，而原因跟提醒本身毫无关系。
 Future<void> _createWithReminder(
   WidgetTester tester, {
   int? offsetMinutes,
@@ -52,6 +57,7 @@ Future<void> _createWithReminder(
   await tapCreate(tester, TaskShape.single);
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
   await tester.pump();
+  await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
 
   await tapVisible(tester, TaskEditorPage.addReminderKey);
   await tester.pumpAndSettle();

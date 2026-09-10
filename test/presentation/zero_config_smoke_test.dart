@@ -48,6 +48,14 @@ Future<void> _create(WidgetTester tester, TaskShape shape, String title) async {
   await tapCreate(tester, shape);
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), title);
   await tester.pump();
+  // 阶段事项要两个阶段、每个都要有时间（用户 2026-09-10「加强必填项校验」），
+  // 否则保存键是灰的 —— 而这一份要验的是「零配置下链路走得通」，
+  // 不是必填规则本身。
+  if (shape.hasStages) {
+    for (final name in ['打包', '搬运']) {
+      await addStage(tester, name);
+    }
+  }
   await tapVisible(tester, TaskEditorPage.saveButtonKey);
 }
 

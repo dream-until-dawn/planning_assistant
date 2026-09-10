@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
+import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/features/settings/application/registry.dart';
 import 'package:planning_assistant/features/settings/application/settings_providers.dart';
@@ -57,9 +58,14 @@ Future<void> _create(
   bool withDate = true,
 }) async {
   // 形态在面板上就选定了，进表单之后不必再拨重复开关。
+  //
+  // **要日期就得选单事项**（用户 2026-09-10 定）：临时事项现在把日期栏
+  // 一并藏了 —— 它本来就不排时间，留一个填了没用的输入框比没有更糟。
   await tapCreate(
     tester,
-    recurring ? TaskShape.recurringSingle : TaskShape.scratch,
+    recurring
+        ? TaskShape.recurringSingle
+        : (withDate ? TaskShape.single : TaskShape.scratch),
   );
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), title);
   await tester.pump();
@@ -226,6 +232,54 @@ void main() {
 
       expect(_hasGroup(tester, 'today'), isFalse);
       expect(_hasGroup(tester, 'tomorrow'), isTrue);
+    });
+
+    testAppWidgets('**跨度整体平移** —— 结束日期跟着挪同样多天', (tester) async {
+      // ## 这条缺陷一直都在，只是原来是「悄悄的」
+      //
+      // 推迟只挪 `planDate`，不挪 `endDate`。原来的默认任务是跨天的
+      // （开始 9/7、结束 9/8），推一天之后 9/8 → 9/8 **仍然合法**，
+      // 于是它把跨度从两天压成一天，没有任何提示。
+      //
+      // 全天默认改成「就是那一天」之后（用户 2026-09-10），同一个缺陷
+      // 变成硬失败：9/8 开始、9/7 结束会被 `checkInvariants` 当场拒 ——
+      // 用户点了推迟，什么也没发生。
+      //
+      // **一个悄悄错了很久的东西，是被一次无关的默认值改动逼出来的。**
+      final harness = await _pumpApp(tester);
+      await _create(tester, '买菜');
+      final before = (await harness.db.select(harness.db.tasks).get()).single;
+      expect(before.endDate, isNotNull, reason: '前提：这条任务有结束日期');
+
+      await _swipe(tester, -400);
+
+      final after = (await harness.db.select(harness.db.tasks).get()).single;
+      expect(
+        after.planDate,
+        isNot(before.planDate),
+        reason: '压根没挪 —— 多半是被不变量拒了',
+      );
+      expect(
+        PlanDate.parse(after.endDate!)
+            .differenceInDays(PlanDate.parse(before.endDate!)),
+        1,
+        reason: '结束没跟着挪 —— 跨度被推迟悄悄改了',
+      );
+    });
+
+    testAppWidgets('撤销把结束日期也放回去', (tester) async {
+      // 少了这条，一个「撤销时只还开始」的实现也能让上面绿，
+      // 而那样撤销一次就把跨度改了。
+      final harness = await _pumpApp(tester);
+      await _create(tester, '买菜');
+      final before = (await harness.db.select(harness.db.tasks).get()).single;
+
+      await _swipe(tester, -400);
+      await tester.tap(find.text('撤销'));
+      await tester.pumpAndSettle();
+
+      final after = (await harness.db.select(harness.db.tasks).get()).single;
+      expect(after.endDate, before.endDate);
     });
 
     testAppWidgets('没有日期的任务：说一声，不是毫无反应', (tester) async {

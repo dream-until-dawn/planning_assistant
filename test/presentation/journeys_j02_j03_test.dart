@@ -125,37 +125,52 @@ void main() {
 
     // ── 建一条三阶段的任务 ───────────────────────────────────
     await _newTask(tester, '搬家', shape: TaskShape.staged);
-    // **先给它一个日期。** 甘特是按时间跨度画的，没有日期的任务
-    // 压根不进甘特（view-specs §4.3 最后一行）——
-    // 第一版没设日期，甘特是空态，报的是「找不到画布」。
+    // **它得有一个时间跨度。** 甘特是按跨度画的，没有日期的任务压根不进
+    // 甘特（view-specs §4.3 最后一行）—— 第一版没设日期，甘特是空态，
+    // 报的是「找不到画布」。
     //
-    // 关掉「全天」会顺手补上今天（`setAllDay` 那段注释说的就是这件事），
-    // 所以这一下同时解决了日期。
-    await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+    // 从前是靠「关掉全天顺手补今天」解决的。阶段事项现在没有全天开关了
+    // （起止由阶段的时间推出，用户 2026-09-10 定），
+    // 跨度改由下面给阶段定时间那一步产生。
 
     const names = ['打包', '搬运', '收拾'];
+    final ids = <String>[];
     for (final name in names) {
-      await tapVisible(tester, TaskEditorPage.addStageKey);
-      // **每个阶段都得起名字。** 空标题的阶段保存时会被丢掉
-      // （`filledStages`），那是对的 —— 用户点了「加一个」又没填，
-      // 不该落一条无名阶段。但这条旅程要的是三个真的阶段，
-      // 所以得填。第一版没填，落库零条，报的是「期望 3 个，实际 []」。
-      final fields = find.descendant(
-        of: find.byKey(TaskEditorPage.stageSectionKey),
-        matching: find.byType(TextField),
+      // **每个阶段都得起名字，也都得有时间。** 空标题的阶段保存时会被
+      // 丢掉（`filledStages`），没时间的阶段 2026-09-10 起直接挡住保存 ——
+      // 两条都由 `addStage` 一并办了。第一版没填名字，落库零条，
+      // 报的是「期望 3 个，实际 []」。
+      await addStage(tester, name);
+      final field = find
+          .descendant(
+            of: find.byKey(TaskEditorPage.stageSectionKey),
+            matching: find.byType(TextField),
+          )
+          .last;
+      ids.add(
+        ((tester.widget(field) as TextField).key! as ValueKey<String>).value
+            .replaceFirst('editor-stage-', ''),
       );
-      await tester.enterText(fields.last, name);
-      await tester.pump();
     }
+    // **把三个阶段拆开**（评审 S-4）。`addStage` 给的默认是「+0，一小时」，
+    // 三个会**完全重叠** —— 而下面那两条断言（段数、进度）对位置都不敏感：
+    // 把分段改成按 orderIndex 均分、或让三段全塌到条的起点，照旧全绿。
+    // 那时这条旅程的名字（「甘特图分段正确」）比它钉住的东西大。
+    await setStageDay(tester, ids[1], 8);
+    await setStageDay(tester, ids[2], 9);
     await _save(tester);
 
-    final stages = await harness.db.select(harness.db.stages).get();
+    final stages = (await harness.db.select(harness.db.stages).get()).toList()
+      ..sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
     expect(stages, hasLength(3));
-    expect(
-      (stages.toList()..sort((a, b) => a.orderIndex.compareTo(b.orderIndex)))
-          .map((s) => s.title),
-      names,
-    );
+    expect(stages.map((s) => s.title), names);
+    // **前提：三个阶段真的错开了。** 少了这条，哪天 `addStage` 的默认值
+    // 变回重叠，下面那两条会**悄悄**退化成恒真 —— 而这一条会当场喊。
+    expect(stages.map((s) => s.startOffsetMinutes), [
+      0,
+      1440,
+      2880,
+    ], reason: '三个阶段挤在同一个小时里 —— 分段断言退化成了恒真');
 
     // ── 完成第 2 阶段 ────────────────────────────────────────
     //
@@ -173,21 +188,24 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // ── 甘特图上：进度是三分之一 ────────────────────────────
+    // ── 甘特图上：三段 + 三分之一的进度 ─────────────────────
     //
-    // **这三个阶段没有各自的时间**（编辑器默认不排，用户也没排）。
-    // 那时甘特不把条按阶段数均分 —— 均分等于告诉用户
-    // 「第一阶段在前三分之一结束」，而他从没这么说过。
-    // 画的是进度：三件里做完了一件。
+    // ## 这一步 2026-09-10 变强了
     //
-    // 排了时间的阶段会画成真正的分段，那条在
-    // `gantt_layout_test` 的 G-04 里验。
+    // 原来三个阶段**都没有时间**（编辑器默认不排），于是这里断言的是
+    // 「不该凭空切出段来」—— 均分等于告诉用户「第一阶段在前三分之一
+    // 结束」，而他从没这么说过。
+    //
+    // 阶段时间现在是必填的，那个状态存不下去了。于是这条旅程终于能验
+    // 它名字里写的那件事本身：**分段正确**。
+    // 「没排时间不凭空分段」那条守在 `gantt_layout_test`（G-04 那一族），
+    // 那一层构造得出没有时间的阶段。
     await _switchTo(tester, ViewKind.gantt);
     final bars = _painter(tester).layout.lanes.single.bars;
     expect(bars, hasLength(1), reason: '一条任务一根条');
 
     final bar = bars.single;
-    expect(bar.segments, isEmpty, reason: '没排时间就不该凭空切出段来');
+    expect(bar.segments, hasLength(3), reason: '三个排了时间的阶段该画成三段');
     expect(bar.progress, closeTo(1 / 3, 0.001), reason: '完成第二阶段没反映到进度上');
 
     // 对照组：没有阶段的任务，进度是 null 而不是 0 ——

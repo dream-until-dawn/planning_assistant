@@ -40,13 +40,7 @@ Future<void> _createStaged(WidgetTester tester, int count) async {
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
   await tester.pump();
   for (var i = 0; i < count; i++) {
-    await tapVisible(tester, TaskEditorPage.addStageKey);
-    final fields = find.descendant(
-      of: find.byKey(TaskEditorPage.stageSectionKey),
-      matching: find.byType(TextField),
-    );
-    await tester.enterText(fields.last, '第 ${i + 1} 步');
-    await tester.pump();
+    await addStage(tester, '第 ${i + 1} 步');
   }
   await tapVisible(tester, TaskEditorPage.saveButtonKey);
 }

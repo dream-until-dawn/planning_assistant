@@ -484,6 +484,21 @@ int? _durationOf(Task task, PlanDate start) {
   if (endDate == null) return null;
 
   final days = endDate.differenceInDays(task.planDate ?? start);
+  // **`days` 不恒等于 1，别把它简化掉。**
+  //
+  // 编辑器 2026-09-10 起只产出**单天**的全天任务（用户那条「全天启用下
+  // 只用选个日期」）—— 于是这台设备上 `days` 目前总是 0。
+  // 但多天全天在领域与视图层仍然支持，因为**导入与 V3 同步会从外部送
+  // 进来**，那时数据不是本机编辑器造的。
+  //
+  // 这是「每一列都要有人读回来」那条守卫的**镜像**：那边是「写了没人
+  // 读」，这边是「读了没人写」。看见它恒等于 1 就顺手化简的话，
+  // 会在同步落地的第一天炸，而在那之前没有任何东西会红。
+  //
+  // **这条前提不是它一个人在用**：`task_editor_controller` 里
+  // 「阶段事项走到命令构造时 `isAllDay` 恒为 false」靠的也是「没有生产者」。
+  // 两处会在**同一天**同时失效 —— V3 导入落地的那天。
+  // 分别写着各自的「今天没事」而互不知情，正是那段注释在讲的那个毛病。
   if (task.isAllDay) return days * _minutesPerDay;
 
   final startMinute = task.startMinute?.value ?? 0;

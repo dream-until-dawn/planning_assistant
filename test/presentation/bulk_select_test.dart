@@ -43,14 +43,17 @@ Future<void> _create(
   bool recurring = false,
   bool dated = false,
 }) async {
+  // 要日期就得选单事项 —— 临时事项现在把日期栏一并藏了
+  // （用户 2026-09-10 定：它本来就不排时间）。
   await tapCreate(
     tester,
-    recurring ? TaskShape.recurringSingle : TaskShape.scratch,
+    recurring
+        ? TaskShape.recurringSingle
+        : (dated ? TaskShape.single : TaskShape.scratch),
   );
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), title);
   await tester.pump();
-  // 关掉全天会补上今天 —— 给它一个日期最省事的路径。
-  if (dated) await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+  // 单事项预填就带日期，不必再拨全天开关。
   if (recurring) {
     await tapVisible(
       tester,

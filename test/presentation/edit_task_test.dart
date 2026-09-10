@@ -105,36 +105,31 @@ void main() {
       );
     });
 
-    testAppWidgets('阶段全删掉之后，库里也不剩', (tester) async {
+    testAppWidgets('删掉一个阶段之后，库里也不剩它', (tester) async {
       // 编辑时若不发 ReplaceStages，库里那些阶段原地不动 ——
       // 界面显示没有、库里还有。
+      //
+      // ## 为什么删的是**一个**不是**全部**
+      //
+      // 原来这一条删光两个再保存。用户 2026-09-10「加强必填项校验」
+      // 之后那条路没有了：阶段事项至少要两个阶段，删光就存不下去 ——
+      // 保存键当场是灰的，用例验的东西整个够不着了。
+      //
+      // 守的性质没变（**界面上删掉的，库里也该没有**），换了观察点：
+      // 三个删一个，剩两个。
       final harness = await _pumpApp(tester);
 
       await tapCreate(tester, TaskShape.staged);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '写周报');
       await tester.pump();
-      for (final title in ['第一步', '第二步']) {
-        await tapVisible(tester, TaskEditorPage.addStageKey);
-        // **不能直接 `as ValueKey<String>?`**：这一屏上还有别的带 key 的
-        // 输入框（Material 自己的组件用的是 `ValueKey<StandardComponentType>`），
-        // 硬转会抛 `_TypeError`，而那条报错跟「找不到阶段输入框」
-        // 一点关系都没有。先判类型再取值。
-        final field = find.byWidgetPredicate((w) {
-          if (w is! TextField) return false;
-          final key = w.key;
-          return key is ValueKey<String> &&
-              key.value.startsWith('editor-stage-');
-        }).last;
-        await tester.ensureVisible(field);
-        await tester.pumpAndSettle();
-        await tester.enterText(field, title);
-        await tester.pumpAndSettle();
+      for (final title in ['第一步', '第二步', '第三步']) {
+        await addStage(tester, title);
       }
       await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
       await tester.pumpAndSettle();
-      expect(await harness.db.select(harness.db.stages).get(), hasLength(2));
+      expect(await harness.db.select(harness.db.stages).get(), hasLength(3));
 
-      // 进编辑，把两个阶段都删掉。
+      // 进编辑，把第一个阶段删掉。
       await openEditorFromCard(tester);
       // 表单是懒建的，阶段区在折线以下 —— 先滚过去，
       // 否则下面那个 `.first` 找的是一个还没建出来的按钮。
@@ -143,29 +138,33 @@ void main() {
         200,
         scrollable: find.byType(Scrollable).first,
       );
-      for (var i = 0; i < 2; i++) {
-        final remove = find
-            .byWidgetPredicate(
-              (w) =>
-                  w is IconButton &&
-                  (w.key is ValueKey<String> &&
-                      (w.key! as ValueKey<String>).value.startsWith(
-                        'editor-stage-remove-',
-                      )),
-            )
-            .first;
-        await tester.ensureVisible(remove);
-        await tester.pumpAndSettle();
-        await tester.tap(remove);
-        await tester.pumpAndSettle();
-      }
+      final remove = find
+          .byWidgetPredicate(
+            (w) =>
+                w is IconButton &&
+                (w.key is ValueKey<String> &&
+                    (w.key! as ValueKey<String>).value.startsWith(
+                      'editor-stage-remove-',
+                    )),
+          )
+          .first;
+      await tester.ensureVisible(remove);
+      await tester.pumpAndSettle();
+      await tester.tap(remove);
+      await tester.pumpAndSettle();
+
       await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
       await tester.pumpAndSettle();
 
-      final live = (await harness.db.select(harness.db.stages).get()).where(
-        (s) => s.deletedAt == null,
+      final live = (await harness.db.select(harness.db.stages).get())
+          .where((s) => s.deletedAt == null)
+          .toList();
+      expect(live, hasLength(2), reason: '界面上删掉的阶段，库里也该没有');
+      expect(
+        live.map((s) => s.title),
+        isNot(contains('第一步')),
+        reason: '删的是第一个，库里剩下的却还有它',
       );
-      expect(live, isEmpty, reason: '界面上删掉的阶段，库里也该没有');
     });
   });
 
@@ -239,12 +238,18 @@ void main() {
 
       // 直接把库里那条规则换成界面表达不了的形态（模拟导入/同步来的数据）。
       final id = (await harness.db.select(harness.db.tasks).get()).single.id;
+      // **结束日期要跟着改。** 新建的单事项是「全天 + 今天」，
+      // 结束也是今天（09-07）；只把开始推到 09-08 的话，这条任务当场
+      // 变成「结束早于开始」，保存键是灰的 —— 报出来的样子是
+      // 「标题没改成」，与这一条要验的规则保全毫无关系。
       await harness.db.customUpdate(
-        'UPDATE tasks SET recurrence_rule = ?, plan_date = ? WHERE id = ?',
+        'UPDATE tasks SET recurrence_rule = ?, plan_date = ?, end_date = ? '
+        'WHERE id = ?',
         variables: [
           const Variable<String>(
             'RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1',
           ),
+          const Variable<String>('2026-09-08'),
           const Variable<String>('2026-09-08'),
           Variable<String>(id),
         ],

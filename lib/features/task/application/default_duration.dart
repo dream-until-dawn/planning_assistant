@@ -13,7 +13,6 @@ library;
 
 import '../../../core/time/date_and_minute.dart';
 import '../../../core/time/minute_of_day.dart';
-import '../../../core/time/plan_date.dart';
 
 enum DefaultTaskDuration {
   oneHour('1h', '1 小时', minutes: 60),
@@ -58,19 +57,10 @@ enum DefaultTaskDuration {
     null => DateAndMinute(start.date, MinuteOfDay.endOfDay),
   };
 
-  /// 全天任务的默认结束日期。
-  ///
-  /// 全天没有时刻，所以按**整天**算：固定时长那几档折成天数（向上取整，
-  /// 至少当天），[endOfDay] 就是当天。
-  ///
-  /// 不复用 [endFrom] 再取 `date`：24 小时从 00:00 出发正好落在**第二天**
-  /// 的 00:00，于是「24 小时」的全天任务会变成两天 —— 而全天那一栏里
-  /// 用户读到的「24 小时」是「一天」。两种语境下同一个数不是同一个意思，
-  /// 所以分开算。
-  PlanDate endDateFrom(PlanDate start) => switch (minutes) {
-    null => start,
-    final int m => start.addDays(
-      ((m + minutesPerDay - 1) ~/ minutesPerDay) - 1,
-    ),
-  };
+  // **这一栏只管定时任务。** 一度还有个 `endDateFrom`，把时长折成天数
+  // 给全天任务算结束日期。用户 2026-09-10 定下「全天只选一个日期」之后
+  // 它没有调用方了 —— 全天就是一天，没有「多长」可言。
+  //
+  // 删掉而不是留着：一个没人调的换算函数与僵尸豁免是同一个形状，
+  // 下一个人无从判断它是「还没接上」还是「不该接」。
 }

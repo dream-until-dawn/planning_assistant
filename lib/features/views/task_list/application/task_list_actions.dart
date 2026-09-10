@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../app_providers.dart';
+import '../../../../core/patch/unset.dart';
 import '../../../../domain/commands/task_command.dart';
 import '../../../../domain/entities/occurrence.dart';
 import '../../../../domain/value_objects/task_status.dart';
@@ -270,11 +271,32 @@ final class PostponeRow {
     final key = row.key;
 
     if (key == null) {
+      // **结束日期要跟着挪同样多天。**
+      //
+      // 只挪开始的话，一条 9/7 → 9/7 的任务推迟一天变成
+      // 「9/8 开始、9/7 结束」—— `checkInvariants` 当场拒，
+      // 用户点了「推迟」什么也没发生，也没有任何提示。
+      //
+      // 这条一直都在，只是原来的默认任务是跨天的（开始 9/7、结束 9/8），
+      // 推一天之后 9/8 → 9/8 恰好仍然合法 —— **它悄悄把跨度压成了一天**。
+      // 全天默认改成「就是那一天」之后（用户 2026-09-10），
+      // 同一个缺陷从「悄悄缩短」变成了「硬失败」。
+      // 没有结束日期的任务传 `unset`（不改），**不是 null**（清空）——
+      // 那两个在这条命令的协议里是不同的东西。
+      final end = row.endDate;
       await dispatcher.dispatch(
-        UpdateTaskFieldsCommand(taskId: row.taskId, planDate: to),
+        UpdateTaskFieldsCommand(
+          taskId: row.taskId,
+          planDate: to,
+          endDate: end == null ? unset : end.addDays(days),
+        ),
       );
       return () => dispatcher.dispatch(
-        UpdateTaskFieldsCommand(taskId: row.taskId, planDate: from),
+        UpdateTaskFieldsCommand(
+          taskId: row.taskId,
+          planDate: from,
+          endDate: end ?? unset,
+        ),
       );
     }
 
