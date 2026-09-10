@@ -302,10 +302,18 @@ void main() {
     await tester.pumpAndSettle();
 
     await openEditorFromCard(tester);
+    // **锚在起止控件上，不锚在全天开关上**：那个开关对阶段事项本来就
+    // 不出现（`canBeAllDay`，评审 S-3）。逃生口放出来的是「起止」，
+    // 不是「全天与否」—— 这一条问的也正是起止够不够得着。
     expect(
-      await _isPresent(tester, TaskEditorPage.allDaySwitchKey),
+      await _isPresent(tester, TaskEditorPage.startMomentKey),
       isTrue,
       reason: '推不出起止，控件又藏着 —— 这条任务的起止就再也够不着了',
+    );
+    expect(
+      find.byKey(TaskEditorPage.allDaySwitchKey),
+      findsNothing,
+      reason: '阶段事项不该有全天开关',
     );
   });
 

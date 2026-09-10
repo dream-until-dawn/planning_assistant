@@ -843,7 +843,11 @@ final class TaskEditorController extends Notifier<TaskDraft> {
         minuteOfDay: state.startMinute ?? MinuteOfDay.midnight,
         timeZoneId: ref.read(timeZoneResolverProvider).currentZoneId(),
       ),
-      isAllDay: state.isAllDay,
+      // **不是 `state.isAllDay`**（评审 S-3）：阶段事项没有资格带这个旗标
+      // （`TaskShape.canBeAllDay`）。`occurrence_key.dart` 明写着形态由这个
+      // 旗标决定、不可从 `minuteOfDay == 0` 反推 —— 所以传错了不会报错，
+      // 只会算出一个匹配不上的 key，进度**静默不搬**。
+      isAllDay: state.isAllDay && state.shape.canBeAllDay,
     );
     final states = ref.read(stageStatesByTaskProvider)[taskId]?[key];
     if (states == null) return state.stages;

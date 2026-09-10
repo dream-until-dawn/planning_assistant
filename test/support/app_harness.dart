@@ -574,8 +574,16 @@ Future<void> seedCategories(Harness harness) => DriftCategoryRepository(
 /// 拖拽重排、提醒续排）。让每个文件各自去点那个对话框，等于把一条
 /// 与它们无关的必填规则抄十遍 —— 下次规则再变，又是十处。
 ///
-/// 时间取对话框的默认值（相对任务开始 +0，时长 60），几个阶段会重叠 ——
-/// 对「取最早/最晚」那一族用例不合适，它们本来就自己点那个对话框。
+/// 时间取对话框的默认值（相对任务开始 +0，时长 60），于是**几个阶段
+/// 完全重叠**。
+///
+/// ⚠️ **这一点的影响面比「取最早/最晚那一族」大**（评审 S-4）：
+/// 任何断言依赖**阶段之间位置关系**的用例都会在这种输入上退化 ——
+/// 甘特分段就是一个不在那一族里、却同样被抹平的例子（三段全塌在
+/// 同一个小时上，「有三段」和「进度三分之一」照旧全绿）。
+///
+/// 而它现在**九个文件共用**：一个夹具默认值成了许多用例灵敏度的单点。
+/// 要位置关系的用例请用 [setStageDay] 拆开，并把「拆开了」钉成前提。
 ///
 /// [withTime] 传 false 是给**专门验「没时间就不能存」**的用例用的。
 Future<void> addStage(
@@ -597,6 +605,50 @@ Future<void> addStage(
       (tester.widget(fields.last) as TextField).key! as ValueKey<String>;
   final id = key.value.replaceFirst('editor-stage-', '');
   await tapVisible(tester, TaskEditorPage.stageTimeKey(id));
+  await tester.tap(find.byKey(TaskEditorPage.stageTimeConfirmKey));
+  await tester.pumpAndSettle();
+}
+
+/// 把某个阶段挪到 9 月 [day] 号（当月内，夹具时钟钉在 2026-09-07）。
+///
+/// **先挪结束、再挪开始**：反过来中间会经过「开始晚于结束」，而对话框的
+/// 「确定」在那个状态下是灰的 —— 那道拦截是对的，夹具该绕开它，
+/// 不该去改它。
+///
+/// ## 为什么要有它：`addStage` 给的默认时间会让几个阶段**完全重叠**
+///
+/// 对话框的默认是「相对任务开始 +0、一小时」，于是 `addStage` 建出来的
+/// 几个阶段占的是同一个小时。任何断言依赖**阶段之间位置关系**的用例
+/// （取最早/最晚、甘特分段、跨度推导）在那种输入上会退化成恒真 ——
+/// **夹具替用例挑了输入，而它挑的恰好是最不敏感的那个。**
+///
+/// 用它拆开重叠之后，**记得把「拆开了」钉成一条前提断言** ——
+/// 否则哪天默认值又变了，退化会静悄悄地发生。
+Future<void> setStageDay(WidgetTester tester, String stageId, int day) async {
+  Future<void> pick(Key field) async {
+    await tester.tap(find.byKey(field));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(DatePickerDialog),
+        matching: find.text('$day'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // **限定在日期选择器里找「确定」**：它底下压着阶段时间对话框，
+    // 那个也有一颗「确定」，不限定会报「too many elements」。
+    await tester.tap(
+      find.descendant(
+        of: find.byType(DatePickerDialog),
+        matching: find.text('确定'),
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  await tapVisible(tester, TaskEditorPage.stageTimeKey(stageId));
+  await pick(TaskEditorPage.stageTimeEndDateKey);
+  await pick(TaskEditorPage.stageTimeStartDateKey);
   await tester.tap(find.byKey(TaskEditorPage.stageTimeConfirmKey));
   await tester.pumpAndSettle();
 }

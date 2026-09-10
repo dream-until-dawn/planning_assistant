@@ -41,46 +41,6 @@ Future<Harness> _pumpApp(WidgetTester tester) async {
   return harness;
 }
 
-/// 把某个阶段挪到「9 月 [startDay] 号 → 9 月 [endDay] 号」。
-///
-/// **先挪结束、再挪开始。** 反过来的话中间会经过「开始晚于结束」那个
-/// 状态，对话框的「确定」当场就灰了 —— 而那道拦截是对的，
-/// 夹具该绕开它，不该去改它。
-Future<void> _setStageDays(
-  WidgetTester tester,
-  String id, {
-  required int startDay,
-  required int endDay,
-}) async {
-  Future<void> pick(Key field, int day) async {
-    await tester.tap(find.byKey(field));
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find.descendant(
-        of: find.byType(DatePickerDialog),
-        matching: find.text('$day'),
-      ),
-    );
-    await tester.pumpAndSettle();
-    // **必须限定在日期选择器里找「确定」**：它底下压着阶段时间对话框，
-    // 那个也有一颗「确定」。`find.text('确定')` 会找到两个，
-    // 报的是「too many elements」—— 与「日期没选上」差得很远。
-    await tester.tap(
-      find.descendant(
-        of: find.byType(DatePickerDialog),
-        matching: find.text('确定'),
-      ),
-    );
-    await tester.pumpAndSettle();
-  }
-
-  await tapVisible(tester, TaskEditorPage.stageTimeKey(id));
-  await pick(TaskEditorPage.stageTimeEndDateKey, endDay);
-  await pick(TaskEditorPage.stageTimeStartDateKey, startDay);
-  await tester.tap(find.byKey(TaskEditorPage.stageTimeConfirmKey));
-  await tester.pumpAndSettle();
-}
-
 /// 建一条**三阶段**的任务，三个阶段各占一天：9/7、9/8、9/9。
 ///
 /// ## 为什么是三个，为什么每个都有时间
@@ -112,8 +72,8 @@ Future<List<String>> _createStaged(WidgetTester tester) async {
 
   // 夹具的今天是 2026-09-07，`addStage` 给的默认是「任务开始起、一小时」。
   // 把后两个各往后挪一天，于是三个阶段的偏移是 0 / 1440 / 2880。
-  await _setStageDays(tester, ids[1], startDay: 8, endDay: 8);
-  await _setStageDays(tester, ids[2], startDay: 9, endDay: 9);
+  await setStageDay(tester, ids[1], 8);
+  await setStageDay(tester, ids[2], 9);
   await tapVisible(tester, TaskEditorPage.saveButtonKey);
   return ids;
 }
@@ -155,7 +115,7 @@ void main() {
     // 把**第一个**阶段挪到 9/10 —— 于是最早的那个变成了「搬运」，
     // 推导要把所有偏移重新表达成相对它。
     await _reopen(tester);
-    await _setStageDays(tester, ids[0], startDay: 10, endDay: 10);
+    await setStageDay(tester, ids[0], 10);
     await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
     final after = read(await harness.db.select(harness.db.stages).get());

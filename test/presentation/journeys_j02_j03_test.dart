@@ -134,22 +134,43 @@ void main() {
     // 跨度改由下面给阶段定时间那一步产生。
 
     const names = ['打包', '搬运', '收拾'];
+    final ids = <String>[];
     for (final name in names) {
       // **每个阶段都得起名字，也都得有时间。** 空标题的阶段保存时会被
       // 丢掉（`filledStages`），没时间的阶段 2026-09-10 起直接挡住保存 ——
       // 两条都由 `addStage` 一并办了。第一版没填名字，落库零条，
       // 报的是「期望 3 个，实际 []」。
       await addStage(tester, name);
+      final field = find
+          .descendant(
+            of: find.byKey(TaskEditorPage.stageSectionKey),
+            matching: find.byType(TextField),
+          )
+          .last;
+      ids.add(
+        ((tester.widget(field) as TextField).key! as ValueKey<String>).value
+            .replaceFirst('editor-stage-', ''),
+      );
     }
+    // **把三个阶段拆开**（评审 S-4）。`addStage` 给的默认是「+0，一小时」，
+    // 三个会**完全重叠** —— 而下面那两条断言（段数、进度）对位置都不敏感：
+    // 把分段改成按 orderIndex 均分、或让三段全塌到条的起点，照旧全绿。
+    // 那时这条旅程的名字（「甘特图分段正确」）比它钉住的东西大。
+    await setStageDay(tester, ids[1], 8);
+    await setStageDay(tester, ids[2], 9);
     await _save(tester);
 
-    final stages = await harness.db.select(harness.db.stages).get();
+    final stages = (await harness.db.select(harness.db.stages).get()).toList()
+      ..sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
     expect(stages, hasLength(3));
-    expect(
-      (stages.toList()..sort((a, b) => a.orderIndex.compareTo(b.orderIndex)))
-          .map((s) => s.title),
-      names,
-    );
+    expect(stages.map((s) => s.title), names);
+    // **前提：三个阶段真的错开了。** 少了这条，哪天 `addStage` 的默认值
+    // 变回重叠，下面那两条会**悄悄**退化成恒真 —— 而这一条会当场喊。
+    expect(stages.map((s) => s.startOffsetMinutes), [
+      0,
+      1440,
+      2880,
+    ], reason: '三个阶段挤在同一个小时里 —— 分段断言退化成了恒真');
 
     // ── 完成第 2 阶段 ────────────────────────────────────────
     //

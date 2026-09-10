@@ -375,21 +375,31 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
               // 全天**排在最前**（用户 2026-09-10：「全天的开关往上点」）。
               // 它决定下面是一个日期栏还是两个「日期+时刻」栏 ——
               // 把决定放在被决定的东西后面，读起来是反的。
-              SwitchListTile(
-                key: TaskEditorPage.allDaySwitchKey,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('全天'),
-                // **编辑时一度是禁用的**：全天 ⇄ 定时会改变 occurrenceKey
-                // 的形态，已有的单次例外要在同一事务里迁移 key
-                // （data-model §4.6、R-27）。没有那条命令之前，
-                // 让它能拨却存不下去就是又一个「改了没反应」的开关。
-                // `ConvertTaskAllDayModeCommand` 做出来了，于是放开。
-                subtitle: draft.allDayModeChanged
-                    ? Text('保存时会把这条任务的单次例外一并迁移', style: text.bodySmall)
-                    : null,
-                value: draft.isAllDay,
-                onChanged: controller.setAllDay,
-              ),
+              //
+              // **阶段事项不给这个开关**（`canBeAllDay`，评审 S-3）。
+              // 逃生口会在推不出起止时把整个时间区放出来，而那一刻这个
+              // 开关也跟着出来了 —— 拨上去之后 `isAllDay` 与 `startMinute`
+              // 一起变，「第一次发生」的 `OccurrenceKey` 就算错了，
+              // 关掉重复时勾过的进度**静默丢失**。探针复现过。
+              //
+              // 它本来就不该在那儿：这一形态没有「全天」这个概念，
+              // 而逃生口放出来的是**起止**，不是「全天与否」。
+              if (draft.shape.canBeAllDay)
+                SwitchListTile(
+                  key: TaskEditorPage.allDaySwitchKey,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('全天'),
+                  // **编辑时一度是禁用的**：全天 ⇄ 定时会改变 occurrenceKey
+                  // 的形态，已有的单次例外要在同一事务里迁移 key
+                  // （data-model §4.6、R-27）。没有那条命令之前，
+                  // 让它能拨却存不下去就是又一个「改了没反应」的开关。
+                  // `ConvertTaskAllDayModeCommand` 做出来了，于是放开。
+                  subtitle: draft.allDayModeChanged
+                      ? Text('保存时会把这条任务的单次例外一并迁移', style: text.bodySmall)
+                      : null,
+                  value: draft.isAllDay,
+                  onChanged: controller.setAllDay,
+                ),
               if (draft.isAllDay)
                 // 全天 = **一天**，所以只有一个日期栏（用户 2026-09-10
                 // 定：「启用下只用选个日期」）。结束日期由控制器跟着走 ——

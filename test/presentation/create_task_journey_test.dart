@@ -37,40 +37,6 @@ Future<Harness> _pumpApp(WidgetTester tester, {bool seed = false}) async {
   return harness;
 }
 
-/// 把某个阶段挪到 9 月 [day] 号。
-///
-/// **先挪结束、再挪开始**：反过来中间会经过「开始晚于结束」，
-/// 而对话框的「确定」在那个状态下是灰的 —— 那道拦截是对的，
-/// 夹具该绕开它，不该去改它。
-Future<void> _setStageDay(WidgetTester tester, String id, int day) async {
-  Future<void> pick(Key field) async {
-    await tester.tap(find.byKey(field));
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find.descendant(
-        of: find.byType(DatePickerDialog),
-        matching: find.text('$day'),
-      ),
-    );
-    await tester.pumpAndSettle();
-    // **限定在日期选择器里找「确定」**：它底下压着阶段时间对话框，
-    // 那个也有一颗「确定」，不限定会报「too many elements」。
-    await tester.tap(
-      find.descendant(
-        of: find.byType(DatePickerDialog),
-        matching: find.text('确定'),
-      ),
-    );
-    await tester.pumpAndSettle();
-  }
-
-  await tapVisible(tester, TaskEditorPage.stageTimeKey(id));
-  await pick(TaskEditorPage.stageTimeEndDateKey);
-  await pick(TaskEditorPage.stageTimeStartDateKey);
-  await tester.tap(find.byKey(TaskEditorPage.stageTimeConfirmKey));
-  await tester.pumpAndSettle();
-}
-
 void main() {
   testAppWidgets('J-01：新建一条任务，回到列表就能看见', (tester) async {
     final harness = await _pumpApp(tester);
@@ -464,7 +430,7 @@ void main() {
       await tester.tap(find.byKey(TaskEditorPage.stageTimeConfirmKey));
       await tester.pumpAndSettle();
       // 第二个：挪到次日（夹具的今天是 9/7）。
-      await _setStageDay(tester, ids[1], 8);
+      await setStageDay(tester, ids[1], 8);
 
       await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
