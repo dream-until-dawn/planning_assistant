@@ -141,6 +141,24 @@ void main() {
     );
   });
 
+  testAppWidgets('阶段事项：阶段区标的是**必填**，不是「可选」', (tester) async {
+    // 用户那条要求里「各自的必填项和非填写」说的正是这个：
+    // 标成「可选」与 `blockedReason` 那句「阶段事项至少要两个阶段」
+    // 直接打架 —— 用户按标签填完，保存键却是灰的。
+    await _openEditor(tester, TaskShape.staged);
+    await _isPresent(tester, TaskEditorPage.stageSectionKey);
+    expect(find.textContaining('阶段（可选）'), findsNothing);
+    expect(find.textContaining('至少两个'), findsOneWidget);
+  });
+
+  testAppWidgets('提醒区不对有日期的任务说「没有日期不会提醒」', (tester) async {
+    // 那句话是给不排时间的形态写的，而那一样现在压根不显示这个区。
+    // 留着的话，阶段事项（日期是推出来的）会被告知一件不成立的事。
+    await _openEditor(tester, TaskShape.staged);
+    await _isPresent(tester, TaskEditorPage.reminderSectionKey);
+    expect(find.textContaining('没有日期'), findsNothing);
+  });
+
   testAppWidgets('**编辑**已有任务时，时间那几个控件回来', (tester) async {
     // 形态是从当前字段反推的（`TaskShape.of` 只看它现在是什么样），
     // 所以「给这条临时事项加上时间」只有这一条路：藏起来就断了 ——

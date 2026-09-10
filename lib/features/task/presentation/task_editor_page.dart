@@ -1174,7 +1174,17 @@ class _StageSection extends StatelessWidget {
       key: TaskEditorPage.stageSectionKey,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('阶段（可选）', style: text.bodySmall),
+        // **形态决定它是不是可选的。** 阶段事项里阶段是必填的
+        // （`blockedReason` 那句「至少要两个阶段」说的就是这件事），
+        // 标成「可选」与它下面那句红字直接打架 ——
+        // 用户 2026-09-10 那条要求里「各自的必填项和非填写」说的正是这个。
+        //
+        // 别的形态上这一区只在**编辑旧数据**时出现（单事项挂着阶段那种），
+        // 那时它确实是可选的。
+        Text(
+          draft.shape.hasStages ? '阶段（至少两个，每个都要有时间）' : '阶段（可选）',
+          style: text.bodySmall,
+        ),
         const SizedBox(height: Spacing.xs),
         ReorderableListView(
           shrinkWrap: true,
@@ -1764,7 +1774,10 @@ class _ReminderSection extends StatelessWidget {
       children: [
         Text('提醒（可选）', style: text.bodySmall),
         const SizedBox(height: Spacing.xs),
-        const Text('到点前提醒你。没有日期的任务不会提醒。'),
+        // 「没有日期就不会提醒」那句话现在只对**编辑旧数据**说得着 ——
+        // 新建时不排时间的那一样（临时事项）已经不显示这个区了。
+        // 阶段事项有日期（推出来的），所以对它讲那句话是误导。
+        Text(draft.shape.needsSchedule ? '到点前提醒你。' : '到点前提醒你。这条任务没有日期，所以不会提醒。'),
         const SizedBox(height: Spacing.sm),
         for (final r in draft.reminders)
           Padding(
