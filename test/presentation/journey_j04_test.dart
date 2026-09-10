@@ -61,10 +61,15 @@ void main() {
   testAppWidgets('J-04 设提醒 → 改任务时间 → 提醒时刻跟着变', (tester) async {
     final harness = await _pumpApp(tester);
 
-    // ① 建一条今天的单事项，带一条提醒。
+    // ① 建一条今天的**定时**单事项，带一条提醒。
+    //
+    // **必须拨掉全天**（2026-09-10 起全天是默认）：全天任务的提醒基准是
+    // 配置里那个绝对时刻（默认 09:00），而夹具的钟停在 11:00 ——
+    // 今天那一条已经过去，`scheduled` 是空的，②③④ 全无从谈起。
     await tapCreate(tester, TaskShape.single);
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
     await tester.pump();
+    await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
     await tapVisible(tester, TaskEditorPage.addReminderKey);
     await tapVisible(tester, TaskEditorPage.saveButtonKey);
     await _settleSync(tester);

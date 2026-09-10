@@ -68,13 +68,7 @@ Future<void> _createRecurringStaged(WidgetTester tester) async {
   await tester.pump();
 
   for (final name in ['热身', '主训', '拉伸']) {
-    await tapVisible(tester, TaskEditorPage.addStageKey);
-    final fields = find.descendant(
-      of: find.byKey(TaskEditorPage.stageSectionKey),
-      matching: find.byType(TextField),
-    );
-    await tester.enterText(fields.last, name);
-    await tester.pump();
+    await addStage(tester, name);
   }
 
   await tapVisible(
@@ -267,13 +261,7 @@ void main() {
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
     await tester.pump();
     for (final name in ['打包', '搬运']) {
-      await tapVisible(tester, TaskEditorPage.addStageKey);
-      final fields = find.descendant(
-        of: find.byKey(TaskEditorPage.stageSectionKey),
-        matching: find.byType(TextField),
-      );
-      await tester.enterText(fields.last, name);
-      await tester.pump();
+      await addStage(tester, name);
     }
     await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
@@ -301,13 +289,7 @@ void main() {
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
     await tester.pump();
     for (final name in ['打包', '搬运']) {
-      await tapVisible(tester, TaskEditorPage.addStageKey);
-      final fields = find.descendant(
-        of: find.byKey(TaskEditorPage.stageSectionKey),
-        matching: find.byType(TextField),
-      );
-      await tester.enterText(fields.last, name);
-      await tester.pump();
+      await addStage(tester, name);
     }
     await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
@@ -496,7 +478,12 @@ void main() {
     await tapCreate(tester, TaskShape.staged);
     await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
     await tester.pump();
-    await tapVisible(tester, TaskEditorPage.addStageKey);
+    // **两个真阶段** —— 阶段事项至少要两个，每个都要有时间
+    // （用户 2026-09-10「加强必填项校验」）。原来这里只点了一下
+    // 「加一个阶段」、连名字都不填，那条任务从此存不下去。
+    for (final name in ['打包', '搬运']) {
+      await addStage(tester, name);
+    }
     await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
     await openEditorFromCard(tester);

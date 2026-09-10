@@ -30,7 +30,6 @@ import '../../../domain/entities/task.dart';
 import '../../archive/application/archive_providers.dart';
 import '../../trash/application/trash_providers.dart';
 import '../../views/shared/application/category_providers.dart';
-import '../../views/shared/application/task_providers.dart';
 import '../application/derived_span.dart';
 import '../application/recurrence_draft.dart';
 import '../application/stage_time.dart';
@@ -70,17 +69,22 @@ class TaskEditorPage extends ConsumerStatefulWidget {
   /// 与删除并排放：两者都是「从列表里拿走」，用户在做决定时
   /// 正需要看见另一个选项 —— 只给删除的话，想留着的人只能删。
   static const Key archiveButtonKey = ValueKey('editor-archive');
-  static const Key allDaySwitchKey = ValueKey('editor-all-day');
-  static const Key dateFieldKey = ValueKey('editor-date');
-  static const Key timeFieldKey = ValueKey('editor-time');
 
-  /// 结束侧（FR-TASK-01 的「可选计划时间段」）。
+  /// 全天开关。**排在时间区第一行** —— 它决定下面是一个日期栏还是
+  /// 两个「日期+时刻」栏，把决定放在被决定的东西后面读起来是反的
+  /// （用户 2026-09-10：「全天的开关往上点」）。
+  static const Key allDaySwitchKey = ValueKey('editor-all-day');
+
+  /// 全天时那一个日期栏。全天 = 一天，所以只有它。
+  static const Key dateFieldKey = ValueKey('editor-date');
+
+  /// 非全天时的开始与结束，**各是一颗按钮，一次选完日期+时刻**
+  /// （用户 2026-09-10：「都是直接一轮选择日期+时间而非分成两步」）。
   ///
-  /// 收在一个开关后面：绝大多数任务只有一个「哪天」，没有跨度，
-  /// 默认摊开两行日期两行时刻是把少数情形的成本摊给所有人。
-  static const Key endSwitchKey = ValueKey('editor-has-end');
-  static const Key endDateFieldKey = ValueKey('editor-end-date');
-  static const Key endTimeFieldKey = ValueKey('editor-end-time');
+  /// 取代了原来的四个控件加一个「有结束时间」开关。那个开关也没了 ——
+  /// 结束现在是必填的，一个只能开着的开关只是一次多余的点击。
+  static const Key startMomentKey = ValueKey('editor-start-moment');
+  static const Key endMomentKey = ValueKey('editor-end-moment');
 
   /// 分类选择区。每个选项的 Key 见 [categoryChipKey]。
   static const Key categoryPickerKey = ValueKey('editor-category');
@@ -97,7 +101,7 @@ class TaskEditorPage extends ConsumerStatefulWidget {
   static const Key stageSectionKey = ValueKey('editor-stages');
   static const Key addStageKey = ValueKey('editor-add-stage');
 
-  /// 清单区（FR-TASK-09）。
+  /// 提醒区（FR-NOTI-01）。
   static const Key reminderSectionKey = ValueKey('editor-reminders');
   static const Key addReminderKey = ValueKey('editor-add-reminder');
   static Key reminderOffsetKey(String id) => ValueKey('editor-reminder-$id');
@@ -106,12 +110,11 @@ class TaskEditorPage extends ConsumerStatefulWidget {
   static Key reminderEnabledKey(String id) =>
       ValueKey('editor-reminder-enabled-$id');
 
+  /// 清单区的 Key。**这一区现在不显示**（用户 2026-09-10：
+  /// 「把清单隐藏了，目前不需要这个」），留着这个常量是为了让
+  /// `editor_shape_fields_test` 的那张表能断言「它在任何形态下都不出现」——
+  /// 只是不画的话，没有任何一条用例会在它被画回来时变红。
   static const Key checklistSectionKey = ValueKey('editor-checklist');
-  static const Key addChecklistKey = ValueKey('editor-add-checklist');
-
-  static Key checklistFieldKey(String id) => ValueKey('editor-check-$id');
-  static Key checklistDoneKey(String id) => ValueKey('editor-check-done-$id');
-  static Key checklistRemoveKey(String id) => ValueKey('editor-check-del-$id');
 
   /// 「为什么不能存」那句提示。
   static const Key blockedReasonKey = ValueKey('editor-blocked');
@@ -289,23 +292,6 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
 
   @override
   Widget build(BuildContext context) {
-    // **必须先等清单流吐一次值，再让控制器建草稿。**
-    //
-    // 控制器的 `build()` 用 `read` 取初值（那是对的 —— 用 `watch`
-    // 的话，库里任何一次推送都会把用户填到一半的东西冲掉）。
-    // 而 `read` 一个还没人订阅过的 `StreamProvider` 拿到的是
-    // AsyncLoading，回落是**空清单** —— 于是编辑一条有清单的任务，
-    // 清单区是空的，一保存就把它整表清掉了。
-    //
-    // 阶段没这个毛病纯属**巧合**：列表上的卡片要算进度，
-    // 一直 watch 着 `allStagesProvider`，进编辑器时它早就热了。
-    // 清单不上任何视图（FR-TASK-09），没人替它保温。
-    //
-    // 本地库首帧通常一帧内就来，所以这里不转圈，与回收站同一个做法。
-    if (ref.watch(allChecklistItemsProvider).isLoading) {
-      return const SizedBox.shrink();
-    }
-
     final draft = ref.watch(taskEditorProvider);
     final controller = ref.read(taskEditorProvider.notifier);
     final colors = context.appColors;
@@ -386,16 +372,9 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
             if (draft.shape.spanDerivedFromStages)
               _DerivedSpanLine(draft: draft),
             if (_showsSpanFields(draft)) ...[
-              _DateRow(
-                key: TaskEditorPage.dateFieldKey,
-                date: draft.planDate,
-                today: _today(),
-                // 非全天时**不许清空日期**：清了就又回到「有时刻没哪天」。
-                // save() 那道兜底会把它补回来，但表单上不该出现那个瞬间 ——
-                // 用户看到的是「日期空着也能存」，而存下去却有日期。
-                clearable: draft.isAllDay,
-                onPick: controller.setPlanDate,
-              ),
+              // 全天**排在最前**（用户 2026-09-10：「全天的开关往上点」）。
+              // 它决定下面是一个日期栏还是两个「日期+时刻」栏 ——
+              // 把决定放在被决定的东西后面，读起来是反的。
               SwitchListTile(
                 key: TaskEditorPage.allDaySwitchKey,
                 contentPadding: EdgeInsets.zero,
@@ -411,50 +390,33 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
                 value: draft.isAllDay,
                 onChanged: controller.setAllDay,
               ),
-              if (!draft.isAllDay)
-                _TimeRow(
-                  key: TaskEditorPage.timeFieldKey,
-                  minute: draft.startMinute,
-                  onPick: controller.setStartMinute,
-                ),
-              SwitchListTile(
-                key: TaskEditorPage.endSwitchKey,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('有结束时间'),
-                subtitle: Text(
-                  draft.endDate == null ? '不设结束' : '到 ${_endText(draft)}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                value: draft.endDate != null,
-                // 打开时**先给一个看得见的默认**（与开始同一天），
-                // 而不是打开后留一行「选个日期」等着用户再点一次。
-                onChanged: (on) => controller.setEndDate(
-                  on ? (draft.planDate ?? _today()) : null,
-                ),
-              ),
-              if (draft.endDate != null) ...[
+              if (draft.isAllDay)
+                // 全天 = **一天**，所以只有一个日期栏（用户 2026-09-10
+                // 定：「启用下只用选个日期」）。结束日期由控制器跟着走 ——
+                // 它在这个界面上没有落点，留一个改不到的值等于没有。
                 _DateRow(
-                  key: TaskEditorPage.endDateFieldKey,
-                  date: draft.endDate,
+                  key: TaskEditorPage.dateFieldKey,
+                  date: draft.planDate,
                   today: _today(),
-                  // 结束日期不在这里清 —— 关上面那个开关才是「不设结束」。
-                  // 留一个清除按钮的话，清完还剩一个「有结束时间」开着的
-                  // 空行，那是个没有意义的中间态。
-                  clearable: false,
-                  label: '结束日期',
-                  // 结束不能早于开始。选择器就把下界卡在这儿，
-                  // 顺手挡掉一半的错法；另一半（先选结束再改开始）
-                  // 由 `TaskDraft.blockedReason` 兜。
-                  firstDate: draft.planDate,
-                  onPick: controller.setEndDate,
+                  onPick: controller.setPlanDate,
+                )
+              else ...[
+                _MomentTile(
+                  key: TaskEditorPage.startMomentKey,
+                  label: '开始',
+                  date: draft.planDate,
+                  minute: draft.startMinute,
+                  today: _today(),
+                  onPick: controller.setStartMoment,
                 ),
-                if (!draft.isAllDay)
-                  _TimeRow(
-                    key: TaskEditorPage.endTimeFieldKey,
-                    minute: draft.endMinute,
-                    label: '结束时间',
-                    onPick: controller.setEndMinute,
-                  ),
+                _MomentTile(
+                  key: TaskEditorPage.endMomentKey,
+                  label: '结束',
+                  date: draft.endDate,
+                  minute: draft.endMinute,
+                  today: _today(),
+                  onPick: controller.setEndMoment,
+                ),
               ],
             ],
             // ## 按形态显示区块（FR-TASK-01/02/03）
@@ -508,8 +470,12 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
               const SizedBox(height: Spacing.xl),
               _ReminderSection(draft: draft, controller: controller),
             ],
-            const SizedBox(height: Spacing.xl),
-            _ChecklistSection(draft: draft, controller: controller),
+            // 清单区（FR-TASK-09）**不显示**（用户 2026-09-10：
+            // 「把清单隐藏了，目前不需要这个」）。命令、表、DAO、导出都在，
+            // 只是这张表单**既不读它也不写它** —— 见控制器里那段：
+            // 「表单不显示的东西，表单也不该写回去」。
+            // 需求文档里它已经从 V1 挪到 V2，免得追溯门禁替一条
+            // 界面上够不着的功能盖「已交付」的章。
             const SizedBox(height: Spacing.xxxl),
           ],
         ),
@@ -846,17 +812,6 @@ class _MomentRow extends StatelessWidget {
   }
 }
 
-/// 结束那一截给人看的说法：「9-10」或「9-10 18:00」。
-String _endText(TaskDraft draft) {
-  final date = draft.endDate;
-  if (date == null) return '';
-  final m = draft.endMinute;
-  if (m == null || draft.isAllDay) return '$date';
-  return '$date '
-      '${m.hour.toString().padLeft(2, '0')}:'
-      '${m.minute.toString().padLeft(2, '0')}';
-}
-
 /// 时间那几个控件要不要出现。
 ///
 /// **两条并起来**：
@@ -958,33 +913,25 @@ String _spanText(TaskDraft draft) {
   return start == end ? start : '$start → $end';
 }
 
+/// 全天任务那一个日期栏。
+///
+/// **不给清除按钮。** 日期现在是必填的（用户 2026-09-10「加强必填项校验」），
+/// 一个清完就再也存不下去的按钮不是选项，是陷阱。
 class _DateRow extends StatelessWidget {
   const _DateRow({
     required this.date,
     required this.today,
-    required this.clearable,
     required this.onPick,
-    this.label,
-    this.firstDate,
     super.key,
   });
 
+  /// 可以是 null —— 编辑一条日期为空的任务时就是。那时显示「选个日期」。
   final PlanDate? date;
-
-  /// 行首的说明。开始那一行不写（它就是「日期」），
-  /// 结束那一行必须写 —— 两行长得一模一样时分不出哪行是哪个。
-  final String? label;
-
-  /// 可选范围的下界。null 时用 [today] 往前五年（见下）。
-  final PlanDate? firstDate;
 
   /// 本地墙钟的今天。选择器的默认与可选范围都以它为基准。
   final PlanDate today;
 
-  /// 能不能清空。非全天任务必须有日期，所以那时不给清。
-  final bool clearable;
-
-  final ValueChanged<PlanDate?> onPick;
+  final ValueChanged<PlanDate> onPick;
 
   @override
   Widget build(BuildContext context) {
@@ -994,79 +941,100 @@ class _DateRow extends StatelessWidget {
       // ListTile 一个），报错是「is too many」，离原因隔着一层。
       contentPadding: EdgeInsets.zero,
       leading: const Icon(Icons.event_outlined),
-      title: Text(
-        date == null ? '选个日期（可选）' : '${label == null ? '' : '$label '}$date',
-      ),
-      trailing: (date == null || !clearable)
-          ? null
-          : IconButton(
-              onPressed: () => onPick(null),
-              icon: const Icon(Icons.close),
-              tooltip: '清除日期',
-            ),
+      title: Text(date == null ? '选个日期' : '$date'),
       onTap: () async {
-        // 没选过时停在下界（结束行 = 开始那天），否则停在今天。
-        final anchor = date ?? firstDate ?? today;
-        final picked = await showDatePicker(
-          context: context,
-          initialDate: DateTime(anchor.year, anchor.month, anchor.day),
-          // 往前留五年（补记旧事），往后十年。范围以**今天**为基准，
-          // 不以已选日期为基准 —— 否则选了一个很远的日期之后，
-          // 可选范围会跟着漂走。
-          // 结束日期传了下界就用它（结束不能早于开始）；
-          // 开始日期往前留五年（补记旧事）。
-          firstDate: firstDate == null
-              ? DateTime(today.year - 5)
-              : DateTime(firstDate!.year, firstDate!.month, firstDate!.day),
-          lastDate: DateTime(today.year + 10),
+        final picked = await pickDate(
+          context,
+          anchor: date ?? today,
+          today: today,
         );
-        if (picked != null) {
-          onPick(PlanDate(picked.year, picked.month, picked.day));
-        }
+        if (picked != null) onPick(picked);
       },
     );
   }
 }
 
-class _TimeRow extends StatelessWidget {
-  const _TimeRow({
+/// 日期选择器。范围以**今天**为基准（往前五年补记旧事，往后十年），
+/// 不以已选日期为基准 —— 否则选了一个很远的日期之后，可选范围会跟着漂走。
+Future<PlanDate?> pickDate(
+  BuildContext context, {
+  required PlanDate anchor,
+  required PlanDate today,
+}) async {
+  final picked = await showDatePicker(
+    context: context,
+    initialDate: DateTime(anchor.year, anchor.month, anchor.day),
+    firstDate: DateTime(today.year - 5),
+    lastDate: DateTime(today.year + 10),
+  );
+  return picked == null
+      ? null
+      : PlanDate(picked.year, picked.month, picked.day);
+}
+
+/// 「哪天几点」**一次选完**（用户 2026-09-10：「都是直接一轮选择日期+时间
+/// 而非分成两步」）。
+///
+/// ## 一轮是原子的：中途取消什么都不改
+///
+/// 选完日期再取消时刻，改动**整体作废**。另一种做法是「日期先落下」——
+/// 那会让「点错了，算了」留下一个用户没打算要的开始日期，
+/// 而这一栏上没有撤销。取消就是取消。
+class _MomentTile extends StatelessWidget {
+  const _MomentTile({
+    required this.label,
+    required this.date,
     required this.minute,
+    required this.today,
     required this.onPick,
-    this.label,
     super.key,
   });
 
+  /// 「开始」/「结束」。两行长得一模一样时分不出哪行是哪个。
+  final String label;
+
+  /// 两个都可能是 null —— 编辑一条只填了一半的旧任务时就是。
+  final PlanDate? date;
   final MinuteOfDay? minute;
 
-  /// 见 [_DateRow.label]。
-  final String? label;
+  final PlanDate today;
 
-  final ValueChanged<MinuteOfDay?> onPick;
+  final ValueChanged<DateAndMinute> onPick;
 
   @override
   Widget build(BuildContext context) {
+    final d = date;
     final m = minute;
     return ListTile(
       // 见 [_DateRow]：key 由调用方给到 widget 上。
       contentPadding: EdgeInsets.zero,
       leading: const Icon(Icons.schedule_outlined),
       title: Text(
-        m == null
-            ? (label == null ? '选个时间' : '选个$label')
-            : '${label == null ? '' : '$label '}'
-                  '${m.hour.toString().padLeft(2, '0')}:'
-                  '${m.minute.toString().padLeft(2, '0')}',
+        d == null || m == null ? '选个$label时间' : '$label $d ${_hhmm(m)}',
       ),
       onTap: () async {
-        final picked = await showTimePicker(
+        final pickedDate = await pickDate(
+          context,
+          anchor: d ?? today,
+          today: today,
+        );
+        if (pickedDate == null) return;
+        // 弹第二个选择器之前必须重新确认页面还在 —— 中间隔着一次
+        // 用户交互，这期间保存/返回都可能把它弹掉。
+        if (!context.mounted) return;
+        final pickedTime = await showTimePicker(
           context: context,
           initialTime: m == null
               ? const TimeOfDay(hour: 9, minute: 0)
               : TimeOfDay(hour: m.hour, minute: m.minute),
         );
-        if (picked != null) {
-          onPick(MinuteOfDay.of(picked.hour, picked.minute));
-        }
+        if (pickedTime == null) return;
+        onPick(
+          DateAndMinute(
+            pickedDate,
+            MinuteOfDay.of(pickedTime.hour, pickedTime.minute),
+          ),
+        );
       },
     );
   }
@@ -1753,18 +1721,6 @@ class _ChipRow extends StatelessWidget {
   );
 }
 
-/// 清单区（FR-TASK-09）。
-///
-/// ## 与阶段区并排放，靠内容自己区分
-///
-/// 两者在编辑器里长得像 —— 都是一列可增删的行。区别写在标题下那句话上，
-/// 也写在**控件本身**：清单项没有「加时间」那个按钮。
-/// 术语表把清单定义成「不参与时间排布」，给它一个时间入口
-/// 就等于把它变成第二种阶段。
-///
-/// 顺序用的是列表顺序（保存时按下标写 `orderIndex`），
-/// 没做上下移 —— 阶段有上下移是因为阶段的先后是**语义**（第一步第二步），
-/// 而清单是一把待办，顺序只是录入顺序。要排序的话那是另一件事。
 /// 提醒（FR-NOTI-01）。
 ///
 /// **只给「提前多久」这一档**，理由写在 `ReminderDraft` 上。
@@ -1844,82 +1800,6 @@ class _ReminderSection extends StatelessWidget {
           label: draft.reminders.isEmpty ? '加个提醒' : '再加一条',
           variant: AppButtonVariant.secondary,
           onPressed: controller.addReminder,
-        ),
-      ],
-    );
-  }
-}
-
-class _ChecklistSection extends StatelessWidget {
-  const _ChecklistSection({required this.draft, required this.controller});
-
-  final TaskDraft draft;
-  final TaskEditorController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final colors = context.appColors;
-
-    return Column(
-      key: TaskEditorPage.checklistSectionKey,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('清单（可选）', style: text.bodySmall),
-        const SizedBox(height: Spacing.xs),
-        // 说清它跟阶段的差别。不说的话，两个长得差不多的区摆在一起，
-        // 用户只能靠试出来。
-        // **不套 `disabledText`。** 那个色是唯一豁免对比度门槛的
-        // （app_theme 里写着「只许出现在禁用态」），拿它写说明文字
-        // 等于让一句要读的话低于 4.5:1。
-        const Text('随手记几件要做的小事。不排时间，也不上时间轴和甘特。'),
-        const SizedBox(height: Spacing.sm),
-        for (final item in draft.checklist)
-          Padding(
-            padding: const EdgeInsets.only(bottom: Spacing.xs),
-            child: Row(
-              children: [
-                Semantics(
-                  label: '清单项完成',
-                  child: Checkbox(
-                    key: TaskEditorPage.checklistDoneKey(item.id),
-                    value: item.isDone,
-                    onChanged: (v) =>
-                        controller.setChecklistDone(item.id, v ?? false),
-                  ),
-                ),
-                Expanded(
-                  child: TextField(
-                    key: TaskEditorPage.checklistFieldKey(item.id),
-                    decoration: const InputDecoration(hintText: '要做的小事'),
-                    // 划掉是**辅助**，勾选框自己带着状态（§8.1）。
-                    style: item.isDone
-                        ? TextStyle(
-                            decoration: TextDecoration.lineThrough,
-                            color: colors.disabledText,
-                          )
-                        : null,
-                    controller: TextEditingController(text: item.title)
-                      ..selection = TextSelection.collapsed(
-                        offset: item.title.length,
-                      ),
-                    onChanged: (v) => controller.setChecklistTitle(item.id, v),
-                  ),
-                ),
-                IconButton(
-                  key: TaskEditorPage.checklistRemoveKey(item.id),
-                  icon: const Icon(Icons.close),
-                  tooltip: '删掉这一项',
-                  onPressed: () => controller.removeChecklistItem(item.id),
-                ),
-              ],
-            ),
-          ),
-        AppButton(
-          key: TaskEditorPage.addChecklistKey,
-          label: draft.checklist.isEmpty ? '加个清单' : '再加一项',
-          variant: AppButtonVariant.secondary,
-          onPressed: controller.addChecklistItem,
         ),
       ],
     );

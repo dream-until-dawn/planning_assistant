@@ -17,7 +17,6 @@ import '../../../core/time/local_wall_time.dart';
 import '../../../core/time/minute_of_day.dart';
 import '../../../core/time/plan_date.dart';
 import '../../../domain/commands/task_command.dart';
-import '../../../domain/entities/checklist_item.dart';
 import '../../../domain/entities/reminder.dart';
 import '../../../domain/entities/stage.dart';
 import '../../../domain/entities/task.dart';
@@ -42,30 +41,27 @@ import 'task_shape.dart';
 /// 混用一个类型的话，每次增删都得立刻重排一遍 orderIndex，
 /// 而中间任何一步出错都会写出不连续的序号 —— 那是领域层会直接拒绝的。
 @immutable
-/// 编辑器里的一条清单项（FR-TASK-09）。
-///
-/// **比 [StageDraft] 少的东西就是它的定义**：没有时间偏移、没有时长。
-/// 清单项「不参与时间排布」（术语表），少这两个字段不是省略，
-/// 是它跟阶段的分界线 —— 哪天有人给它加上 `startOffsetMinutes`，
-/// 它就变成了第二种阶段。
-final class ChecklistDraft {
-  const ChecklistDraft({
-    required this.id,
-    this.title = '',
-    this.isDone = false,
-  });
-
-  final String id;
-  final String title;
-  final bool isDone;
-
-  ChecklistDraft copyWith({String? title, bool? isDone}) => ChecklistDraft(
-    id: id,
-    title: title ?? this.title,
-    isDone: isDone ?? this.isDone,
-  );
-}
-
+// ## 清单（FR-TASK-09）**整个不在这张表单里了**（用户 2026-09-10）
+//
+// > 把清单隐藏了，目前不需要这个
+//
+// 头一版只是把那一区从页面上摘掉，草稿照旧把清单读进来、保存时再整表
+// 写回去。**那是错的，而且当场就咬了一口**：`_editingDraft` 用 `read`
+// 取清单，而这条流没人替它保温（清单不上任何视图），读到的是
+// AsyncLoading 的空回落 —— 于是编辑任何一条任务、保存，
+// 库里的清单项全被打上墓碑。
+//
+// 原来那道「等清单流吐过值再建草稿」的闸挡不住它：草稿在 `initState`
+// 里就建好了，比 `build` 早。而且它**间歇性成立** —— 流慢一点，
+// 早退那一帧反而给了 Riverpod 回收控制器的机会，下一帧重建就对了。
+// 流够快时才出错。
+//
+// 真正的修法不是把闸修好，是**别让编辑器碰它**：
+// 表单不显示的东西，表单也不该写回去。不读不写，就没有可丢的东西 ——
+// 数据的安全不再依赖任何一次时序碰巧对了。
+//
+// 命令（`ReplaceChecklistCommand`）、表、DAO、导出全都留着。
+// 哪天清单区回来，连同 `ChecklistDraft` 一起加回来即可。
 /// 表单里的一条提醒（FR-NOTI-01）。
 ///
 /// **只做相对开始的那一种**。三种 kind 里，`relativeToEnd` 与 `absolute`
@@ -169,7 +165,6 @@ final class TaskDraft {
     this.categoryId,
     this.priority = TaskPriority.normal,
     this.stages = const [],
-    this.checklist = const [],
     this.reminders = const [],
     this.recurrence = const RecurrenceDraft(),
     this.initialIsAllDay,
@@ -215,14 +210,20 @@ final class TaskDraft {
 
   /// 默认全天。**大多数事情没有精确到分钟的时刻**，
   /// 让用户先说「哪天」，要不要具体到几点是可选的加法。
+  ///
+  /// 它是时间那一区的**开关**：开着时只有一个日期栏（起止就是那一天），
+  /// 关掉才有「开始」「结束」两栏（用户 2026-09-10 定的形状）。
   final bool isAllDay;
 
   final PlanDate? planDate;
   final MinuteOfDay? startMinute;
 
-  /// 结束（FR-TASK-01 的「可选计划时间段」）。
+  /// 结束（FR-TASK-01）。
   ///
-  /// **全可选**：绝大多数任务只有一个「哪天」，没有跨度。
+  /// **2026-09-10 起是必填的**（用户：「取消有结束时间这个选项，
+  /// 固定必须得有」）—— 临时事项除外，它压根不排时间。
+  /// 全天时它恒等于 [planDate]：全天就是一天，表单上也只给一个日期栏。
+  ///
   /// 有结束时刻就必须有结束日期，有结束日期就必须有开始日期 ——
   /// 与开始侧同一套规矩，由 `Task.checkInvariants` 兜底。
   final PlanDate? endDate;
@@ -243,9 +244,6 @@ final class TaskDraft {
   /// 与单项任务毫无区别。界面上由 [canSave] 挡住。
   final List<StageDraft> stages;
 
-  /// 清单项（FR-TASK-09）。
-  final List<ChecklistDraft> checklist;
-
   /// 提醒（FR-NOTI-01）。空 = 这条任务不提醒。
   final List<ReminderDraft> reminders;
 
@@ -259,13 +257,6 @@ final class TaskDraft {
   /// 这次保存有没有换形态。
   bool get allDayModeChanged =>
       initialIsAllDay != null && initialIsAllDay != isAllDay;
-
-  /// 有效清单项：标题非空的那些。同 [filledStages] ——
-  /// 点了「加一项」还没打字的空行不该落库。
-  List<ChecklistDraft> get filledChecklist => [
-    for (final i in checklist)
-      if (i.title.trim().isNotEmpty) i,
-  ];
 
   /// 有效阶段：标题非空的那些。
   ///
@@ -294,22 +285,21 @@ final class TaskDraft {
 
   /// 能不能保存。
   ///
-  /// 标题非空是底线（FR-TASK-01：仅填标题即可保存）。
+  /// ## 它与 [blockedReason] 是**同一个判据的两半**
+  ///
+  /// 一度是两张各自维护的清单，然后就分叉了：`blockedReason` 说
+  /// 「要先选结束日期」，`canSave` 却是 true —— 保存键亮着，红字也在，
+  /// 用户按下去就真的存了一条没有结束时间的单事项。用户 2026-09-10
+  /// 报的正是这条（「时间四件你没有检查必填」）。
+  ///
+  /// 所以现在只有**一处**判断，这里只是把它读成布尔。
+  /// 加一条新的必填规则时不可能再漏掉另一半 —— 只有一半可写。
+  ///
+  /// 标题单列在外：它为空时 [blockedReason] 刻意返回 null
+  /// （按钮本来就灰着，不用再说一句），所以「能不能存」问不到它。
   /// 用 `trim()`：一串空格不是标题 —— 不 trim 的话用户能存出一条
   /// 看起来空白、却怎么也搜不到的任务。
-  /// 另外**动过阶段就得填够两个**：加了一行却只填一个，保存下去会得到
-  /// 一个领域层直接拒绝的命令 —— 与其让它在保存时炸，不如当场禁用按钮。
-  bool get canSave {
-    if (title.trim().isEmpty) return false;
-    // 一个阶段都没添 = 单项任务，随便存。
-    if (!recurrence.isValid) return false;
-    if (_recurrenceEndsBeforeStart) return false;
-    if (_taskEndsBeforeStart) return false;
-    if (stages.isEmpty) return true;
-    // 添了就得够两个（0 也行，那是把加出来的空行全删了）。
-    final filled = filledStages.length;
-    return filled == 0 || filled >= 2;
-  }
+  bool get canSave => title.trim().isNotEmpty && blockedReason == null;
 
   /// 重复的结束日期早于开始日期。
   ///
@@ -348,21 +338,38 @@ final class TaskDraft {
   }
 
   /// 为什么不能存 —— 给界面显示用。null 表示能存。
+  ///
+  /// **这是「能不能存」的唯一判据**，[canSave] 只是它的布尔读法。
+  /// 见那边那段注释：两张清单分开维护时它们分叉过一次。
+  ///
+  /// 顺序是**从形态出发**的：先按这一样该填什么问一遍，再问那几条
+  /// 跨字段的关系（结束早于开始之类）。反过来写的话，
+  /// 「阶段事项没填阶段时间」会先撞上「开始日期为空」，
+  /// 而那句话对阶段事项是误导 —— 它的日期本来就不由用户填。
   String? get blockedReason {
     if (title.trim().isEmpty) return null; // 标题为空时按钮本来就灰着，不用再说
-    if (stages.isNotEmpty && filledStages.length == 1) {
-      return '阶段事项至少要两个阶段';
-    }
-    // 起止必填 —— **临时事项除外**（FR-TASK-01，2026-09-09 用户改的验收）。
-    //
-    // 「仅填标题即可保存」现在是临时事项那一档的性质，不再是所有单项的。
-    // 只卡**新建**：库里已有起止为空的旧任务，编辑它们时再要求补齐，
-    // 等于拿新规矩去堵一条本来合法的旧数据（用户明确说「只管新建」）。
-    if (!isEditing && shape.needsSchedule) {
-      if (planDate == null) return '要先选开始日期';
-      if (endDate == null) return '要先选结束日期';
-      if (!isAllDay && (startMinute == null || endMinute == null)) {
-        return '要填开始与结束时刻，或者打开「全天」';
+    if (shape.hasStages) {
+      // 阶段事项的起止**由阶段推出**，所以必填的是阶段自己那几个时间。
+      if (filledStages.length < 2) return '阶段事项至少要两个阶段';
+      if (filledStages.any((s) => !s.hasTime)) {
+        return '每个阶段都要填时间 —— 这条任务的起止由它们决定';
+      }
+    } else {
+      if (stages.isNotEmpty && filledStages.length == 1) {
+        return '阶段事项至少要两个阶段';
+      }
+      // 起止必填 —— **临时事项除外**（FR-TASK-01，2026-09-09 用户改的验收）。
+      // 「仅填标题即可保存」现在是临时事项那一档的性质，不再是所有单项的。
+      //
+      // **编辑时同样卡**（2026-09-10 改）。原来只卡新建，理由是「别拿新规矩
+      // 堵旧数据」—— 而这个 App 还没发版，库里根本没有旧数据，
+      // 那条豁免保护的是一个空集合，代价却是编辑路径上校验全失效。
+      if (shape.needsSchedule) {
+        if (planDate == null) return '要先选开始日期';
+        if (endDate == null) return '要先选结束日期';
+        if (!isAllDay && (startMinute == null || endMinute == null)) {
+          return '要填开始与结束时刻，或者打开「全天」';
+        }
       }
     }
     if (_taskEndsBeforeStart) return '结束时间早于开始时间';
@@ -382,7 +389,6 @@ final class TaskDraft {
     Object? categoryId = unset,
     TaskPriority? priority,
     List<StageDraft>? stages,
-    List<ChecklistDraft>? checklist,
     List<ReminderDraft>? reminders,
     bool? initialIsAllDay,
     RecurrenceDraft? recurrence,
@@ -407,7 +413,6 @@ final class TaskDraft {
     categoryId: patch(categoryId, this.categoryId),
     priority: priority ?? this.priority,
     stages: stages ?? this.stages,
-    checklist: checklist ?? this.checklist,
     reminders: reminders ?? this.reminders,
     initialIsAllDay: initialIsAllDay ?? this.initialIsAllDay,
     recurrence: recurrence ?? this.recurrence,
@@ -423,7 +428,6 @@ final class TaskDraft {
 TaskDraft draftFromTask(
   Task task,
   List<Stage> stages, {
-  List<ChecklistItem> checklist = const [],
   List<Reminder> reminders = const [],
   OccurrenceKey? splitAt,
 }) {
@@ -474,10 +478,6 @@ TaskDraft draftFromTask(
             isEnabled: r.isEnabled,
           ),
     ],
-    checklist: [
-      for (final i in checklist)
-        ChecklistDraft(id: i.id, title: i.title, isDone: i.isDone),
-    ],
     recurrence: restored ?? const RecurrenceDraft(),
     initialIsAllDay: task.isAllDay,
   );
@@ -524,14 +524,17 @@ final class TaskEditorController extends Notifier<TaskDraft> {
   ///
   /// ## 时间怎么来
   ///
-  /// | | 日期 | 起止时刻 |
-  /// |---|---|---|
-  /// | 临时事项 | **不给** | 不给 |
-  /// | 其余四样 | 入口带的，否则今天 | 入口带的，否则**下一个整点** |
+  /// | 入口带了什么 | 结果 |
+  /// |---|---|
+  /// | 临时事项（不看入口） | **什么都不给** —— 给了它就不是临时的了 |
+  /// | 什么都没带（面板上选的） | **全天 + 今天** |
+  /// | 只带了日期（日历翻到某天） | 全天 + 那一天 |
+  /// | 带了时刻（时间轴长按某一刻） | 定时，结束按 `behavior.defaultDuration` |
   ///
-  /// 「下一个整点」是用户定的（2026-09-09）：新建时给一个当场就能用的
-  /// 起点，比给「此刻 14:37」这种数好 —— 没有人把事情排在 14:37。
-  /// 结束由配置项 `behavior.defaultDuration` 决定（默认 +24 小时）。
+  /// **判据是「带没带时刻」**（用户 2026-09-10 定：「进来默认就是启用全天、
+  /// 日期今天」）。一度写的是「带了日期且没带时刻」—— 那时面板入口
+  /// （两个都没带）落进定时那一支，开局给的是「下一个整点 + 默认时长」。
+  /// 两条入口说的其实是同一件事：**没人说几点，就别替他挑一个几点。**
   TaskDraft _newDraft(TaskShape shape, NewTaskSeed? seed) {
     final categoryId = ref.read(defaultCategoryIdProvider);
     if (!shape.needsSchedule) {
@@ -543,27 +546,21 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     final date = seed?.date ?? today;
     final duration = settingOf(ref, defaultTaskDuration);
 
-    // ## 只给了日期 = 那一天的**全天**任务
-    //
-    // 从日历翻到某天点加号，用户说的是「这一天」，不是「这一天的某点」。
-    // 补一个时刻的话它会跑到时间轴最顶上去（FR-VIEW-07 的验收里
-    // 专门有一条钉这个）。
-    //
-    // 反过来，面板上直接选「单事项」时没有任何日期语境 ——
-    // 那时按用户定的规矩给**下一个整点**，因为单事项要求具体起止。
-    final allDay = seed?.date != null && seed?.minute == null;
-    if (allDay) {
+    final minute = seed?.minute;
+    if (minute == null) {
+      // **全天就是一天**（用户 2026-09-10 定：「启用下只用选个日期」）。
+      // 结束日期跟着开始走，不再由 `defaultDuration` 折成天数 ——
+      // 那一栏现在只管定时任务的时长。
       return TaskDraft(
         shape: shape,
         categoryId: categoryId,
         planDate: date,
-        endDate: duration.endDateFrom(date),
+        endDate: date,
         recurrence: _seedRecurrence(shape),
       );
     }
 
-    // 入口带了时刻（时间轴/甘特上长按某一刻）就用它，否则下一个整点。
-    final start = seed?.minute ?? _nextWholeHour();
+    final start = minute;
     final end = duration.endFrom(DateAndMinute(date, start));
 
     return TaskDraft(
@@ -650,7 +647,6 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     return draftFromTask(
       task,
       ref.read(stagesByTaskProvider)[task.id] ?? const [],
-      checklist: ref.read(checklistByTaskProvider)[task.id] ?? const [],
       reminders: ref.read(remindersByTaskProvider)[task.id] ?? const [],
       splitAt: ref.read(editingSplitAtProvider),
     );
@@ -660,7 +656,60 @@ final class TaskEditorController extends Notifier<TaskDraft> {
 
   void setNote(String value) => state = state.copyWith(note: value);
 
-  void setPlanDate(PlanDate? date) => state = state.copyWith(planDate: date);
+  /// 选开始日期。
+  ///
+  /// **不收 null** —— 日期是必填的（用户 2026-09-10「加强必填项校验」），
+  /// 清空这条路已经从界面上撤掉了，参数上也就不该再留着它。
+  /// 留着的话，下一个人会以为「清掉日期」是一个受支持的状态。
+  ///
+  /// **全天时结束日期跟着走** —— 全天只有一天，表单上也只给一个日期栏。
+  /// 不跟着走的话，从定时切回全天再改日期，会留下一条
+  /// 「9-10 全天，结束 9-11」的任务，而界面上没有任何地方显示那个 9-11，
+  /// 更没有地方改它。
+  void setPlanDate(PlanDate date) => state = state.copyWith(
+    planDate: date,
+    endDate: state.isAllDay ? date : state.endDate,
+  );
+
+  /// 选开始那一刻（日期 + 时刻一次选完）。
+  ///
+  /// **结束跟着平移，时长不变。** 把开始往后挪到结束之后，剩下的选择只有
+  /// 两种：拦住他（那是个死胡同 —— 想整体后移就得先改结束再改开始），
+  /// 或者平移。日历类应用都平移，这里也平移。
+  void setStartMoment(DateAndMinute moment) {
+    final old = DateAndMinute(
+      state.planDate ?? moment.date,
+      state.startMinute ?? MinuteOfDay.midnight,
+    );
+    final end = state.endDate == null
+        ? null
+        : DateAndMinute(
+            state.endDate!,
+            state.endMinute ?? MinuteOfDay.midnight,
+          );
+    final shifted = end == null
+        ? null
+        : shiftFrom(moment, offsetFrom(old, end));
+    state = state.copyWith(
+      isAllDay: false,
+      planDate: moment.date,
+      startMinute: moment.minute,
+      endDate: shifted?.date ?? moment.date,
+      endMinute: shifted?.minute ?? moment.minute,
+    );
+  }
+
+  /// 选结束那一刻（日期 + 时刻一次选完）。
+  ///
+  /// 不跟着动开始 —— 「这件事做到几点」是用户直接说的那一句，
+  /// 早于开始时由 `blockedReason` 当场说出来。
+  void setEndMoment(DateAndMinute moment) => state = state.copyWith(
+    isAllDay: false,
+    planDate: state.planDate ?? moment.date,
+    startMinute: state.startMinute ?? MinuteOfDay.midnight,
+    endDate: moment.date,
+    endMinute: moment.minute,
+  );
 
   /// 选分类。**传 null 即「未分类」**，不是「不改」。
   void setCategory(String? categoryId) =>
@@ -675,55 +724,47 @@ final class TaskEditorController extends Notifier<TaskDraft> {
 
   /// 切全天。
   ///
-  /// 关掉「全天」时**不自动塞一个时刻** —— 由 UI 让用户挑。
-  /// 打开「全天」时必须**清掉**已选时刻，否则会存下一条
-  /// 「全天但有 09:30」的任务，两个字段互相矛盾。
+  /// **两边都要补齐成一个完整、能直接保存的状态**（用户 2026-09-10：
+  /// 「加强必填项校验」）。一度两边都只做减法 —— 关掉全天只清了个日期
+  /// 兜底，时刻留空等用户去填，于是拨一下开关表单就变成不能存的了，
+  /// 而保存键灰掉的原因要滚到底才看得见。
   ///
-  /// 关掉「全天」时**必须有日期**：「12:32，但不知道哪天」不是一个有意义
-  /// 的状态。真机上就撞见过一条这样的数据 —— 卡片上挂着一个指向不了任何
-  /// 一天的时刻。没有日期时补上今天，而且**补得看得见**（日期栏会显示出来），
-  /// 用户不同意可以当场改。
+  /// | 拨到 | 补什么 |
+  /// |---|---|
+  /// | 全天 | 清掉两个时刻；**结束日期收回到开始那天** —— 全天只有一天 |
+  /// | 定时 | 没有日期补今天；没有时刻补**下一个整点** + `defaultDuration` |
   ///
-  /// 为什么不是「不让存」：那会把一个能自动答对的问题推给用户，
-  /// 而 FR-TASK-01 的基调是「填得越少越好」。
-  void setAllDay(bool value) => state = value
-      // **两个时刻都要清**。只清 startMinute 的话会留下一条
-      // 「全天但 18:00 结束」的任务 —— 领域不变量直接拒绝，
-      // 而用户看到的只是保存时炸了一下。
-      ? state.copyWith(isAllDay: true, startMinute: null, endMinute: null)
-      : state.copyWith(isAllDay: false, planDate: state.planDate ?? _today());
-
-  void setStartMinute(MinuteOfDay? minute) => state = minute == null
-      ? state.copyWith(startMinute: null)
-      : state.copyWith(
-          startMinute: minute,
-          isAllDay: false,
-          planDate: state.planDate ?? _today(),
-        );
-
-  /// 选结束日期。传 null 即清空，**同时把结束时刻一起清掉** ——
-  /// 留着的话就是「有几点、没有哪天」，与开始侧栽过的是同一个坑。
-  void setEndDate(PlanDate? date) => state = date == null
-      ? state.copyWith(endDate: null, endMinute: null)
-      // 结束日期要求先有开始日期，没有就补今天（与关全天、开重复同理）。
-      : state.copyWith(endDate: date, planDate: state.planDate ?? _today());
-
-  /// 选结束时刻。
-  ///
-  /// 有时刻就必须有日期：没选过结束日期时**补上开始那天**，
-  /// 而不是今天 —— 「今天 9 点开始，18 点结束」里的 18 点显然是同一天，
-  /// 而任务的开始日期未必是今天。
-  void setEndMinute(MinuteOfDay? minute) {
-    if (minute == null) {
-      state = state.copyWith(endMinute: null);
+  /// 清时刻这件事不能只做一半：只清 `startMinute` 会留下一条
+  /// 「全天但 18:00 结束」的任务 —— 领域不变量直接拒绝，
+  /// 而用户看到的只是保存时炸了一下。
+  void setAllDay(bool value) {
+    if (value) {
+      final date = state.planDate ?? _today();
+      state = state.copyWith(
+        isAllDay: true,
+        planDate: date,
+        startMinute: null,
+        endMinute: null,
+        // 全天 = 那一天。表单上只给一个日期栏，结束日期没有地方能改，
+        // 所以它必须等于开始 —— 否则那个值改不了也看不见。
+        endDate: date,
+      );
       return;
     }
-    final start = state.planDate ?? _today();
+    final date = state.planDate ?? _today();
+    final start = state.startMinute ?? _nextWholeHour();
+    final end = state.endMinute == null
+        ? settingOf(
+            ref,
+            defaultTaskDuration,
+          ).endFrom(DateAndMinute(date, start))
+        : DateAndMinute(state.endDate ?? date, state.endMinute!);
     state = state.copyWith(
-      endMinute: minute,
       isAllDay: false,
-      planDate: start,
-      endDate: state.endDate ?? start,
+      planDate: date,
+      startMinute: start,
+      endDate: end.date,
+      endMinute: end.minute,
     );
   }
 
@@ -837,35 +878,6 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     reminders: [
       for (final r in state.reminders)
         if (r.id != id) r,
-    ],
-  );
-
-  /// 加一条清单项（FR-TASK-09）。
-  void addChecklistItem() => state = state.copyWith(
-    checklist: [
-      ...state.checklist,
-      ChecklistDraft(id: ref.read(idGeneratorProvider).newId()),
-    ],
-  );
-
-  void setChecklistTitle(String id, String title) => state = state.copyWith(
-    checklist: [
-      for (final i in state.checklist)
-        if (i.id == id) i.copyWith(title: title) else i,
-    ],
-  );
-
-  void setChecklistDone(String id, bool done) => state = state.copyWith(
-    checklist: [
-      for (final i in state.checklist)
-        if (i.id == id) i.copyWith(isDone: done) else i,
-    ],
-  );
-
-  void removeChecklistItem(String id) => state = state.copyWith(
-    checklist: [
-      for (final i in state.checklist)
-        if (i.id != id) i,
     ],
   );
 
@@ -1145,34 +1157,6 @@ final class TaskEditorController extends Notifier<TaskDraft> {
         );
   }
 
-  /// 把清单整表写回（FR-TASK-09）。
-  ///
-  /// **编辑时也要发，而且没有项时要发一条空的** —— 与阶段同一个理由：
-  /// 用户把清单全删了，不发这条的话库里那些原地不动，
-  /// 界面显示没有、库里还有。
-  Future<void> _replaceChecklist(String taskId, TaskDraft draft) {
-    final items = draft.filledChecklist;
-    if (!draft.isEditing && items.isEmpty) {
-      return Future<void>.value();
-    }
-    return ref
-        .read(taskCommandDispatcherProvider)
-        .dispatch(
-          ReplaceChecklistCommand(
-            taskId: taskId,
-            items: [
-              for (final (i, item) in items.indexed)
-                ChecklistItemSpec(
-                  id: item.id,
-                  title: item.title.trim(),
-                  orderIndex: i,
-                  isDone: item.isDone,
-                ),
-            ],
-          ),
-        );
-  }
-
   /// 草稿里的重复规则 → 库里存的规范形串。
   ///
   /// **这个界面表达不了的规则原样带回去**：编辑一条
@@ -1277,7 +1261,6 @@ final class TaskEditorController extends Notifier<TaskDraft> {
             ),
           );
       await _replaceStages(id, draft);
-      await _replaceChecklist(id, draft);
       await _replaceReminders(id, draft);
       return id;
     }
@@ -1293,7 +1276,6 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     // 而「建任务」与「设阶段」本来就是两件可以分别发生的事
     // （改已有任务的阶段时只发后一条）。
     await _replaceStages(id, draft);
-    await _replaceChecklist(id, draft);
     await _replaceReminders(id, draft);
 
     return id;

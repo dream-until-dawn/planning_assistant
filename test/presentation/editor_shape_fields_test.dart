@@ -14,10 +14,12 @@
 @TestOn('vm')
 library;
 
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
+import 'package:planning_assistant/data/database/app_database.dart';
 import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 
@@ -25,10 +27,15 @@ import '../support/app_harness.dart';
 
 /// 表单上的几个区，按它们在页面上的顺序。
 enum _Section {
-  span('时间（日期/全天/时刻/有结束）', TaskEditorPage.dateFieldKey),
+  // 全天开关是时间区的**第一行**，也是它唯一恒在的控件 ——
+  // 下面是一个日期栏还是两个「日期+时刻」栏由它决定，
+  // 拿哪一个当锚都会漏掉另一半（用户 2026-09-10 改的形状）。
+  span('时间（全天/日期/起止）', TaskEditorPage.allDaySwitchKey),
   recurrence('重复', TaskEditorPage.recurrenceSwitchKey),
   stages('阶段', TaskEditorPage.stageSectionKey),
   reminders('提醒', TaskEditorPage.reminderSectionKey),
+  // **一格都不勾** —— 用户 2026-09-10：「把清单隐藏了，目前不需要这个」。
+  // 留在这张表里正是为了让它被画回来时有人喊。
   checklist('清单', TaskEditorPage.checklistSectionKey);
 
   const _Section(this.label, this.key);
@@ -43,34 +50,32 @@ enum _Section {
 /// `_showsSpanFields` 与阶段/重复区那两处注释上 —— 形态是从当前字段
 /// 反推的，藏起来会让「给这条任务加上时间/重复/阶段」那几条路断掉。
 const Map<TaskShape, Set<_Section>> _matrix = {
-  TaskShape.single: {_Section.span, _Section.reminders, _Section.checklist},
+  TaskShape.single: {_Section.span, _Section.reminders},
   TaskShape.staged: {
     // **没有 span**：起止由阶段推出（`derived_span.dart`）。
     _Section.stages,
     _Section.reminders,
-    _Section.checklist,
   },
   TaskShape.recurringSingle: {
     _Section.span,
     _Section.recurrence,
     _Section.reminders,
-    _Section.checklist,
   },
   TaskShape.recurringStaged: {
     _Section.recurrence,
     _Section.stages,
     _Section.reminders,
-    _Section.checklist,
   },
   TaskShape.scratch: {
     // 不排时间，所以**提醒也不出现** —— 编辑器里那句话本来就写着
     // 「没有日期的任务不会提醒」，留一个设了不会响的区正是这个项目
     // 一直在防的「点了没反应」。
-    _Section.checklist,
+    //
+    // 一格都没有：临时事项的表单就是「标题 + 备注 + 分类 + 优先级」。
   },
 };
 
-Future<void> _openEditor(WidgetTester tester, TaskShape shape) async {
+Future<Harness> _openEditor(WidgetTester tester, TaskShape shape) async {
   await setScreenSize(tester, const Size(390, 844));
   final harness = appHarness();
   await seedCategories(harness);
@@ -79,6 +84,7 @@ Future<void> _openEditor(WidgetTester tester, TaskShape shape) async {
   );
   await tester.pumpAndSettle();
   await tapCreate(tester, shape);
+  return harness;
 }
 
 /// 某个区在不在表单上。
@@ -168,27 +174,49 @@ void main() {
     // 而它仍然在决定这条任务排在列表哪儿。
     //
     // 改成用推导自己的判据（`canDeriveSpan`）之后两边不可能再各说各话。
-    await _openEditor(tester, TaskShape.staged);
-    await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
-    await tester.pump();
+    //
+    // ## 夹具 2026-09-10 换成直接铺库
+    //
+    // 原来是走界面建一条「两个阶段、都不填时间」的任务。用户那一批
+    // 「加强必填项校验」之后**那条路自己没了** —— 阶段时间成了必填，
+    // 保存键当场就是灰的。
+    //
+    // 但这个状态并没有从世界上消失：导入、V3 同步、以及将来任何一条
+    // 不经编辑器的写路径都造得出它。**能不能建**与**建出来之后够不够
+    // 得着**是两个问题，这条守的是后一个，所以夹具改成直接铺库。
+    final harness = await _openEditor(tester, TaskShape.staged);
+    await tapBack(tester);
 
-    // 加两个**不带时间**的阶段。
-    for (final name in ['打包', '搬运']) {
-      await tapVisible(tester, TaskEditorPage.addStageKey);
-      final field = find
-          .descendant(
-            of: find.byKey(TaskEditorPage.stageSectionKey),
-            matching: find.byType(TextField),
-          )
-          .last;
-      await tester.enterText(field, name);
-      await tester.pumpAndSettle();
+    const taskId = 'staged-no-times';
+    await harness.db
+        .into(harness.db.tasks)
+        .insert(
+          TasksCompanion.insert(
+            id: taskId,
+            title: '搬家',
+            kind: 'staged',
+            timeZoneId: 'Asia/Shanghai',
+            planDate: const Value('2026-09-07'),
+            endDate: const Value('2026-09-09'),
+          ),
+        );
+    for (final (i, name) in ['打包', '搬运'].indexed) {
+      await harness.db
+          .into(harness.db.stages)
+          .insert(
+            StagesCompanion.insert(
+              id: 'stage-$i',
+              taskId: taskId,
+              title: name,
+              orderIndex: i,
+            ),
+          );
     }
-    await tapVisible(tester, TaskEditorPage.saveButtonKey);
+    await tester.pumpAndSettle();
 
     await openEditorFromCard(tester);
     expect(
-      await _isPresent(tester, TaskEditorPage.dateFieldKey),
+      await _isPresent(tester, TaskEditorPage.allDaySwitchKey),
       isTrue,
       reason: '推不出起止，控件又藏着 —— 这条任务的起止就再也够不着了',
     );

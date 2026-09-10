@@ -67,13 +67,7 @@ Future<String> _createStaged(WidgetTester tester, Harness harness) async {
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
   await tester.pump();
   for (final name in ['打包', '搬运']) {
-    await tapVisible(tester, TaskEditorPage.addStageKey);
-    final fields = find.descendant(
-      of: find.byKey(TaskEditorPage.stageSectionKey),
-      matching: find.byType(TextField),
-    );
-    await tester.enterText(fields.last, name);
-    await tester.pump();
+    await addStage(tester, name);
   }
   await tapVisible(tester, TaskEditorPage.saveButtonKey);
 

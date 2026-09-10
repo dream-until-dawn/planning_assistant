@@ -673,12 +673,26 @@ import
     // 写在这儿是为了下一个人知道它的边界在哪，而不是以为它管全了。
     const receivers = ['row', 'task', 'occurrence'];
 
+    // ## 它管的是**画**，不是**写**
+    //
+    // 这条区别 2026-09-10 才被逼出来：批量/滑动推迟要把跨度整体平移，
+    // 于是它必须读**存储的**结束再加几天。用 `effectiveEndDate` 是错的 ——
+    // 那个含阶段撑开的部分，写回 `endDate` 等于**把派生值固化成存储值**，
+    // 而 §4.7 的整个用意就是别让它固化。
+    //
+    // 所以白名单里现在有一条写路径。这条守卫的域仍然是「视图别各自算
+    // 跨度」，只是「算给人看」与「算了写回去」要分开对待。
+    //
     // 白名单锚定确切文件名，每条写清理由。
     const allowed = {
       // 派生跨度的定义处：`endDate`/`endMinute` 的委托就在它身上。
       'features/views/shared/application/task_occurrence.dart',
       // 展开时要把存储的起止算成原始跨度，那是 `span` 的**上游**。
       'features/views/shared/application/occurrence_expansion.dart',
+      // **写路径**：推迟一天要把存储的结束也挪一天（见上面那段）。
+      // 不挪的话，一条 9/7 → 9/7 的任务推成「9/8 开始、9/7 结束」，
+      // 被不变量当场拒 —— 用户点了推迟什么也没发生。
+      'features/views/task_list/application/task_list_actions.dart',
     };
 
     // **必须用 raw 串拼**：普通串里的 `\b` 是退格符，不是单词边界 ——

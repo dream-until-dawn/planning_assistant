@@ -8,10 +8,12 @@ library;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app_providers.dart';
+import 'package:planning_assistant/core/time/date_and_minute.dart';
 import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/features/task/application/task_editor_controller.dart';
+import 'package:planning_assistant/features/task/application/task_shape.dart';
 
 import '../support/app_harness.dart';
 
@@ -33,8 +35,23 @@ void main() {
       expect(const TaskDraft(title: '\n\t ').canSave, isFalse);
     });
 
-    test('有字就能存 —— 其余字段全空也行（FR-TASK-01 验收）', () {
-      expect(const TaskDraft(title: '买菜').canSave, isTrue);
+    test('有字就能存 —— 但那是**临时事项**那一档（FR-TASK-01 验收）', () {
+      // 「仅填标题即可保存」2026-09-09 起是临时事项的性质，
+      // 不再是所有单项的：别的四样都要求起止（`TaskShape.needsSchedule`）。
+      expect(
+        const TaskDraft(shape: TaskShape.scratch, title: '买菜').canSave,
+        isTrue,
+      );
+    });
+
+    test('对照组：单事项光有标题**不能**存 —— 起止是必填的', () {
+      // 这一条是用户 2026-09-10 报的那个缺陷的最小复现：
+      // 「时间四件你没有检查必填」。当时 `blockedReason` 已经说了
+      // 「要先选结束日期」，而 `canSave` 是另一张清单，仍然返回 true ——
+      // 红字在，保存键也亮着，按下去就真存进去了。
+      const draft = TaskDraft(title: '买菜');
+      expect(draft.blockedReason, isNotNull);
+      expect(draft.canSave, isFalse);
     });
 
     test('存的时候标题两端的空白被去掉', () async {
@@ -59,40 +76,74 @@ void main() {
       // 而下游（列表的时间标签、提醒排期）各自会读出不同的结论。
       final c = _container();
       final n = c.read(taskEditorProvider.notifier)
-        ..setStartMinute(MinuteOfDay.of(9, 30))
+        ..setStartMoment(
+          DateAndMinute(const PlanDate(2026, 9, 7), MinuteOfDay.of(9, 30)),
+        )
         ..setAllDay(true);
 
       final draft = c.read(taskEditorProvider);
       expect(draft.isAllDay, isTrue);
       expect(draft.startMinute, isNull);
+      expect(draft.endMinute, isNull, reason: '两个时刻都要清');
       expect(n, isNotNull);
     });
 
     test('选一个时刻会自动关掉全天', () {
       final c = _container();
-      c.read(taskEditorProvider.notifier).setStartMinute(MinuteOfDay.of(9, 30));
+      c
+          .read(taskEditorProvider.notifier)
+          .setStartMoment(
+            DateAndMinute(const PlanDate(2026, 9, 7), MinuteOfDay.of(9, 30)),
+          );
 
       final draft = c.read(taskEditorProvider);
       expect(draft.isAllDay, isFalse);
       expect(draft.startMinute, MinuteOfDay.of(9, 30));
     });
 
-    test('关掉全天**不**自动塞一个时刻', () {
-      // 对照组：自动塞一个「09:00」能让上面两条都绿，
-      // 但那是替用户做决定 —— 由界面让他挑。
+    test('关掉全天会补一对**完整**的起止时刻', () {
+      // ## 这一条 2026-09-10 反过来了
+      //
+      // 原来写的是「关掉全天**不**自动塞时刻 —— 由界面让他挑」。
+      // 那在「起止可选」的年代成立；现在起止是必填的
+      // （用户：「加强必填项校验」），不塞的结果是拨一下开关表单就
+      // 变成不能存的，而保存键为什么灰要滚到最底下才看得见。
+      //
+      // 补的值都看得见（两栏当场显示出来），用户不同意可以当场改 ——
+      // 这跟「替他做决定」的区别就在这儿。
       final c = _container();
       c.read(taskEditorProvider.notifier).setAllDay(false);
 
       final draft = c.read(taskEditorProvider);
       expect(draft.isAllDay, isFalse);
-      expect(draft.startMinute, isNull);
+      expect(draft.startMinute, isNotNull);
+      expect(draft.endDate, isNotNull);
+      expect(draft.endMinute, isNotNull);
+      expect(draft.blockedReason, isNull, reason: '补完就该是能存的');
+    });
+
+    test('补的是「下一个整点」，不是把用户拨过的时刻留在那儿', () {
+      // 对照组，钉住上一条补的**是什么**。夹具时钟是东八区 09-07 11:00，
+      // 下一个整点即 12:00；默认时长 24 小时 → 次日 12:00。
+      //
+      // 只断言 isNotNull 的话，一个「补 00:00」的实现也能通过，
+      // 而那条任务在时间轴上会贴到最顶上。
+      final c = _container();
+      c.read(taskEditorProvider.notifier).setAllDay(false);
+
+      final draft = c.read(taskEditorProvider);
+      expect(draft.startMinute, MinuteOfDay.of(12, 0));
+      expect(draft.endDate, const PlanDate(2026, 9, 8));
+      expect(draft.endMinute, MinuteOfDay.of(12, 0));
     });
 
     test('全天任务存下去时不带时刻', () async {
       final c = _container();
       final n = c.read(taskEditorProvider.notifier)
         ..setTitle('读完这本书')
-        ..setStartMinute(MinuteOfDay.of(9, 30))
+        ..setStartMoment(
+          DateAndMinute(const PlanDate(2026, 9, 7), MinuteOfDay.of(9, 30)),
+        )
         ..setAllDay(true);
       await n.save();
 
@@ -132,14 +183,38 @@ void main() {
   });
 
   group('日期', () {
-    test('可以设，也可以清掉', () {
+    test('全天时，结束日期跟着开始走', () {
+      // 全天只有一天，表单上也只给一个日期栏（用户 2026-09-10）。
+      // 不跟着走的话，会留下一个界面上既显示不出、也改不到的结束日期。
+      final c = _container();
+      c
+          .read(taskEditorProvider.notifier)
+          .setPlanDate(const PlanDate(2026, 9, 20));
+
+      final draft = c.read(taskEditorProvider);
+      expect(draft.planDate, const PlanDate(2026, 9, 20));
+      expect(draft.endDate, const PlanDate(2026, 9, 20));
+    });
+
+    test('对照组：非全天时改开始日期，结束**平移**而不是被拉到同一天', () {
+      // 拉到同一天的话，一条跨三天的任务改一下开始就被压成一天，
+      // 而用户只是想把它整体挪一挪。
       final c = _container();
       final n = c.read(taskEditorProvider.notifier)
-        ..setPlanDate(const PlanDate(2026, 9, 20));
-      expect(c.read(taskEditorProvider).planDate, const PlanDate(2026, 9, 20));
+        ..setStartMoment(
+          DateAndMinute(const PlanDate(2026, 9, 7), MinuteOfDay.of(9, 0)),
+        )
+        ..setEndMoment(
+          DateAndMinute(const PlanDate(2026, 9, 9), MinuteOfDay.of(18, 0)),
+        )
+        ..setStartMoment(
+          DateAndMinute(const PlanDate(2026, 9, 10), MinuteOfDay.of(9, 0)),
+        );
 
-      n.setPlanDate(null);
-      expect(c.read(taskEditorProvider).planDate, isNull);
+      final draft = c.read(taskEditorProvider);
+      expect(draft.endDate, const PlanDate(2026, 9, 12));
+      expect(draft.endMinute, MinuteOfDay.of(18, 0));
+      expect(n, isNotNull);
     });
   });
 
@@ -156,12 +231,16 @@ void main() {
       expect(draft.planDate, const PlanDate(2026, 9, 7));
     });
 
-    test('选时刻时，没有日期也补上今天', () {
+    test('打开全天时，没有日期也补上今天', () {
+      // 2026-09-10 反过来了：全天不再是「哪天做都行」——
+      // 那一档现在叫临时事项，而它压根不显示这几个控件。
+      // 全天任务必须落在某一天，否则日历上没有它的位置。
       final c = _container();
-      c
-          .read(taskEditorProvider.notifier)
-          .setStartMinute(MinuteOfDay.of(12, 32));
-      expect(c.read(taskEditorProvider).planDate, const PlanDate(2026, 9, 7));
+      c.read(taskEditorProvider.notifier).setAllDay(true);
+
+      final draft = c.read(taskEditorProvider);
+      expect(draft.planDate, const PlanDate(2026, 9, 7));
+      expect(draft.endDate, const PlanDate(2026, 9, 7));
     });
 
     test('对照组：已经选了日期就不覆盖', () {
@@ -172,13 +251,6 @@ void main() {
         ..setAllDay(false);
       expect(c.read(taskEditorProvider).planDate, const PlanDate(2026, 12, 25));
       expect(n, isNotNull);
-    });
-
-    test('对照组：全天任务不会被塞一个日期', () {
-      // 全天 + 无日期是合法的（「哪天做都行」），不该被自动填。
-      final c = _container();
-      c.read(taskEditorProvider.notifier).setAllDay(true);
-      expect(c.read(taskEditorProvider).planDate, isNull);
     });
 
     test('补的日期是**本地墙钟**的今天，不是 UTC 的', () {
@@ -200,7 +272,9 @@ void main() {
       final c = _container();
       final n = c.read(taskEditorProvider.notifier)
         ..setTitle('开会')
-        ..setStartMinute(MinuteOfDay.of(12, 32));
+        ..setStartMoment(
+          DateAndMinute(const PlanDate(2026, 9, 7), MinuteOfDay.of(12, 32)),
+        );
       await n.save();
 
       final task = (await c.read(taskRepositoryProvider).findTasks()).single;

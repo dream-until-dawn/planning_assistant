@@ -70,13 +70,7 @@ Future<void> _createStaged(
   await tester.pump();
 
   for (final name in names) {
-    await tapVisible(tester, TaskEditorPage.addStageKey);
-    final fields = find.descendant(
-      of: find.byKey(TaskEditorPage.stageSectionKey),
-      matching: find.byType(TextField),
-    );
-    await tester.enterText(fields.last, name);
-    await tester.pump();
+    await addStage(tester, name);
   }
 
   if (recurring) {

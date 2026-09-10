@@ -37,6 +37,40 @@ Future<Harness> _pumpApp(WidgetTester tester, {bool seed = false}) async {
   return harness;
 }
 
+/// 把某个阶段挪到 9 月 [day] 号。
+///
+/// **先挪结束、再挪开始**：反过来中间会经过「开始晚于结束」，
+/// 而对话框的「确定」在那个状态下是灰的 —— 那道拦截是对的，
+/// 夹具该绕开它，不该去改它。
+Future<void> _setStageDay(WidgetTester tester, String id, int day) async {
+  Future<void> pick(Key field) async {
+    await tester.tap(find.byKey(field));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(DatePickerDialog),
+        matching: find.text('$day'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // **限定在日期选择器里找「确定」**：它底下压着阶段时间对话框，
+    // 那个也有一颗「确定」，不限定会报「too many elements」。
+    await tester.tap(
+      find.descendant(
+        of: find.byType(DatePickerDialog),
+        matching: find.text('确定'),
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  await tapVisible(tester, TaskEditorPage.stageTimeKey(id));
+  await pick(TaskEditorPage.stageTimeEndDateKey);
+  await pick(TaskEditorPage.stageTimeStartDateKey);
+  await tester.tap(find.byKey(TaskEditorPage.stageTimeConfirmKey));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testAppWidgets('J-01：新建一条任务，回到列表就能看见', (tester) async {
     final harness = await _pumpApp(tester);
@@ -276,42 +310,42 @@ void main() {
   });
 
   group('日期栏', () {
-    testAppWidgets('非全天时不给清空日期', (tester) async {
-      // 清了就又回到「有时刻没哪天」。save() 那道兜底会补回来，
-      // 但表单上不该出现那个瞬间 —— 用户看到的是「空着也能存」，
-      // 存下去却有日期，两件事对不上。
+    testAppWidgets('日期**一概不给清空** —— 它是必填的', (tester) async {
+      // ## 这一条 2026-09-10 从「分情况」变成了「一概」
+      //
+      // 原来是：非全天不给清（清了就回到「有时刻没哪天」），
+      // 全天给清（那时「哪天做都行」是合法的）。
+      //
+      // 现在「哪天做都行」由**临时事项**承接，而它压根不显示这一栏；
+      // 剩下四样的日期都是必填的（用户：「加强必填项校验」）。
+      // 一个清完就再也存不下去的按钮不是选项，是陷阱 ——
+      // 用户点了它，然后对着一个灰掉的保存键找原因。
       await _pumpApp(tester);
-      // **单事项预填就是非全天**（临时事项藏了日期栏，验不了这条），
-      // 所以这里不用再拨开关 —— 拨了反而会切到全天，把前提翻过来。
       await tapCreate(tester, TaskShape.single);
 
+      // 单事项预填就是全天 + 今天，所以这一栏当场就在。
       expect(
         find.descendant(
           of: find.byKey(TaskEditorPage.dateFieldKey),
           matching: find.byIcon(Icons.close),
         ),
         findsNothing,
-        reason: '非全天时不该有清除按钮',
+        reason: '日期必填，不该有清除按钮',
       );
     });
 
-    testAppWidgets('对照组：全天时可以清空日期', (tester) async {
-      // 否则「一律不给清」也能让上面那条绿，而那样日期就永远去不掉了。
+    testAppWidgets('对照组：这一栏**点得动** —— 不是把整栏做成只读了', (tester) async {
+      // 否则「把日期栏画成一行死字」也能让上面那条绿，
+      // 而那样日期就永远改不了了。
       await _pumpApp(tester);
       await tapCreate(tester, TaskShape.single);
 
-      // 单事项预填是非全天且带日期，拨成全天之后日期留着 —— 于是
-      // 「全天 + 有日期」这个前提一步就摆好了。
-      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+      await tester.tap(find.byKey(TaskEditorPage.dateFieldKey));
+      await tester.pumpAndSettle();
+      expect(find.byType(DatePickerDialog), findsOneWidget);
 
-      expect(
-        find.descendant(
-          of: find.byKey(TaskEditorPage.dateFieldKey),
-          matching: find.byIcon(Icons.close),
-        ),
-        findsOneWidget,
-        reason: '全天 + 有日期时应当能清掉',
-      );
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
     });
   });
 
@@ -323,16 +357,13 @@ void main() {
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '写季度总结');
       await tester.pump();
 
-      await tapVisible(tester, TaskEditorPage.addStageKey);
-      await tapVisible(tester, TaskEditorPage.addStageKey);
+      await addStage(tester, '打草稿');
+      await addStage(tester, '定稿');
 
       final fields = find.byWidgetPredicate(
         (w) => w is TextField && w.decoration?.hintText == '这一步做什么',
       );
       expect(fields, findsNWidgets(2));
-      await tester.enterText(fields.at(0), '打草稿');
-      await tester.enterText(fields.at(1), '定稿');
-      await tester.pump();
 
       await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
@@ -415,49 +446,78 @@ void main() {
       return ids;
     }
 
-    testAppWidgets('给第二个阶段定时间 → 偏移与时长落库', (tester) async {
+    testAppWidgets('两个阶段各自的偏移与时长落库，互不影响', (tester) async {
+      // ## 这一条 2026-09-10 换了对照组
+      //
+      // 原来的对照组是「**没设时间**的那个阶段不许被顺手填上」——
+      // 而「阶段没时间」这个状态现在存不下去（用户：「加强必填项校验」）。
+      //
+      // 换成的对照组守的是同一件事的另一面：给一个阶段定时间，
+      // **不会顺手改掉另一个的**。「给所有阶段写同一个默认值」的实现
+      // 会在这儿红。
       final harness = await _pumpApp(tester);
       final ids = await twoStages(tester);
 
-      // 默认对话框给的是「任务开始那一刻起、一小时」——
-      // 直接确定，验的是这条默认值真的能用（而不是四个空栏位）。
-      await tapVisible(tester, TaskEditorPage.stageTimeKey(ids[1]));
+      // 第一个：对话框默认给的「任务开始那一刻起、一小时」，直接确定 ——
+      // 验的是这条默认值真的能用（而不是四个空栏位）。
+      await tapVisible(tester, TaskEditorPage.stageTimeKey(ids[0]));
       await tester.tap(find.byKey(TaskEditorPage.stageTimeConfirmKey));
       await tester.pumpAndSettle();
+      // 第二个：挪到次日（夹具的今天是 9/7）。
+      await _setStageDay(tester, ids[1], 8);
 
       await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       final stages = await harness.db.select(harness.db.stages).get();
       expect(stages, hasLength(2));
-      final timed = stages.firstWhere((s) => s.id == ids[1]);
-      final untimed = stages.firstWhere((s) => s.id == ids[0]);
+      final first = stages.firstWhere((s) => s.id == ids[0]);
+      final second = stages.firstWhere((s) => s.id == ids[1]);
 
-      expect(timed.startOffsetMinutes, 0, reason: '从任务开始那一刻起');
-      expect(timed.durationMinutes, 60, reason: '默认一小时');
-      // 对照：**没设的那个阶段不许被顺手填上** ——
-      // 「给所有阶段都写个默认时长」也能让上面两条绿。
-      expect(untimed.startOffsetMinutes, isNull);
-      expect(untimed.durationMinutes, isNull);
+      expect(first.startOffsetMinutes, 0, reason: '最早那个的偏移恒为 0');
+      expect(first.durationMinutes, 60, reason: '默认一小时');
+      expect(second.startOffsetMinutes, 1440, reason: '第二个在次日');
+      expect(second.durationMinutes, 60);
     });
 
-    testAppWidgets('「不定时间」把已设的清掉', (tester) async {
-      final harness = await _pumpApp(tester);
+    testAppWidgets('「不定时间」把已设的清掉 —— 于是这条任务当场存不下去', (tester) async {
+      // ## 观察点 2026-09-10 从库里挪到了表单上
+      //
+      // 原来是「清掉 → 保存 → 库里那两列是 null」。清掉仍然清得掉，
+      // 但**清完就存不下去了**（阶段时间是必填的），所以库里再也观察不到
+      // 那个状态 —— 用例得在表单上验。
+      //
+      // 这样反而更贴近用户看到的：他按了「不定时间」，那颗按钮退回
+      // 「加时间」，保存键灰掉，底下那句话说得出**缺的是时间**。
+      await _pumpApp(tester);
       final ids = await twoStages(tester);
 
-      await tapVisible(tester, TaskEditorPage.stageTimeKey(ids[0]));
-      await tester.tap(find.byKey(TaskEditorPage.stageTimeConfirmKey));
-      await tester.pumpAndSettle();
-      // 再打开，选「不定时间」。
+      for (final id in ids) {
+        await tapVisible(tester, TaskEditorPage.stageTimeKey(id));
+        await tester.tap(find.byKey(TaskEditorPage.stageTimeConfirmKey));
+        await tester.pumpAndSettle();
+      }
+      expect(
+        find.byKey(TaskEditorPage.blockedReasonKey),
+        findsNothing,
+        reason: '前提：两个阶段都有时间时是能存的',
+      );
+
+      // 再打开第一个，选「不定时间」。
       await tapVisible(tester, TaskEditorPage.stageTimeKey(ids[0]));
       await tester.tap(find.byKey(TaskEditorPage.stageTimeClearKey));
       await tester.pumpAndSettle();
 
-      await tapVisible(tester, TaskEditorPage.saveButtonKey);
-
-      final stage = (await harness.db.select(harness.db.stages).get())
-          .firstWhere((s) => s.id == ids[0]);
-      expect(stage.startOffsetMinutes, isNull, reason: '清了就该真的清掉');
-      expect(stage.durationMinutes, isNull, reason: '时长不该留着 —— 那是一段悬空的长度');
+      // 按钮退回「加时间」—— 清掉这件事本身是生效的。
+      expect(
+        find.descendant(
+          of: find.byKey(TaskEditorPage.stageTimeKey(ids[0])),
+          matching: find.text('加时间'),
+        ),
+        findsOneWidget,
+        reason: '清了却还显示着时间 —— 那个值改不了也看不见',
+      );
+      // 而且当场说得出为什么不能存。
+      expect(find.textContaining('每个阶段都要填时间'), findsOneWidget);
     });
 
     testAppWidgets('结束早于开始时确定按钮点不动', (tester) async {
@@ -493,76 +553,139 @@ void main() {
     });
   });
 
-  group('计划时间段（FR-TASK-01：可选的开始与结束）', () {
-    testAppWidgets('结束开关一开就给个看得见的默认（与开始同一天），且落库', (tester) async {
+  group('计划时间段（FR-TASK-01：起止必填，2026-09-10 用户改的形状）', () {
+    testAppWidgets('新建单事项：默认全天、日期是今天，结束也是今天', (tester) async {
+      // 用户 2026-09-10：「进来默认就是启用全天、日期今天」。
+      // 一进来就是一个**完整、能直接存**的状态 —— 起止都必填，
+      // 而必填项如果开局是空的，第一屏看到的就是一个灰着的保存键。
       final harness = await _pumpApp(tester);
 
       await tapCreate(tester, TaskShape.single);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
       await tester.pump();
 
-      // **先拨成全天**：这一条要验的是「结束开关一开给的那个默认日期」，
-      // 而同一天 + 一个比开始早的时刻会撞上「结束早于开始」——
-      // 那条约束是对的，验默认日期时不该被它绊住。
-      // 结束**时刻**能不能落库另有两处盯着（`write_path_reachability` 的
-      // endMinute 探针、以及下面那条「切回全天会把结束时刻一起清掉」）。
-      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
-
-      // **先关再开** —— 这一条验的是「开关一开会给个看得见的默认」，
-      // 所以得让它真的从关的状态开一次。单事项预填是开着的
-      // （结束在 +24 小时那天），不先关掉就验不到那个默认。
-      await tapVisible(tester, TaskEditorPage.endSwitchKey);
-      await tapVisible(tester, TaskEditorPage.endSwitchKey);
-
-      // 开关一开就该有一个看得见的默认（与开始同一天），
-      // 而不是留一行「选个日期」等着再点一次。
-      expect(find.byKey(TaskEditorPage.endDateFieldKey), findsOneWidget);
+      // 全天开着 → 只有一个日期栏，没有那两个「日期+时刻」栏。
+      expect(find.byKey(TaskEditorPage.dateFieldKey), findsOneWidget);
+      expect(find.byKey(TaskEditorPage.startMomentKey), findsNothing);
+      expect(find.byKey(TaskEditorPage.endMomentKey), findsNothing);
 
       await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       final task = (await harness.db.select(harness.db.tasks).get()).single;
-      expect(task.endDate, isNotNull, reason: '结束日期该跟着落库');
-      // 结束日期默认取开始那天 —— 这才是这一条钉的东西。
-      expect(task.endDate, task.planDate);
-    });
-
-    testAppWidgets('对照组：不开那个开关就没有结束', (tester) async {
-      // 少了这条，一个「永远写一个结束时间」的实现也能让上面绿。
-      final harness = await _pumpApp(tester);
-      await tapCreate(tester);
-      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
-      await tester.pump();
-      await tapVisible(tester, TaskEditorPage.saveButtonKey);
-
-      final task = (await harness.db.select(harness.db.tasks).get()).single;
-      expect(task.endDate, isNull);
+      // 夹具时钟钉在东八区 2026-09-07。
+      expect(task.isAllDay, isTrue);
+      expect(task.planDate, '2026-09-07');
+      expect(task.endDate, '2026-09-07', reason: '全天就是一天');
+      expect(task.startMinute, isNull);
       expect(task.endMinute, isNull);
     });
 
-    testAppWidgets('切回全天会把结束时刻一起清掉', (tester) async {
-      // 留着的话就是一条「全天但 18:00 结束」的任务 ——
+    testAppWidgets('「有结束时间」那个开关没有了 —— 结束是必填的', (tester) async {
+      // 用户 2026-09-10：「取消有结束时间这个选项，固定必须得有」。
+      // 一个只能开着的开关只是一次多余的点击。
+      await _pumpApp(tester);
+      await tapCreate(tester, TaskShape.single);
+      expect(find.textContaining('有结束时间'), findsNothing);
+      expect(find.textContaining('不设结束'), findsNothing);
+    });
+
+    testAppWidgets('关掉全天：开始与结束各一栏，各自补上了时刻', (tester) async {
+      final harness = await _pumpApp(tester);
+
+      await tapCreate(tester, TaskShape.single);
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
+      await tester.pump();
+      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+
+      expect(find.byKey(TaskEditorPage.dateFieldKey), findsNothing);
+      expect(find.byKey(TaskEditorPage.startMomentKey), findsOneWidget);
+      expect(find.byKey(TaskEditorPage.endMomentKey), findsOneWidget);
+
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
+
+      final task = (await harness.db.select(harness.db.tasks).get()).single;
+      expect(task.isAllDay, isFalse);
+      // 下一个整点（夹具是 11:00）+ 默认时长 24 小时。
+      expect(task.startMinute, 12 * 60);
+      expect(task.endDate, '2026-09-08');
+      expect(task.endMinute, 12 * 60);
+    });
+
+    testAppWidgets('开始那一栏：一次点击走完「选日期 → 选时刻」', (tester) async {
+      // 用户 2026-09-10：「都是直接一轮选择日期+时间而非分成两步」。
+      // 分两步的话，一个「只改了日期、忘了改时刻」的半成品状态
+      // 会在表单上停留 —— 而这两个值合起来才是一个时刻。
+      final harness = await _pumpApp(tester);
+
+      await tapCreate(tester, TaskShape.single);
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
+      await tester.pump();
+      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+
+      await tapVisible(tester, TaskEditorPage.startMomentKey);
+      // 第一步：日期选择器。挑 9 号（夹具是 7 号，所以这是个非默认值）。
+      await tester.tap(find.text('9'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('确定'));
+      await tester.pumpAndSettle();
+      // 第二步**紧接着自己弹出来**，不用再点一次这一栏。
+      expect(find.byType(TimePickerDialog), findsOneWidget);
+      await tester.tap(find.text('确定'));
+      await tester.pumpAndSettle();
+
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
+
+      final task = (await harness.db.select(harness.db.tasks).get()).single;
+      expect(task.planDate, '2026-09-09');
+      // 结束跟着平移，时长不变 —— 不然把开始往后挪就撞上「结束早于开始」。
+      expect(task.endDate, '2026-09-10');
+    });
+
+    testAppWidgets('中途取消时刻那一步，整轮作废', (tester) async {
+      // 「日期先落下」会让「点错了，算了」留下一个用户没打算要的日期，
+      // 而这一栏上没有撤销。
+      final harness = await _pumpApp(tester);
+
+      await tapCreate(tester, TaskShape.single);
+      await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
+      await tester.pump();
+      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+
+      await tapVisible(tester, TaskEditorPage.startMomentKey);
+      await tester.tap(find.text('9'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('确定'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+
+      await tapVisible(tester, TaskEditorPage.saveButtonKey);
+
+      final task = (await harness.db.select(harness.db.tasks).get()).single;
+      expect(task.planDate, '2026-09-07', reason: '取消了却把日期留下了');
+    });
+
+    testAppWidgets('切回全天会把结束时刻一起清掉，结束日期收回到开始那天', (tester) async {
+      // 留着时刻的话就是一条「全天但 18:00 结束」的任务 ——
       // 领域不变量直接拒绝，而用户看到的只是保存时炸了一下。
+      // 结束**日期**也要收回来：全天只给一个日期栏，
+      // 留一个界面上显示不出、也改不到的结束日期等于没有。
       final harness = await _pumpApp(tester);
       await tapCreate(tester, TaskShape.single);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
       await tester.pump();
 
-      // 单事项预填就是「非全天 + 有结束」，所以直接去设结束时刻。
-      await tapVisible(tester, TaskEditorPage.endTimeFieldKey);
-      await tester.tap(find.text('确定'));
-      await tester.pumpAndSettle();
-      // 再切成全天。
+      // 先关掉全天（于是补上时刻与跨天的结束），再切回去。
       await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
-
+      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
       await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
-      // 存下去了（没被不变量拒），而且时刻确实没了。
       expect(find.byType(TaskEditorPage), findsNothing, reason: '应当存成功并返回');
       final task = (await harness.db.select(harness.db.tasks).get()).single;
       expect(task.isAllDay, isTrue);
       expect(task.startMinute, isNull);
       expect(task.endMinute, isNull);
-      expect(task.endDate, isNotNull, reason: '「哪天结束」与全天不矛盾，不该一起清掉');
+      expect(task.endDate, task.planDate, reason: '全天就是一天');
     });
   });
 

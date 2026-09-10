@@ -125,28 +125,37 @@ void main() {
       expect(row.recurrenceRule, isNull);
     });
 
-    testAppWidgets('单事项：默认带上今天与下一个整点，直接就能存', (tester) async {
-      // 必填不等于要用户从零填 —— 默认值就该是可用的。
-      // 时钟钉在 9/7 11:00 +08，下一个整点是 12:00。
+    testAppWidgets('单事项：默认是**全天 + 今天**，直接就能存', (tester) async {
+      // ## 这一条 2026-09-10 换了默认值
+      //
+      // 原来是「今天 + 下一个整点 + 默认时长」。用户改成了
+      // 「进来默认就是启用全天、日期今天」—— 两条入口（面板、日历翻到
+      // 某天）说的其实是同一件事：**没人说几点，就别替他挑一个几点。**
+      //
+      // 必填不等于要用户从零填 —— 默认值仍然是**当场就能存**的。
       final harness = await _pump(tester);
       await tapCreate(tester, TaskShape.single);
       final row = await _saveAs(tester, harness, '写周报');
 
+      expect(row.isAllDay, isTrue);
       expect(row.planDate, '2026-09-07');
-      expect(row.startMinute, 12 * 60, reason: '默认开始不是下一个整点');
-      expect(row.isAllDay, isFalse);
-      expect(row.endDate, isNotNull, reason: '单事项必须有结束');
-      expect(row.endMinute, isNotNull);
+      expect(row.endDate, '2026-09-07', reason: '全天就是一天');
+      expect(row.startMinute, isNull);
+      expect(row.endMinute, isNull);
     });
 
-    testAppWidgets('单事项：默认结束是开始 +24 小时（配置项的默认档）', (tester) async {
-      // `behavior.defaultDuration` 默认 24 小时 —— 于是默认新建的任务
-      // **跨午夜**。这一条把那个后果钉住：它是用户选的默认，
+    testAppWidgets('关掉全天：结束是开始 +24 小时（配置项的默认档）', (tester) async {
+      // `behavior.defaultDuration` 默认 24 小时 —— 于是拨成定时之后的
+      // 默认任务**跨午夜**。这一条把那个后果钉住：它是用户选的默认，
       // 不是谁手滑写的。
+      //
+      // 这一栏 2026-09-10 起**只管定时任务**：全天没有「多长」可言。
       final harness = await _pump(tester);
       await tapCreate(tester, TaskShape.single);
+      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
       final row = await _saveAs(tester, harness, '写周报');
 
+      expect(row.startMinute, 12 * 60, reason: '默认开始不是下一个整点');
       expect(row.endDate, '2026-09-08', reason: '+24 小时该落到第二天');
       expect(row.endMinute, 12 * 60);
     });

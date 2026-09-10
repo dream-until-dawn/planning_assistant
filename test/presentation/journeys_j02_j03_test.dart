@@ -135,17 +135,11 @@ void main() {
 
     const names = ['打包', '搬运', '收拾'];
     for (final name in names) {
-      await tapVisible(tester, TaskEditorPage.addStageKey);
-      // **每个阶段都得起名字。** 空标题的阶段保存时会被丢掉
-      // （`filledStages`），那是对的 —— 用户点了「加一个」又没填，
-      // 不该落一条无名阶段。但这条旅程要的是三个真的阶段，
-      // 所以得填。第一版没填，落库零条，报的是「期望 3 个，实际 []」。
-      final fields = find.descendant(
-        of: find.byKey(TaskEditorPage.stageSectionKey),
-        matching: find.byType(TextField),
-      );
-      await tester.enterText(fields.last, name);
-      await tester.pump();
+      // **每个阶段都得起名字，也都得有时间。** 空标题的阶段保存时会被
+      // 丢掉（`filledStages`），没时间的阶段 2026-09-10 起直接挡住保存 ——
+      // 两条都由 `addStage` 一并办了。第一版没填名字，落库零条，
+      // 报的是「期望 3 个，实际 []」。
+      await addStage(tester, name);
     }
     await _save(tester);
 
@@ -173,21 +167,24 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // ── 甘特图上：进度是三分之一 ────────────────────────────
+    // ── 甘特图上：三段 + 三分之一的进度 ─────────────────────
     //
-    // **这三个阶段没有各自的时间**（编辑器默认不排，用户也没排）。
-    // 那时甘特不把条按阶段数均分 —— 均分等于告诉用户
-    // 「第一阶段在前三分之一结束」，而他从没这么说过。
-    // 画的是进度：三件里做完了一件。
+    // ## 这一步 2026-09-10 变强了
     //
-    // 排了时间的阶段会画成真正的分段，那条在
-    // `gantt_layout_test` 的 G-04 里验。
+    // 原来三个阶段**都没有时间**（编辑器默认不排），于是这里断言的是
+    // 「不该凭空切出段来」—— 均分等于告诉用户「第一阶段在前三分之一
+    // 结束」，而他从没这么说过。
+    //
+    // 阶段时间现在是必填的，那个状态存不下去了。于是这条旅程终于能验
+    // 它名字里写的那件事本身：**分段正确**。
+    // 「没排时间不凭空分段」那条守在 `gantt_layout_test`（G-04 那一族），
+    // 那一层构造得出没有时间的阶段。
     await _switchTo(tester, ViewKind.gantt);
     final bars = _painter(tester).layout.lanes.single.bars;
     expect(bars, hasLength(1), reason: '一条任务一根条');
 
     final bar = bars.single;
-    expect(bar.segments, isEmpty, reason: '没排时间就不该凭空切出段来');
+    expect(bar.segments, hasLength(3), reason: '三个排了时间的阶段该画成三段');
     expect(bar.progress, closeTo(1 / 3, 0.001), reason: '完成第二阶段没反映到进度上');
 
     // 对照组：没有阶段的任务，进度是 null 而不是 0 ——

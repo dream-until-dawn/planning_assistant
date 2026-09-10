@@ -38,6 +38,7 @@ import 'package:planning_assistant/features/settings/domain/setting_spec.dart';
 import 'package:planning_assistant/features/shell/presentation/app_shell.dart';
 import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/create_task_menu.dart';
+import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 import 'package:planning_assistant/features/views/shared/application/category_providers.dart';
 import 'package:planning_assistant/features/views/shared/application/task_providers.dart';
 import 'package:planning_assistant/features/views/shared/presentation/filter_bar.dart';
@@ -560,3 +561,42 @@ Future<void> seedCategories(Harness harness) => DriftCategoryRepository(
   const FixedWriterIdentity('test-device'),
   FixedClock(DateTime.utc(2026, 9, 7, 3)),
 ).seedDefaultsIfEmpty();
+
+/// 在打开的编辑器里加一个阶段：填标题，并**给它一个时间**。
+///
+/// ## 为什么时间要一起给
+///
+/// 用户 2026-09-10「加强必填项校验」之后，**阶段事项的每个阶段都必须有
+/// 时间** —— 任务的起止就是从它们推出来的，一个没有时间的阶段等于
+/// 一段推不出来的跨度。不给时间的话保存键是灰的。
+///
+/// 而这一族用例里的绝大多数**不关心时间本身**（它们验的是进度、级联、
+/// 拖拽重排、提醒续排）。让每个文件各自去点那个对话框，等于把一条
+/// 与它们无关的必填规则抄十遍 —— 下次规则再变，又是十处。
+///
+/// 时间取对话框的默认值（相对任务开始 +0，时长 60），几个阶段会重叠 ——
+/// 对「取最早/最晚」那一族用例不合适，它们本来就自己点那个对话框。
+///
+/// [withTime] 传 false 是给**专门验「没时间就不能存」**的用例用的。
+Future<void> addStage(
+  WidgetTester tester,
+  String title, {
+  bool withTime = true,
+}) async {
+  await tapVisible(tester, TaskEditorPage.addStageKey);
+  final fields = find.descendant(
+    of: find.byKey(TaskEditorPage.stageSectionKey),
+    matching: find.byType(TextField),
+  );
+  await tester.enterText(fields.last, title);
+  await tester.pumpAndSettle();
+  if (!withTime) return;
+
+  // 阶段 id 是运行时生成的，只能从行的 key 上取回来。
+  final key =
+      (tester.widget(fields.last) as TextField).key! as ValueKey<String>;
+  final id = key.value.replaceFirst('editor-stage-', '');
+  await tapVisible(tester, TaskEditorPage.stageTimeKey(id));
+  await tester.tap(find.byKey(TaskEditorPage.stageTimeConfirmKey));
+  await tester.pumpAndSettle();
+}

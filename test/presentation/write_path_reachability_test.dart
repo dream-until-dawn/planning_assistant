@@ -88,14 +88,11 @@ final List<_Entry> _taskFields = [
     kind: _Kind.reachable,
     why: '',
     // 不是一个直接的控件：填够两个阶段就是阶段事项（FR-TASK-02）。
+    // 每个阶段还得有时间（用户 2026-09-10「加强必填项校验」），
+    // 不然保存键是灰的 —— `addStage` 一并办了。
     drive: (t) async {
       for (final title in ['第一步', '第二步']) {
-        await tapVisible(t, TaskEditorPage.addStageKey);
-        final field = _lastStageField(t);
-        await t.ensureVisible(field);
-        await t.pumpAndSettle();
-        await t.enterText(field, title);
-        await t.pumpAndSettle();
+        await addStage(t, title);
       }
     },
     check: (task, stages) {
@@ -150,28 +147,24 @@ final List<_Entry> _taskFields = [
   //
   // 临时事项现在把日期栏一并藏了（用户 2026-09-10 定：它本来就不排时间）。
   // 换到单事项之后有一处**必须一起改**：单事项的表单是**预填**的
-  // （今天、下一个整点、按默认时长的结束）——
+  // （2026-09-10 起是「全天 + 今天 + 结束同一天」）——
   // 原来那几条 `isNotNull` 于是变成恒真，而这条守卫的全部意义
   // 正在于「拨到**非默认值**」。
   //
-  // 所以下面每一条都拨到一个**与预填不同**的值：
-  // 全天拨成 true（预填是 false）、时刻清成 null（预填有值）、
-  // 日期在选择器里点到另一天（夹具时钟钉死在 2026-09-07，所以
-  // 「点 15 号」是确定的）。
+  // 所以下面每一条都拨到一个**与预填不同**的值：全天拨成 false
+  // （预填是 true）、两个时刻从 null 拨成有值、日期在选择器里点到另一天
+  // （夹具时钟钉死在 2026-09-07，所以「点 3 号」是确定的）。
   (
     field: 'isAllDay',
     kind: _Kind.reachable,
     why: '',
     drive: (t) => tapVisible(t, TaskEditorPage.allDaySwitchKey),
-    check: (task, _) => expect(task.isAllDay, isTrue, reason: '单事项预填的是非全天'),
+    check: (task, _) => expect(task.isAllDay, isFalse, reason: '单事项预填的是全天'),
   ),
   (
     field: 'planDate',
     kind: _Kind.reachable,
     why: '',
-    // **往前挑，不往后。** 预填的结束是 09-08（默认时长 +24 小时），
-    // 把开始拨到 09-15 会撞上「结束早于开始」而存不下去 ——
-    // 那条约束是对的，探针该绕开它，不该去改它。
     drive: (t) => _pickDay(t, TaskEditorPage.dateFieldKey, 3),
     check: (task, _) => expect(task.planDate, '2026-09-03'),
   ),
@@ -179,16 +172,21 @@ final List<_Entry> _taskFields = [
     field: 'startMinute',
     kind: _Kind.reachable,
     why: '',
-    // 拨成全天 → 时刻被清掉。**清掉也是一条写路径**：预填是有值的，
-    // 所以 null 证明界面真的写了它（而不是「从来没设过」）。
+    // 关掉全天 → 补上「下一个整点」。预填是 null，所以有值证明界面
+    // 真的写了它（夹具是东八区 11:00，下一个整点即 12:00）。
     drive: (t) => tapVisible(t, TaskEditorPage.allDaySwitchKey),
-    check: (task, _) => expect(task.startMinute, isNull, reason: '预填有时刻'),
+    check: (task, _) => expect(task.startMinute, 12 * 60, reason: '预填的全天没有时刻'),
   ),
   (
     field: 'endDate',
     kind: _Kind.reachable,
     why: '',
-    drive: (t) => _pickDay(t, TaskEditorPage.endDateFieldKey, 20),
+    // **走结束那一栏本身**，不是靠改开始日期带出来的。
+    // 后者也能让断言变绿，而那时「结束日期够不够得着」根本没被问到。
+    drive: (t) async {
+      await tapVisible(t, TaskEditorPage.allDaySwitchKey);
+      await _pickMoment(t, TaskEditorPage.endMomentKey, 20);
+    },
     check: (task, _) => expect(task.endDate, '2026-09-20'),
   ),
   (
@@ -196,7 +194,7 @@ final List<_Entry> _taskFields = [
     kind: _Kind.reachable,
     why: '',
     drive: (t) => tapVisible(t, TaskEditorPage.allDaySwitchKey),
-    check: (task, _) => expect(task.endMinute, isNull, reason: '预填有结束时刻'),
+    check: (task, _) => expect(task.endMinute, 12 * 60, reason: '预填的全天没有结束时刻'),
   ),
   (
     field: 'recurrenceRule',
@@ -291,24 +289,6 @@ final List<_Entry> _stageFields = [
   ),
 ];
 
-/// 阶段标题输入框。`editor-stage-<id>` 是它们的 key 形状。
-Finder _stageTitleFields() => find.byWidgetPredicate(
-  (w) =>
-      w is TextField &&
-      (w.key is ValueKey<String> &&
-          (w.key! as ValueKey<String>).value.startsWith('editor-stage-')),
-);
-
-Finder _lastStageField(WidgetTester tester) => _stageTitleFields().last;
-
-/// 从阶段行的 key 里取出阶段 id —— 那个 id 是运行时生成的，
-/// 测试没有别的途径知道它。
-String _stageIdOf(WidgetTester tester, {required bool first}) {
-  final finder = first ? _stageTitleFields().first : _stageTitleFields().last;
-  final key = (tester.widget(finder) as TextField).key! as ValueKey<String>;
-  return key.value.replaceFirst('editor-stage-', '');
-}
-
 /// 开一张新建表单。
 ///
 /// [shape] 决定表单长什么样：阶段区、重复区都按形态显示
@@ -338,13 +318,22 @@ Future<Harness> _pumpEditor(
 ///
 /// **一条没说出口的依赖**（评审指出）：`planDate` 那条点的是 **3 号**，
 /// 也就是**今天之前**。它依赖开始日期的选择器允许选过去
-/// （`_DateRow` 现在给的 `firstDate` 是当年往前五年）。
+/// （`pickDate` 现在给的 `firstDate` 是当年往前五年）。
 /// 哪天有人把它收成 `firstDate: today`，这条探针会红，
 /// 而它报出来的样子是「写路径不通」—— 与真实原因差得很远。
 Future<void> _pickDay(WidgetTester tester, Key row, int day) async {
   await tapVisible(tester, row);
   await tester.tap(find.text('$day'));
   await tester.pumpAndSettle();
+  await tester.tap(find.text('确定'));
+  await tester.pumpAndSettle();
+}
+
+/// 非全天那两栏：点一下**连着**弹日期与时刻两个选择器
+/// （用户 2026-09-10：「一轮选择日期+时间」）。时刻这一步接受默认值 ——
+/// 这里要拨的是日期。
+Future<void> _pickMoment(WidgetTester tester, Key row, int day) async {
+  await _pickDay(tester, row, day);
   await tester.tap(find.text('确定'));
   await tester.pumpAndSettle();
 }
@@ -404,22 +393,11 @@ void main() {
       testAppWidgets('${e.field}：界面上拨得到，而且落库', (tester) async {
         final harness = await _pumpEditor(tester, TaskShape.staged);
         // 阶段事项没有全天开关了 —— 时刻只能从阶段来。
-
+        // 而**每个**阶段都要有时间（用户 2026-09-10「加强必填项校验」），
+        // 所以两个都得定，否则保存键是灰的。`addStage` 一并办了。
         for (final title in ['第一步', '第二步']) {
-          await tapVisible(tester, TaskEditorPage.addStageKey);
-          final field = _lastStageField(tester);
-          await tester.ensureVisible(field);
-          await tester.pumpAndSettle();
-          await tester.enterText(field, title);
-          await tester.pumpAndSettle();
+          await addStage(tester, title);
         }
-
-        // 给**第一个**阶段定时间（`_lastStageField` 取的是最后一行）。
-        final firstStageId = _stageIdOf(tester, first: true);
-
-        await tapVisible(tester, TaskEditorPage.stageTimeKey(firstStageId));
-        await tester.tap(find.byKey(TaskEditorPage.stageTimeConfirmKey));
-        await tester.pumpAndSettle();
 
         await tester.tap(find.byKey(TaskEditorPage.saveButtonKey));
         await tester.pumpAndSettle();
