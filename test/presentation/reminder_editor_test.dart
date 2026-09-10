@@ -78,7 +78,7 @@ Future<void> _reopenEditor(WidgetTester tester) async {
 }
 
 void main() {
-  testAppWidgets('**加一条提醒，保存，它真的排出去了**', (tester) async {
+  testAppWidgets('FR-NOTI-01 **加一条提醒，保存，它真的排出去了**', (tester) async {
     final harness = await _pumpApp(tester);
     await _createWithReminder(tester);
     await _settleSync(tester);

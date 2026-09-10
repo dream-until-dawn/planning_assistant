@@ -111,7 +111,7 @@ List<PlannedNotification> _plan(
 void main() {
   setUpAll(tzdata.initializeTimeZones);
 
-  group('N-01 相对提醒跟着任务时间走', () {
+  group('FR-NOTI-01 / N-01 相对提醒跟着任务时间走', () {
     test('提前 15 分钟：09:00 的任务排在 08:45', () {
       final out = _plan([
         (occurrence: _occ(), reminder: _rel(-15), title: '开会'),
@@ -160,7 +160,7 @@ void main() {
     });
   });
 
-  group('N-02 重复任务：窗口内不多不少', () {
+  group('FR-NOTI-02 / N-02 重复任务：窗口内不多不少', () {
     test('每天一次、窗口 14 天 → 排 14 条', () {
       final pairs = [
         for (var i = 0; i < 30; i++)
@@ -240,7 +240,7 @@ void main() {
     });
   });
 
-  group('N-04/05/06 免打扰 22:00–07:00，左闭右开', () {
+  group('FR-CFG-05 / N-04/05/06 免打扰 22:00–07:00，左闭右开', () {
     ReminderSettings quiet({
       QuietHoursBehavior behavior = QuietHoursBehavior.postpone,
     }) => _settings(quietHoursEnabled: true, quietBehavior: behavior);

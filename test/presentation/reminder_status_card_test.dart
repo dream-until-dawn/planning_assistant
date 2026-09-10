@@ -53,7 +53,7 @@ Future<void> _scrollToCard(WidgetTester tester) async {
 }
 
 void main() {
-  testAppWidgets('**没有通知权限 → 明说提醒不会响，并给一个去开权限的入口**', (tester) async {
+  testAppWidgets('FR-NOTI-04 **没有权限 → 明说提醒不会响，并给一个去开权限的入口**', (tester) async {
     final harness = await _pumpSettings(tester, canNotify: false);
     await _scrollToCard(tester);
 
