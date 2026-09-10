@@ -70,6 +70,15 @@ abstract interface class TaskRepository {
   /// 返回真正删掉了几条任务（子实体不计）。
   Future<int> purgeDeleted(Iterable<String> taskIds);
 
+  /// 某任务的提醒。
+  Future<List<Reminder>> findRemindersOfTask(
+    String taskId, {
+    TaskScope scope = TaskScope.active,
+  });
+
+  /// 整表写回提醒（同一事务，理由同 [saveChecklist]）。
+  Future<void> saveReminders(String taskId, List<Reminder> reminders);
+
   /// 全部提醒，持续推送（FR-NOTI-01）。
   ///
   /// **一次取全部，不按任务分**：排期一轮要看窗口内所有任务的提醒，

@@ -97,6 +97,14 @@ class TaskEditorPage extends ConsumerStatefulWidget {
   static const Key addStageKey = ValueKey('editor-add-stage');
 
   /// 清单区（FR-TASK-09）。
+  static const Key reminderSectionKey = ValueKey('editor-reminders');
+  static const Key addReminderKey = ValueKey('editor-add-reminder');
+  static Key reminderOffsetKey(String id) => ValueKey('editor-reminder-$id');
+  static Key reminderRemoveKey(String id) =>
+      ValueKey('editor-reminder-remove-$id');
+  static Key reminderEnabledKey(String id) =>
+      ValueKey('editor-reminder-enabled-$id');
+
   static const Key checklistSectionKey = ValueKey('editor-checklist');
   static const Key addChecklistKey = ValueKey('editor-add-checklist');
 
@@ -473,6 +481,10 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
                 controller: controller,
               ),
             ],
+            // 提醒排在清单之前：它跟时间有关，紧接着上面那几段时间设置；
+            // 清单是「顺手记几件小事」，与时间无关，放最后。
+            const SizedBox(height: Spacing.xl),
+            _ReminderSection(draft: draft, controller: controller),
             const SizedBox(height: Spacing.xl),
             _ChecklistSection(draft: draft, controller: controller),
             const SizedBox(height: Spacing.xxxl),
@@ -1619,6 +1631,88 @@ class _ChipRow extends StatelessWidget {
 /// 顺序用的是列表顺序（保存时按下标写 `orderIndex`），
 /// 没做上下移 —— 阶段有上下移是因为阶段的先后是**语义**（第一步第二步），
 /// 而清单是一把待办，顺序只是录入顺序。要排序的话那是另一件事。
+/// 提醒（FR-NOTI-01）。
+///
+/// **只给「提前多久」这一档**，理由写在 `ReminderDraft` 上。
+///
+/// 每条给一个开关而不是只给删除：「这阵子别吵我」与「以后都不要」
+/// 是两件事，而后者会连用户调过的提前量一起丢掉。
+class _ReminderSection extends StatelessWidget {
+  const _ReminderSection({required this.draft, required this.controller});
+
+  final TaskDraft draft;
+  final TaskEditorController controller;
+
+  /// 可选的提前量。**给档位不给任意分钟数**，同配置项那条理由 ——
+  /// 能填任意值的框，第一件事就是让人填出 0 分钟之外的怪值。
+  static const List<(int, String)> _options = [
+    (0, '准时'),
+    (-5, '提前 5 分钟'),
+    (-15, '提前 15 分钟'),
+    (-30, '提前 30 分钟'),
+    (-60, '提前 1 小时'),
+    (-1440, '提前 1 天'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+
+    return Column(
+      key: TaskEditorPage.reminderSectionKey,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('提醒（可选）', style: text.bodySmall),
+        const SizedBox(height: Spacing.xs),
+        const Text('到点前提醒你。没有日期的任务不会提醒。'),
+        const SizedBox(height: Spacing.sm),
+        for (final r in draft.reminders)
+          Padding(
+            padding: const EdgeInsets.only(bottom: Spacing.xs),
+            child: Row(
+              children: [
+                Semantics(
+                  label: '这条提醒开着',
+                  child: Switch(
+                    key: TaskEditorPage.reminderEnabledKey(r.id),
+                    value: r.isEnabled,
+                    onChanged: (v) => controller.setReminderEnabled(r.id, v),
+                  ),
+                ),
+                const SizedBox(width: Spacing.iconToText),
+                Expanded(
+                  child: DropdownButtonFormField<int>(
+                    key: TaskEditorPage.reminderOffsetKey(r.id),
+                    initialValue: r.offsetMinutes,
+                    items: [
+                      for (final (value, label) in _options)
+                        DropdownMenuItem(value: value, child: Text(label)),
+                    ],
+                    onChanged: (v) => v == null
+                        ? null
+                        : controller.setReminderOffset(r.id, v),
+                  ),
+                ),
+                IconButton(
+                  key: TaskEditorPage.reminderRemoveKey(r.id),
+                  icon: const Icon(Icons.close),
+                  tooltip: '删掉这条提醒',
+                  onPressed: () => controller.removeReminder(r.id),
+                ),
+              ],
+            ),
+          ),
+        AppButton(
+          key: TaskEditorPage.addReminderKey,
+          label: draft.reminders.isEmpty ? '加个提醒' : '再加一条',
+          variant: AppButtonVariant.secondary,
+          onPressed: controller.addReminder,
+        ),
+      ],
+    );
+  }
+}
+
 class _ChecklistSection extends StatelessWidget {
   const _ChecklistSection({required this.draft, required this.controller});
 

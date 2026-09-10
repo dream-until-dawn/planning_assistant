@@ -12,6 +12,7 @@ import '../../core/time/time_zone_resolver.dart';
 import '../entities/checklist_item.dart';
 import '../entities/occurrence.dart';
 import '../entities/occurrence_override.dart';
+import '../entities/reminder.dart';
 import '../entities/stage.dart';
 import '../entities/stage_occurrence_state.dart';
 import '../entities/task.dart';
@@ -104,6 +105,8 @@ final class CommandDispatcher {
         await _setStageOccurrenceStatus(command);
       case ReplaceChecklistCommand():
         await _replaceChecklist(command);
+      case ReplaceRemindersCommand():
+        await _replaceReminders(command);
       case ConvertTaskAllDayModeCommand():
         await _convertAllDayMode(command);
     }
@@ -542,6 +545,35 @@ final class CommandDispatcher {
           isDone: i.isDone,
         ),
       // 不在新列表里的旧项打墓碑，不物理删（同阶段）。
+      for (final old in existing)
+        if (!incoming.contains(old.id) && old.deletedAt == null)
+          old.copyWith(deletedAt: _now()),
+    ]);
+  }
+
+  Future<void> _replaceReminders(ReplaceRemindersCommand c) async {
+    await _require(c.taskId);
+
+    final existing = await _repo.findRemindersOfTask(
+      c.taskId,
+      scope: TaskScope.all,
+    );
+    final incoming = {for (final r in c.reminders) r.id};
+
+    await _repo.saveReminders(c.taskId, [
+      for (final r in c.reminders)
+        Reminder(
+          id: r.id,
+          taskId: c.taskId,
+          kind: r.kind,
+          offsetMinutes: r.offsetMinutes,
+          absoluteDate: r.absoluteDate,
+          absoluteMinute: r.absoluteMinute,
+          isEnabled: r.isEnabled,
+          // **字段搭配当场校验**：相对提醒缺偏移、绝对提醒缺时刻这类
+          // 坏数据一旦落盘，排期时才发现就只剩「那条提醒不响」这一个症状。
+        )..checkInvariants(),
+      // 不在新列表里的旧提醒打墓碑，不物理删（同阶段与清单）。
       for (final old in existing)
         if (!incoming.contains(old.id) && old.deletedAt == null)
           old.copyWith(deletedAt: _now()),

@@ -133,6 +133,27 @@ final class DriftTaskRepository implements TaskRepository {
   }
 
   @override
+  Future<List<Reminder>> findRemindersOfTask(
+    String taskId, {
+    TaskScope scope = TaskScope.active,
+  }) async {
+    final q = _db.select(_db.reminders)..where((t) => t.taskId.equals(taskId));
+    if (scope != TaskScope.all) {
+      q.where((t) => t.deletedAt.isNull());
+    }
+    return (await q.get()).map(reminderFromRow).toList();
+  }
+
+  @override
+  Future<void> saveReminders(String taskId, List<Reminder> reminders) async {
+    await _db.transaction(() async {
+      for (final r in reminders) {
+        await _reminders.upsert(reminderToCompanion(r));
+      }
+    });
+  }
+
+  @override
   Stream<List<Reminder>> watchAllReminders() => _reminders.watchAll().map(
     (rows) => [for (final r in rows) reminderFromRow(r)],
   );
