@@ -1302,7 +1302,13 @@ class _StageSection extends StatelessWidget {
                       child: _StageTimeButton(
                         stage: stage,
                         anchor: _stageAnchor(draft, today),
-                        isAllDay: draft.isAllDay,
+                        // **不是 `draft.isAllDay`**：阶段事项的阶段时间
+                        // 一律带时刻（`canBeAllDay`）。照草稿走的话，
+                        // 一条「全天的阶段事项」（旧数据、导入、或者
+                        // 新建时的初值没设对）会让这个对话框只给日期，
+                        // 用户挑不出几点 —— 而推导仍然会给任务写上时刻。
+                        // 真机上就是这么撞见的。
+                        isAllDay: draft.isAllDay && draft.shape.canBeAllDay,
                         onChanged: (start, duration) => controller.setStageTime(
                           stage.id,
                           startOffsetMinutes: start,

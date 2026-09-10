@@ -157,6 +157,93 @@ void main() {
     expect(find.textContaining('至少两个'), findsOneWidget);
   });
 
+  testAppWidgets('阶段时间对话框**给得出时刻** —— 阶段事项没有全天', (tester) async {
+    // ## 真机上撞见的
+    //
+    // 对话框里两行只有日期，没有时刻按钮 —— 用户挑不出「几点」。
+    // 原因是它照 `draft.isAllDay` 走，而阶段事项的草稿开局是全天
+    // （表单上没有那个开关，没人拨得动它）。
+    //
+    // 而推导**仍然会给任务写上时刻**（`_rederiveSpanIfStaged` 一并置
+    // `isAllDay: false`）。于是两边说的不是一回事：对话框当它是全天，
+    // 存下去的却是定时。
+    //
+    // 判据收在 `TaskShape.canBeAllDay` 上，草稿初值与对话框都问它。
+    await _openEditor(tester, TaskShape.staged);
+    await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '装修');
+    await tester.pump();
+    await tapVisible(tester, TaskEditorPage.addStageKey);
+    final field = find
+        .descendant(
+          of: find.byKey(TaskEditorPage.stageSectionKey),
+          matching: find.byType(TextField),
+        )
+        .last;
+    final id = ((tester.widget(field) as TextField).key! as ValueKey<String>)
+        .value
+        .replaceFirst('editor-stage-', '');
+
+    await tapVisible(tester, TaskEditorPage.stageTimeKey(id));
+    expect(
+      find.byKey(TaskEditorPage.stageTimeStartTimeKey),
+      findsOneWidget,
+      reason: '对话框只给了日期 —— 阶段时间挑不出几点',
+    );
+    expect(find.byKey(TaskEditorPage.stageTimeEndTimeKey), findsOneWidget);
+  });
+
+  testAppWidgets('对照组：一条**全天的**阶段事项，对话框照样给得出时刻', (tester) async {
+    // ## 为什么要单独来一条
+    //
+    // 上一条被**两处**修法各自挡住：草稿初值不再是全天，对话框也不再照
+    // 草稿走。任意去掉一处它都还是绿的 —— 也就是说它证不出对话框那一处
+    // 有没有用（演练时两处一起去掉才红）。
+    //
+    // 而对话框那一处保护的正是这里造的东西：库里一条 `is_all_day = 1`
+    // 的阶段事项。编辑器新建时造不出它，导入与 V3 同步造得出。
+    final harness = await _openEditor(tester, TaskShape.staged);
+    await tapBack(tester);
+
+    const taskId = 'staged-all-day';
+    await harness.db
+        .into(harness.db.tasks)
+        .insert(
+          TasksCompanion.insert(
+            id: taskId,
+            title: '装修',
+            kind: 'staged',
+            timeZoneId: 'Asia/Shanghai',
+            isAllDay: const Value(true),
+            planDate: const Value('2026-09-07'),
+            endDate: const Value('2026-09-09'),
+          ),
+        );
+    for (final (i, name) in ['拆除', '刷漆'].indexed) {
+      await harness.db
+          .into(harness.db.stages)
+          .insert(
+            StagesCompanion.insert(
+              id: 'ad-stage-$i',
+              taskId: taskId,
+              title: name,
+              orderIndex: i,
+              startOffsetMinutes: Value(i * 1440),
+              durationMinutes: const Value(60),
+            ),
+          );
+    }
+    await tester.pumpAndSettle();
+
+    await openEditorFromCard(tester);
+    await _isPresent(tester, TaskEditorPage.stageSectionKey);
+    await tapVisible(tester, TaskEditorPage.stageTimeKey('ad-stage-0'));
+    expect(
+      find.byKey(TaskEditorPage.stageTimeStartTimeKey),
+      findsOneWidget,
+      reason: '全天的阶段事项：对话框只给日期，而推导会给任务写上时刻',
+    );
+  });
+
   testAppWidgets('提醒区不对有日期的任务说「没有日期不会提醒」', (tester) async {
     // 那句话是给不排时间的形态写的，而那一样现在压根不显示这个区。
     // 留着的话，阶段事项（日期是推出来的）会被告知一件不成立的事。

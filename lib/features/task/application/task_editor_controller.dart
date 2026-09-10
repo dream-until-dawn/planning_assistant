@@ -547,7 +547,10 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     final duration = settingOf(ref, defaultTaskDuration);
 
     final minute = seed?.minute;
-    if (minute == null) {
+    // 阶段事项没有「全天」这个概念（`canBeAllDay`）—— 它的起止是推出来的，
+    // 而阶段时间一律带时刻。开局给它全天的话，阶段时间对话框会**只给日期**，
+    // 用户挑不出几点，而推导又会给任务写上时刻。
+    if (minute == null && shape.canBeAllDay) {
       // **全天就是一天**（用户 2026-09-10 定：「启用下只用选个日期」）。
       // 结束日期跟着开始走，不再由 `defaultDuration` 折成天数 ——
       // 那一栏现在只管定时任务的时长。
@@ -560,7 +563,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
       );
     }
 
-    final start = minute;
+    final start = minute ?? _nextWholeHour();
     final end = duration.endFrom(DateAndMinute(date, start));
 
     return TaskDraft(
