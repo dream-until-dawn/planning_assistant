@@ -112,6 +112,53 @@ void main() {
       }
     });
 
+    testAppWidgets('配置文件里把开关写坏了，页面照样是个开关（回落到默认值）', (tester) async {
+      // ## 这条钉的是一句「到不了」的话
+      //
+      // settings-spec §5 明写着隐藏项可以由手改的配置文件覆盖，
+      // 于是有人会问：**值的类型写错了会怎样？** 评审问的就是这个，
+      // 猜测是「静默退回那句『控件还没做』的灰字」——
+      // 那会让一个「数据坏了」看起来像一个「功能没做」。
+      //
+      // 实测不是：`SettingSpec<bool>.decode` 的返回类型就是 `bool`，
+      // 解不动时回落到默认值。所以页面上永远是个能拨的开关。
+      //
+      // 把这条钉下来，是因为 `_SettingTile` 里那个 `as bool` 依赖它。
+      //
+      // **它被哪种改动推倒，演练过**：把 `settingDynamic` 改成跳过
+      // decode、直接交出库里存的值（一个看着像优化的改动），
+      // 这条当场报 `type 'String' is not a subtype of type 'bool'`。
+      // 而只把某条 `decode` 改成遇坏值抛异常**不会**让它红 ——
+      // 那一层外面还有一道 catch 回落到默认值。两件事都记下来，
+      // 免得下一个人以为它守着后者。
+      final harness = appHarness();
+      await seedSettingBeforeApp(harness, autoBackupEnabled, false);
+      // 绕开 SettingSpec 直接写一个坏值 —— 手改配置文件就是这样。
+      await seedRawSetting(harness, autoBackupEnabled.key, 'yes');
+
+      await setScreenSize(tester, const Size(390, 844));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: harness.overrides,
+          child: PlanningAssistantApp(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openSettings(tester);
+
+      final tile = find.byKey(SettingsPage.itemKey(autoBackupEnabled.key));
+      await tester.scrollUntilVisible(tile, 200);
+      await tester.pumpAndSettle();
+
+      final toggle = find.descendant(of: tile, matching: find.byType(Switch));
+      expect(toggle, findsOneWidget, reason: '坏值把开关变没了');
+      expect(
+        tester.widget<Switch>(toggle).value,
+        autoBackupEnabled.defaultValue,
+        reason: '坏值该回落到默认值',
+      );
+    });
+
     testAppWidgets('分组标题按 SettingGroup 的顺序出现', (tester) async {
       await _pumpApp(tester);
       await _openSettings(tester);

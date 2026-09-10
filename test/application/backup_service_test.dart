@@ -16,6 +16,14 @@ import 'package:planning_assistant/platform/storage/backup_store.dart';
 
 final _now = DateTime.utc(2026, 9, 10, 4, 30);
 
+/// 记账式的假端口。
+///
+/// **它是有状态的**：`exportJson` 交出当前的 [payload]，`importJson`
+/// 把 [payload] 换掉。一个「导入了就忘」的假端口表达不出
+/// 「恢复真的把库换了」——而这一份里最要紧的那条
+/// （恢复前存的那一份能不能救回来）问的正是这个。
+///
+/// 有状态**不等于有判断**：它没有任何分支，替换掉的仍然只是「读写整库」。
 final class _FakeExporter implements ExportPort {
   final List<String> imported = [];
   var exportCount = 0;
@@ -38,6 +46,7 @@ final class _FakeExporter implements ExportPort {
   Future<void> importJson(String json) async {
     if (importThrows case final e?) throw e;
     imported.add(json);
+    payload = json;
   }
 }
 
@@ -83,6 +92,8 @@ final class _FakeStore implements BackupStore {
     deleted.add(name);
     _files.remove(name);
   }
+
+  String contentsOf(String name) => _files[name]!.contents;
 }
 
 BackupService _service(_FakeExporter exporter, _FakeStore store) =>
@@ -179,6 +190,112 @@ void main() {
         _FakeStore(),
       ).restore('没有这个.json');
       expect(out.ok, isFalse);
+    });
+  });
+
+  group('FR-DATA-04 恢复之前先留一份退路（评审 M4-B3）', () {
+    test('**恢复错了能退回去** —— 恢复前那一份列得出来，也恢复得回来', () async {
+      // 这一条才是整条要求的意义所在。只断言「多了一个文件」是不够的：
+      // 一个把当前状态存成空壳的实现照样能让文件数 +1，
+      // 而用户点进去发现救不回来 —— 那时他连原来的数据都没有了。
+      final store = _FakeStore();
+      final exporter = _FakeExporter()..payload = '{"state":"昨天"}';
+      final service = _service(exporter, store);
+      final yesterday = await service.backupNow(keepCount: 5);
+
+      // 今天干了一天活。
+      exporter.payload = '{"state":"今天"}';
+
+      // 手滑，恢复到了昨天。
+      final undone = await service.restore(yesterday.file!.name);
+      expect(exporter.payload, '{"state":"昨天"}', reason: '前提：确实退回去了');
+      expect(undone.file, isNotNull, reason: '没留下退路');
+
+      // 退路必须**列得出来** —— 列不出来的文件对用户等于不存在。
+      final names = (await store.list()).map((f) => f.name);
+      expect(names, contains(undone.file!.name));
+
+      // 而且**恢复得回来**。
+      final rescued = await service.restore(undone.file!.name);
+      expect(rescued.ok, isTrue);
+      expect(exporter.payload, '{"state":"今天"}', reason: '退路救不回来');
+    });
+
+    test('存不下退路时**放弃恢复**，库一个字都不动', () async {
+      // 宁可不恢复，也不要在没有退路的情况下把整库换掉。
+      final store = _FakeStore();
+      final exporter = _FakeExporter()..payload = '{"state":"今天"}';
+      final service = _service(exporter, store);
+      final made = await service.backupNow(keepCount: 5);
+      exporter.payload = '{"state":"改过了"}';
+      exporter.exportThrows = StateError('磁盘满');
+
+      final out = await service.restore(made.file!.name);
+
+      expect(out.ok, isFalse);
+      expect(out.message, contains('磁盘满'));
+      expect(exporter.imported, isEmpty, reason: '存不下退路却还是导入了');
+      expect(exporter.payload, '{"state":"改过了"}');
+    });
+
+    test('名字不对时不白存一份 —— 先读再存', () async {
+      final store = _FakeStore();
+      final exporter = _FakeExporter();
+      final out = await _service(exporter, store).restore('没有这个.json');
+
+      expect(out.ok, isFalse);
+      expect(await store.list(), isEmpty, reason: '恢复没成，却留下一份垃圾');
+      expect(exporter.exportCount, 0);
+    });
+
+    test('留下的那一份**不触发保留数清理**', () async {
+      // 清理按「最旧的先删」动手，而待恢复的那一份与刚存下的这一份
+      // 恰恰都可能落在被删的一侧 —— 恢复到一半把要恢复的文件删了。
+      final store = _FakeStore();
+      final exporter = _FakeExporter();
+      final service = _service(exporter, store);
+      final made = await service.backupNow(keepCount: 1);
+
+      await service.restore(made.file!.name);
+
+      final names = (await store.list()).map((f) => f.name);
+      expect(names, contains(made.file!.name), reason: '把正在恢复的那一份删了');
+      expect(names.length, 2);
+    });
+  });
+
+  group('FR-DATA-05 同一秒里的两次备份互不覆盖', () {
+    test('两份都在，名字不同', () async {
+      // 时钟是钉死的，所以两次 `backupNow` 拿到的是同一个时刻 ——
+      // 这正是真机上「自动备份刚跑完、用户马上按立即备份」的形状。
+      //
+      // 从前这只意味着少一份内容几乎相同的备份，可以不管；
+      // 加了「恢复前先存一份」之后不行了：被覆盖掉的那一份可能正是
+      // 某一次恢复的退路。
+      final store = _FakeStore();
+      final service = _service(_FakeExporter(), store);
+
+      final a = await service.backupNow(keepCount: 5);
+      final b = await service.backupNow(keepCount: 5);
+
+      expect(a.file!.name, isNot(b.file!.name));
+      expect((await store.list()).length, 2);
+    });
+
+    test('恢复前存的那一份，不会盖掉正要恢复的那一份', () async {
+      // 同一秒里恢复一份刚刚存下的备份 —— 两个名字会撞。
+      final store = _FakeStore();
+      final exporter = _FakeExporter()..payload = '{"state":"A"}';
+      final service = _service(exporter, store);
+      final made = await service.backupNow(keepCount: 5);
+      exporter.payload = '{"state":"B"}';
+
+      final out = await service.restore(made.file!.name);
+
+      expect(out.ok, isTrue);
+      expect(out.file!.name, isNot(made.file!.name));
+      expect(store.contentsOf(made.file!.name), '{"state":"A"}');
+      expect(store.contentsOf(out.file!.name), '{"state":"B"}');
     });
   });
 

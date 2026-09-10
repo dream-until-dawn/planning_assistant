@@ -465,6 +465,18 @@ Future<void> tapBack(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// 绕开 [SettingSpec] 往库里写一个**原始值**。
+///
+/// [seedSettingBeforeApp] 走的是声明，写不进类型不对的值 ——
+/// 而「手改过的配置文件」正是要写那种值（settings-spec §5 允许
+/// 用户改配置文件，也就允许他改错）。
+Future<void> seedRawSetting(Harness harness, String key, Object? value) =>
+    DriftSettingsRepository(
+      harness.db,
+      const FixedWriterIdentity('test-device'),
+      FixedClock(DateTime.utc(2026, 9, 7, 3)),
+    ).put(key, value, scope: 'global');
+
 /// 把当前那条 Snackbar 等到消失。
 ///
 /// **Snackbar 是排队的**：前一条还在，后一条就不会出现。而

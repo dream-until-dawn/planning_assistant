@@ -135,7 +135,7 @@ void main() {
       await tester.tap(find.text('取消'));
       await tester.pumpAndSettle();
       // 取消了就不该有「已恢复」那句话。
-      expect(find.text('已恢复'), findsNothing);
+      expect(find.textContaining('已恢复'), findsNothing);
     });
 
     testAppWidgets('确认之后真的恢复了', (tester) async {
@@ -152,7 +152,7 @@ void main() {
       await tester.tap(find.byKey(BackupPage.restoreConfirmKey));
       await tester.pumpAndSettle();
 
-      expect(find.text('已恢复'), findsOneWidget);
+      expect(find.textContaining('已恢复'), findsOneWidget);
     });
   });
 

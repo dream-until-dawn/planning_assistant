@@ -124,4 +124,65 @@ void main() {
     );
     expect(now['data'], backedUp);
   });
+
+  testAppWidgets('FR-DATA-04 恢复错了一份，能从「恢复前的那一份」退回来（评审 M4-B3）', (tester) async {
+    // ## 为什么这一条要走界面、走真库
+    //
+    // `backup_service_test` 里那条同名的用例是拿假端口验的 ——
+    // 它证明的是**服务这一层的编排**对。而「真的救得回来」还要跨过
+    // 整库导出/导入那一段：一份存下来的 JSON 到底能不能把库还原成
+    // 刚才的样子，只有真库答得了。
+    //
+    // 场景就是评审说的那个：「我以为这是昨天那份」—— 用户点错一份，
+    // 今天干的活全没了。而自动备份默认 7 天一次，所以最坏一周。
+    await setScreenSize(tester, const Size(390, 844));
+    final harness = appHarness();
+    await seedSettingBeforeApp(harness, autoBackupEnabled, false);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: harness.overrides,
+        child: PlanningAssistantApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await seedCategories(harness);
+    await tester.pumpAndSettle();
+
+    // ── 昨天：库里什么都没有，存一份 ──────────────────────────
+    await _openBackupPage(tester);
+    await tester.tap(find.byKey(BackupPage.backupNowKey));
+    await tester.pumpAndSettle();
+    await waitOutSnackBar(tester);
+    final stale = (await harness.backups.list()).single.name;
+
+    // ── 今天：干了一天活 ──────────────────────────────────────
+    await _backToList(tester);
+    await tapCreate(tester);
+    await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '今天的活');
+    await tester.pump();
+    await tapVisible(tester, TaskEditorPage.saveButtonKey);
+    expect(find.text('今天的活'), findsOneWidget);
+
+    // ── 手滑：恢复到了昨天那一份 ──────────────────────────────
+    await _openBackupPage(tester);
+    await tester.tap(find.byKey(BackupPage.restoreKey(stale)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(BackupPage.restoreConfirmKey));
+    await tester.pumpAndSettle();
+
+    await _backToList(tester);
+    expect(find.text('今天的活'), findsNothing, reason: '前提：确实恢复错了');
+
+    // ── 退路：列表最上面那一份就是「恢复前」的状态 ────────────
+    await _openBackupPage(tester);
+    final rescue = (await harness.backups.list()).first.name;
+    expect(rescue, isNot(stale), reason: '退路把要恢复的那一份盖掉了');
+    await tester.tap(find.byKey(BackupPage.restoreKey(rescue)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(BackupPage.restoreConfirmKey));
+    await tester.pumpAndSettle();
+
+    await _backToList(tester);
+    expect(find.text('今天的活'), findsOneWidget, reason: '退路没救回来');
+  });
 }

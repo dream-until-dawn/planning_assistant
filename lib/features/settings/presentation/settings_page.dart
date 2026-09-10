@@ -217,7 +217,20 @@ class _SettingTile extends ConsumerWidget {
     // 不是排版偏好：一个占满整行的开关看不出它管的是上面哪一句，
     // 而这一页是一行接一行的配置项。系统设置里的开关也都在右边 ——
     // 这里没有理由自成一格。
-    if (spec.editor == SettingEditor.toggle && current is bool) {
+    // **`current` 一定是 bool，所以这里不做 `is bool` 兜底。**
+    //
+    // 一度写着 `&& current is bool`，看着像一层防守，其实是**死代码**，
+    // 而且死得危险：条件不成立时会静默落到下面那句「这个类型的控件
+    // 还没做」—— 一句看起来像「功能没做」的灰字，掩盖的却是「数据坏了」。
+    //
+    // 它到不了：`SettingSpec<bool>.decode` 的返回类型就是 `bool`，
+    // 而 `settingDynamic` 在 decode 抛异常时回落到 `defaultValue` ——
+    // 后者由注册表自检钉着必须是 bool。所以手改坏的配置文件（值写成
+    // 字符串）读出来的是**默认值**，不是一个非 bool。
+    // 那条事实由 `settings_page_test` 的「配置文件里把开关写坏了」盯着。
+    //
+    // 真到不了的那一天，`as bool` 会当场吵起来 —— 那比一句灰字好。
+    if (spec.editor == SettingEditor.toggle) {
       return Padding(
         key: SettingsPage.itemKey(spec.key),
         padding: const EdgeInsets.only(bottom: Spacing.lg),
@@ -227,7 +240,7 @@ class _SettingTile extends ConsumerWidget {
             const SizedBox(width: Spacing.md),
             Switch(
               key: SettingsPage.toggleKey(spec.key),
-              value: current,
+              value: current! as bool,
               onChanged: (v) =>
                   ref.read(settingsWriterProvider).setDynamic(spec, v),
             ),

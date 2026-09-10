@@ -201,6 +201,11 @@ class _BackupList extends ConsumerWidget {
 
     final messenger = ScaffoldMessenger.of(context);
     final outcome = await ref.read(backupServiceProvider).restore(file.name);
+    if (!context.mounted) return;
+    // **恢复也要刷列表。** 恢复会**多出一份**「恢复前的状态」——
+    // 那一份正是恢复错了时的退路，而列表不刷新的话它在界面上不存在，
+    // 用户点错之后无从退回（评审 M4-B3 的那半条要求）。
+    ref.invalidate(backupListProvider);
     messenger.showSnackBar(SnackBar(content: Text(outcome.message)));
   }
 
