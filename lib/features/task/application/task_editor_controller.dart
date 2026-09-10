@@ -1091,6 +1091,27 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     // 要求库里存的是规范形（否则同一条规则可能有两种写法，
     // 往返与同步都会分叉）。
     recurrenceRule: _canonicalRule(draft),
+    // ## 阶段事项走到这儿时 `isAllDay` 恒为 false，**而谁在维持它**
+    //
+    // 这里读的是原始旗标，不是 `draft.isAllDay && shape.canBeAllDay`
+    // （别处那几个读点问了 `canBeAllDay`，这儿没问）。它今天对，靠的是
+    // **四处互不知情的机制**，四处都不以「阶段事项没有全天」的名义存在：
+    //
+    // | 谁 | 做了什么 |
+    // |---|---|
+    // | `_newDraft` | `!shape.canBeAllDay` 时走定时那一支 |
+    // | 编辑器 | 那个开关对这些形态不渲染，没人拨得动 |
+    // | `_rederiveSpanIfStaged` | 推出起止时一并置 false |
+    // | `blockedReason` | 有阶段没时间就不让存 —— 于是推导**一定跑过** |
+    //
+    // 第 3 条**曾经不是全程有效的**：`removeStage` 一度不重推（评审 R-3），
+    // 那时它就是靠第 4 条兜着的。四条各自成立、彼此不知道对方在，
+    // 正是「连线」那一格 —— **事实成立，但没有任何东西以这个名义维持它**，
+    // 而读到这一行的人看不出它凭什么对。
+    //
+    // 正解是把它归一化到 `TaskDraft`（让非法状态不可表示，评审 S-5），
+    // **下一批做**：那会顺带把导入进来的全天阶段事项在打开保存时转成定时，
+    // 而那是一次数据迁移，不该夹带进一次重构里。
     isAllDay: draft.isAllDay,
     planDate: planDate,
     startMinute: draft.isAllDay ? null : draft.startMinute,
