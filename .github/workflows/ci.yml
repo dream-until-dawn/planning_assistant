@@ -44,6 +44,12 @@ jobs:
       - name: 可疑转义扫描（含扫描器自检）
         run: dart tool/lint_dart_escapes.dart --self-test
 
+      # 门禁只依赖工作树：拿到一份源码 zip，八道全跑得完。
+      # 域 = 这个文件点名的那些 ∪ 整个 test/（flutter test 跑的是全部）。
+      # 见 docs/05-engineering/testing-strategy.md §3.6
+      - name: 门禁不得走出工作树（含扫描器自检）
+        run: dart tool/lint_no_shell.dart --self-test
+
       # 需求可追溯性：每条 V1 需求都要有**用例**点它的名，
       # 豁免表只许缩短（棘轮）。同样带 --self-test。
       # 见 docs/05-engineering/conventions.md §5.1
