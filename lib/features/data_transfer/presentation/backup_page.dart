@@ -90,6 +90,24 @@ class _Header extends ConsumerWidget {
     // 又会在没人订阅时读到 `AsyncLoading` 的回落值。
     final keep = ref.setting(autoBackupKeepCount);
 
+    // **档位的说法从注册表里取，不要把天数插进句子。**
+    //
+    // 一度写的是「每 $interval 天一次」—— 选「每天」时它说
+    // 「每 1 天一次」，选「每月」时说「每 30 天一次」，
+    // 而一个月不是 30 天：那是把存储值当成了说法。
+    // 标签本来就有单一出处（`options`），这里绕过它等于开了第二处，
+    // 将来加一个档位（比如「每两周」）就得记着两边都改。
+    //
+    // 兜底那句是**今天的旧写法**：万一 `decode` 的白名单与 `options`
+    // 哪天不同步，界面退回「每 N 天」而不是崩 —— 说不上它到不了，
+    // 所以不写成断言。
+    final intervalLabel = autoBackupIntervalDays.options
+        .firstWhere(
+          (o) => o.$1 == interval,
+          orElse: () => (interval, '每 $interval 天'),
+        )
+        .$2;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         Spacing.lg,
@@ -108,7 +126,7 @@ class _Header extends ConsumerWidget {
           ),
           const SizedBox(height: Spacing.xs),
           Text(
-            auto ? '自动备份：每 $interval 天一次' : '自动备份：已关闭',
+            auto ? '自动备份：$intervalLabel一次' : '自动备份：已关闭',
             style: text.bodySmall?.copyWith(color: colors.disabledText),
           ),
           const SizedBox(height: Spacing.md),

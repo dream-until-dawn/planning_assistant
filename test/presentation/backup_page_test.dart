@@ -203,14 +203,40 @@ void main() {
       expect(find.text('自动备份：已关闭'), findsOneWidget);
     });
 
-    testAppWidgets('开着时说出间隔，且改完立刻变', (tester) async {
+    testAppWidgets('开着时，每个档位的说法都来自注册表（只有一个出处），且改完立刻变', (tester) async {
+      // ## 名字只写它真的钉住的那件事
+      //
+      // 期望值 `label` 与被测代码读的是**同一个 `options`**，所以这条
+      // 钉住的是「说法来自注册表、加档位不用改第二处」——
+      // **钉不住「说得像人话」**：把 `(30, '每月')` 改成 `(30, '每 30 天')`，
+      // 实现和用例一起跟着走，照样全绿。
+      //
+      // 名字一度写的是「每个档位都说人话」，那是**期望与实际同源**
+      // 这一族的典型误标 —— 而「说人话」恰恰是这次改动的由头，
+      // 最容易让人以为它被守住了。真要守它，那属性住在 `options` 里，
+      // 该在注册表那侧断言；但「标签里不得出现天数」有假阳性
+      // （将来真有个没自然名字的档位，比如「每 14 天」），
+      // 按 M0 那条（守卫的假阳性比漏报更伤）不现在立。
+      //
+      // 遍历而不是挑一个写死：原来那条断言的是 `每 30 天一次` ——
+      // 三个档位里唯一读着还算通顺的那个，所以它一直是绿的。
+      //
+      // **「改完立刻变」也归这条管**：每一轮都是 `seedSetting`
+      // （它自己 pump）之后立刻断言。名字里要留着这半句 ——
+      // 哪天有人把 seeding 提到循环外面（只 seed 一次、断言三次），
+      // 这条性质会无声消失，而一个不提它的名字给不出任何信号。
       await _pumpApp(tester);
       await _openBackup(tester);
-
       await seedSetting(tester, autoBackupEnabled, true);
-      await seedSetting(tester, autoBackupIntervalDays, 30);
 
-      expect(find.text('自动备份：每 30 天一次'), findsOneWidget);
+      for (final (value, label) in autoBackupIntervalDays.options) {
+        await seedSetting(tester, autoBackupIntervalDays, value);
+        expect(
+          find.text('自动备份：$label一次'),
+          findsOneWidget,
+          reason: '档位 $value 该说「$label」',
+        );
+      }
     });
   });
 }
