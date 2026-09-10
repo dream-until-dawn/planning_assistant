@@ -154,6 +154,41 @@ void main() {
     expect(harness.notifications.scheduled, isEmpty);
   });
 
+  testAppWidgets('FR-NOTI-01 改「滚动排期窗口」→ 当场按新窗口重排', (tester) async {
+    // ## 这条补的是一个**只有守卫覆盖、没有行为用例**的缺口
+    //
+    // `resync_trigger_test` 证明的是 `ref.listen(reminderWindowDaysProvider, …)`
+    // 那一行**在**。它证明不了改设置之后真的重排了 ——
+    // 而 M4-B1 那次断的恰恰不是接线，是**读的时刻**，结构守卫对时刻是瞎的。
+    //
+    // 所以这一条从**平台侧收到了什么**上验：窗口外的那条本来排不出来，
+    // 把窗口调宽之后，**不做任何别的操作**，它应该自己排出来。
+    final harness = await _pumpApp(tester);
+    final taskId = await _createTask(tester, harness);
+
+    // 把它挪到默认窗口（14 天）**之外**。
+    await (harness.db.update(harness.db.tasks)
+          ..where((t) => t.id.equals(taskId)))
+        .write(TasksCompanion(planDate: Value(_today.addDays(20).toString())));
+    await _seedReminder(harness, taskId);
+    await _settleSync(tester);
+    expect(
+      harness.notifications.scheduled,
+      isEmpty,
+      reason: '前提：20 天后的那条在 14 天窗口里排不出来',
+    );
+
+    // **只改这一个设置，别的什么都不动。**
+    await seedSetting(tester, reminderWindowDays, 30);
+    await _settleSync(tester);
+
+    expect(
+      harness.notifications.scheduled,
+      isNotEmpty,
+      reason: '改了窗口却没有重排 —— 那个设置不在触发集里',
+    );
+  });
+
   testAppWidgets('关掉总开关 → 不排', (tester) async {
     final harness = await _pumpApp(tester);
     final taskId = await _createTask(tester, harness);

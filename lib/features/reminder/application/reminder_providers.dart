@@ -105,7 +105,7 @@ final class ReminderSyncNotifier extends Notifier<void> {
   Future<ResyncOutcome> resyncNow() async {
     final ref = _ref;
     final now = ref.read(clockProvider).nowUtc();
-    final days = settingOf(ref, reminderWindowDays);
+    final days = ref.read(reminderWindowDaysProvider);
     final today = ref.read(todayProvider);
 
     final rows = expandInWindow(
@@ -137,6 +137,27 @@ final class ReminderSyncNotifier extends Notifier<void> {
         );
   }
 }
+
+/// 滚动排期窗口有多长（`reminder.scheduleWindowDays`）。
+///
+/// **单独开一个 provider，而不是在续排里直接 `settingOf`。**
+///
+/// 触发集监听的是 provider，而 `reminderSettingsProvider` 是一个**记录** ——
+/// 它的成分里没有窗口，所以改窗口不会让那个记录变，也就不会重排。
+/// 那正是「读了却不听」那一族：改完之后要等下一次别的原因触发才生效。
+/// 是 `resync_trigger_test` 补上「配置也是数据源」这半条判据之后当场露出来的。
+///
+/// 不并进 `ReminderSettings`，理由**不是**「排期纯函数不用窗口」——
+/// 它用（`planNotifications` 有一个 `required ScheduleWindow window` 参数）。
+///
+/// 理由是：**窗口已经作为一等参数在契约里了。** 把天数再塞进
+/// `ReminderSettings`，等于同一个东西以两种形态各传一次 ——
+/// 一份它用（`ScheduleWindow`），一份它不用（天数）。
+/// 「重复传参、其中一份无人读」正是这一批第 3 条守卫
+/// （每一列都要被读回）在数据层管的同一件事。
+final reminderWindowDaysProvider = Provider<int>(
+  (ref) => settingOf(ref, reminderWindowDays),
+);
 
 final reminderSyncProvider = NotifierProvider<ReminderSyncNotifier, void>(
   ReminderSyncNotifier.new,
@@ -235,6 +256,7 @@ class _ReminderSyncScopeState extends ConsumerState<ReminderSyncScope>
     ref.listen(allStagesProvider, (_, _) => _sync());
     ref.listen(allStageStatesProvider, (_, _) => _sync());
     ref.listen(reminderSettingsProvider, (_, _) => _sync());
+    ref.listen(reminderWindowDaysProvider, (_, _) => _sync());
     return widget.child;
   }
 }

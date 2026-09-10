@@ -51,6 +51,15 @@ class ReminderStatusCard extends ConsumerWidget {
           await ref
               .read(notificationPlatformProvider)
               .requestNotifyPermission();
+          // **回来之后先确认这张卡片还在树上。**
+          //
+          // 上面那一下挂起的是**系统权限弹窗** —— 用户在那儿待多久都可能，
+          // 回来时先退出设置页也完全正常。而 `ref` 绑在这个 element 上，
+          // 它没了再 `read` 就会抛。这是这个应用里最宽的一个失效窗口。
+          //
+          // `ConsumerWidget` 没有 `mounted`，用 `context.mounted`——
+          // 两者是同一个 element 的两种问法。
+          if (!context.mounted) return;
           // 给完权限立刻补排 —— 让用户等到下次进前台才生效，
           // 他会以为刚才那一下没起作用。
           await ref.read(reminderSyncProvider.notifier).resyncNow();
@@ -67,6 +76,8 @@ class ReminderStatusCard extends ConsumerWidget {
         actionLabel: '去设精确闹钟',
         onAction: () async {
           await ref.read(notificationPlatformProvider).openExactAlarmSettings();
+          // 同上，而且这一下更宽：它把用户**跳去了系统设置页**。
+          if (!context.mounted) return;
           await ref.read(reminderSyncProvider.notifier).resyncNow();
         },
       );
