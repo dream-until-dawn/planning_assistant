@@ -298,6 +298,91 @@ void main() {
       return (c, ids);
     }
 
+    /// 建一个**三阶段**的阶段事项草稿，三个阶段各差一天（0 / 1440 / 2880）。
+    (ProviderContainer, List<String>) withThreeTimedStages() {
+      final c = ProviderContainer(
+        overrides: [
+          ...appHarness().overrides,
+          newTaskSeedProvider.overrideWithValue((
+            date: null,
+            minute: null,
+            shape: TaskShape.staged,
+          )),
+        ],
+      );
+      addTearDown(c.dispose);
+      final n = c.read(taskEditorProvider.notifier)..setTitle('搬家');
+      for (var i = 0; i < 3; i++) {
+        n.addStage();
+      }
+      final ids = [for (final s in c.read(taskEditorProvider).stages) s.id];
+      for (final (i, id) in ids.indexed) {
+        n
+          ..setStageTitle(id, '第 ${i + 1} 步')
+          ..setStageTime(
+            id,
+            startOffsetMinutes: i * minutesPerDay,
+            durationMinutes: 60,
+          );
+      }
+      return (c, ids);
+    }
+
+    test('**删掉最早那个阶段之后，起止要重推**（评审 R-3）', () {
+      // ## 重推挂在「某一个 setter」上，而它该挂在「阶段集合变了」上
+      //
+      // `_rederiveSpanIfStaged` 只有 `setStageTime` 调。删掉最早那个阶段
+      // 之后，任务的开始**停在被删掉的那个阶段的时刻**上，而
+      // `derived_span.dart` 头注写的那条不变量（最早那个阶段的偏移恒为 0、
+      // 任务开始就是它）在草稿里当场不成立。
+      //
+      // **而它存得下去**：三个删成两个不会被 `blockedReason` 挡
+      // （挡的是「少于两个」），于是那条起止会被写进库。
+      //
+      // 别的几个改阶段的入口今天没事，但**理由各不相同**：加阶段靠
+      // 「新行没时间会被挡住」、重排靠「不动时间」、改标题勾完成靠
+      // 「不碰时间」—— 四条各不相同的论证，正是「机制锚在判据的一种
+      // 写法上」的形状。
+      final (c, ids) = withThreeTimedStages();
+      final before = c.read(taskEditorProvider);
+      expect(before.stages.map((s) => s.startOffsetMinutes), [
+        0,
+        minutesPerDay,
+        2 * minutesPerDay,
+      ], reason: '前提：三个阶段各差一天');
+
+      c.read(taskEditorProvider.notifier).removeStage(ids.first);
+      final after = c.read(taskEditorProvider);
+
+      expect(after.stages.map((s) => s.startOffsetMinutes), [
+        0,
+        minutesPerDay,
+      ], reason: '最早那个阶段的偏移不是 0 了 —— 起止没跟着重推');
+      expect(
+        after.planDate,
+        before.planDate!.addDays(1),
+        reason: '任务的开始停在被删掉的那个阶段上',
+      );
+      expect(after.canSave, isTrue, reason: '删到两个是合法的，它会被存进库');
+    });
+
+    test('对照组：删掉**最晚**那个，结束跟着往前收', () {
+      // 少了它，一个「删阶段时把起止整个清掉」的实现也能让上面绿。
+      final (c, ids) = withThreeTimedStages();
+      final before = c.read(taskEditorProvider);
+
+      c.read(taskEditorProvider.notifier).removeStage(ids.last);
+      final after = c.read(taskEditorProvider);
+
+      expect(after.planDate, before.planDate, reason: '开始不该动 —— 最早那个还在');
+      expect(
+        after.endDate,
+        before.endDate!.addDays(-1),
+        reason: '结束没跟着最晚那个阶段收回来',
+      );
+      expect(after.stages.map((s) => s.startOffsetMinutes), [0, minutesPerDay]);
+    });
+
     test('设了时间就存偏移与时长', () {
       final (c, ids) = withTwoStages();
       c

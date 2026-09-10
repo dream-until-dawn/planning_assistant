@@ -897,33 +897,52 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     ],
   );
 
-  void addStage() => state = state.copyWith(
-    stages: [
-      ...state.stages,
-      StageDraft(id: ref.read(idGeneratorProvider).newId()),
-    ],
-  );
+  /// **改阶段列表的唯一入口**（评审 R-3）。
+  ///
+  /// ## 为什么必须收成一个漏斗
+  ///
+  /// 重推起止（[_rederiveSpanIfStaged]）原本只挂在 `setStageTime` 上。
+  /// 判据其实是「**阶段集合变了就重推**」，而实现锚在了「某一个 setter」
+  /// 上 —— 于是 `removeStage` 漏了：删掉最早那个阶段之后，任务的开始
+  /// **停在被删掉的那个阶段的时刻**上，而那条草稿存得下去
+  /// （三个删成两个不会被 `blockedReason` 挡）。
+  ///
+  /// 别的几个入口今天没事，但**理由各不相同**：加阶段靠「新行没时间会被
+  /// 挡住」、重排靠「不动时间」、改标题/勾完成靠「不碰时间」。
+  /// **四条各不相同的论证**，正是「机制锚在判据的一种写法上」的形状 ——
+  /// 下一个入口靠哪条论证成立，没人保证得了。
+  ///
+  /// 推导是幂等的（`derived_span_test` 钉着），所以对不动时间的那几个
+  /// 入口也跑一遍是无害的 —— **无害正是能把它收成漏斗的前提**。
+  ///
+  /// 守卫：`stage_mutations_funnel_test` 扫这个文件里每一处
+  /// `copyWith(stages:`，要求它们只出现在这儿和推导里。
+  void _setStages(List<StageDraft> stages) {
+    state = state.copyWith(stages: stages);
+    _rederiveSpanIfStaged();
+  }
+
+  void addStage() => _setStages([
+    ...state.stages,
+    StageDraft(id: ref.read(idGeneratorProvider).newId()),
+  ]);
 
   /// 勾/取消勾一个阶段。
   ///
   /// **只改草稿，保存时才落库** —— 与标题、时间同一条路径。
   /// 就地写库的话，用户改了几个阶段又点返回，那几笔已经生效了。
-  void setStageDone(String stageId, bool done) => state = state.copyWith(
-    stages: [
-      for (final s in state.stages)
-        if (s.id == stageId)
-          s.copyWith(status: done ? TaskStatus.done : TaskStatus.pending)
-        else
-          s,
-    ],
-  );
+  void setStageDone(String stageId, bool done) => _setStages([
+    for (final s in state.stages)
+      if (s.id == stageId)
+        s.copyWith(status: done ? TaskStatus.done : TaskStatus.pending)
+      else
+        s,
+  ]);
 
-  void setStageTitle(String id, String title) => state = state.copyWith(
-    stages: [
-      for (final s in state.stages)
-        if (s.id == id) s.copyWith(title: title) else s,
-    ],
-  );
+  void setStageTitle(String id, String title) => _setStages([
+    for (final s in state.stages)
+      if (s.id == id) s.copyWith(title: title) else s,
+  ]);
 
   /// 设一个阶段的时间段（FR-TASK-02：每阶段有独立时间段）。
   ///
@@ -938,25 +957,23 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     required int? startOffsetMinutes,
     required int? durationMinutes,
   }) {
-    state = state.copyWith(
-      planDate: startOffsetMinutes == null
-          ? state.planDate
-          : (state.planDate ?? _today()),
-      stages: [
-        for (final s in state.stages)
-          if (s.id == id)
-            s.copyWith(
-              startOffsetMinutes: startOffsetMinutes,
-              // 没有开始就不该留着时长 —— 那是一段悬空的长度。
-              durationMinutes: startOffsetMinutes == null
-                  ? null
-                  : durationMinutes,
-            )
-          else
-            s,
-      ],
-    );
-    _rederiveSpanIfStaged();
+    // 时刻要落在某一天上；没有日期时补今天（与关全天、开重复同理）。
+    if (startOffsetMinutes != null && state.planDate == null) {
+      state = state.copyWith(planDate: _today());
+    }
+    _setStages([
+      for (final s in state.stages)
+        if (s.id == id)
+          s.copyWith(
+            startOffsetMinutes: startOffsetMinutes,
+            // 没有开始就不该留着时长 —— 那是一段悬空的长度。
+            durationMinutes: startOffsetMinutes == null
+                ? null
+                : durationMinutes,
+          )
+        else
+          s,
+    ]);
   }
 
   /// 阶段事项的起止**由阶段推出**（用户 2026-09-10 定）。
@@ -1009,12 +1026,10 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     );
   }
 
-  void removeStage(String id) => state = state.copyWith(
-    stages: [
-      for (final s in state.stages)
-        if (s.id != id) s,
-    ],
-  );
+  void removeStage(String id) => _setStages([
+    for (final s in state.stages)
+      if (s.id != id) s,
+  ]);
 
   /// 上移一个阶段。**顺序就是列表位置**，保存时才转成连续的 orderIndex。
   void moveStageUp(String id) {
@@ -1024,7 +1039,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     final tmp = list[i - 1];
     list[i - 1] = list[i];
     list[i] = tmp;
-    state = state.copyWith(stages: list);
+    _setStages(list);
   }
 
   /// 拖拽重排（FR-TASK-02 验收里那句「可拖拽重排」）。
@@ -1038,7 +1053,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     if (oldIndex < 0 || oldIndex >= list.length) return;
     if (newIndex == oldIndex) return;
     list.insert(newIndex.clamp(0, list.length - 1), list.removeAt(oldIndex));
-    state = state.copyWith(stages: list);
+    _setStages(list);
   }
 
   void moveStageDown(String id) {
@@ -1048,7 +1063,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     final tmp = list[i + 1];
     list[i + 1] = list[i];
     list[i] = tmp;
-    state = state.copyWith(stages: list);
+    _setStages(list);
   }
 
   /// 建任务命令的载荷。新建与「本次及以后」的新任务共用一份 ——
