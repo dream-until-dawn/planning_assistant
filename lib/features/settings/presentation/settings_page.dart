@@ -18,6 +18,7 @@ import '../domain/setting_spec.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({
+    this.reminderStatus,
     this.onOpenCategories,
     this.onOpenTrash,
     this.onOpenArchive,
@@ -33,6 +34,16 @@ class SettingsPage extends ConsumerWidget {
   /// 拦得住的只有这条约定。
   ///
   /// 为 null 时那一行不出现 —— 一个点不动的入口比没有更糟。
+
+  /// 提醒的状态卡片（FR-NOTI-04），挂在「提醒」组之后。
+  ///
+  /// **由外面传进来，不在这儿 import。** 跨 feature 只能经 application
+  /// 层的 Provider 通信（module-map §3，有守卫盯着）——
+  /// 设置页直接 import `reminder/presentation` 会被拦下。
+  /// 与 [onOpenCategories] 那几个回调同一个办法：页面不认识别的 feature，
+  /// 由组合根把它们拼起来。
+  final Widget? reminderStatus;
+
   final VoidCallback? onOpenCategories;
 
   /// 打开回收站（FR-TASK-08）。同上，为 null 时那一行不出现。
@@ -78,6 +89,11 @@ class SettingsPage extends ConsumerWidget {
           children: [
             for (final group in SettingGroup.values) ...[
               ..._groupSection(context, ref, group, exposed),
+              // 提醒的状态卡片挂在「提醒」组之后（FR-NOTI-04）。
+              // **紧挨着那几条开关**：用户是在这一组里问「提醒怎么设」的，
+              // 「它现在到底能不能响」是同一个问题的另一半。
+              if (group == SettingGroup.reminder && reminderStatus != null)
+                reminderStatus!,
               // 分类**不是配置项**（它是 `categories` 表里的实体），
               // 所以不进注册表；但管理入口在设置里（settings-spec §3）。
               // 挂在「行为」组之后 —— 那一组管的就是「默认怎么做」。

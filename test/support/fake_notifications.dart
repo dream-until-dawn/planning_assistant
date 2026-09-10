@@ -25,6 +25,13 @@ final class FakeNotificationPlatform implements NotificationPlatform {
   var readyCount = 0;
   var capabilityChecks = 0;
 
+  /// 申请通知权限调了几次。状态卡片上那个按钮**有没有真的干活**问它 ——
+  /// 画一个按钮摆着与真的去申请，在界面上长得一模一样。
+  var permissionRequests = 0;
+
+  /// 跳系统「精确闹钟」设置页调了几次。
+  var exactSettingsOpened = 0;
+
   /// 至今排出去的那些通知的 key，按排的顺序。
   List<String> get scheduledKeys => [for (final n in scheduled) n.key];
 
@@ -56,10 +63,13 @@ final class FakeNotificationPlatform implements NotificationPlatform {
   Future<List<int>> pluginPendingIds() async => const [];
 
   @override
-  Future<bool> requestNotifyPermission() async => canNotify;
+  Future<bool> requestNotifyPermission() async {
+    permissionRequests++;
+    return canNotify;
+  }
 
   @override
-  Future<void> openExactAlarmSettings() async {}
+  Future<void> openExactAlarmSettings() async => exactSettingsOpened++;
 }
 
 /// 内存版排期存储。

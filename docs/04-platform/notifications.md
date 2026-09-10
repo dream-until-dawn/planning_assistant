@@ -145,9 +145,14 @@ List<PlannedNotification> planNotifications({
 
 | 状态 | 行为 | UI |
 |---|---|---|
-| 通知权限被拒 | 不排期 | 设置页显示状态卡片 + 一键跳系统设置 |
-| 精确闹钟不可用 | 用 **`inexactAllowWhileIdle`** 继续排 | 明确告知「提醒可能延迟几分钟」，不假装一切正常 |
-| 两者都可用 | `exactAllowWhileIdle` | — |
+| 通知权限被拒 | 不排期 | 状态卡片「提醒暂时不会响」+「去开权限」（`ReminderStatusCard`） |
+| 精确闹钟不可用 | 用 **`inexactAllowWhileIdle`** 继续排 | 状态卡片「提醒可能晚几分钟」+「去设精确闹钟」 |
+| 两者都可用 | `exactAllowWhileIdle` | **不显示卡片** —— 常驻一条「一切正常」等于每次进设置页都说一件用户没问的事 |
+
+卡片挂在设置页「提醒」组之后，由**组合根**拼进去 ——
+设置页不 import 别的 feature 的 presentation（module-map §3，有守卫盯着）。
+两种状态同时成立时**只说权限那条**：没权限时一条都没排，
+「可能晚几分钟」是句废话，而两张卡片摞着用户不知道先处理哪个。
 
 > 降级目标选 `inexactAllowWhileIdle` 而**不是** `inexact`：后者在 Doze 下可能被推迟到下一个
 > 维护窗口，对「今天 9 点的会议」这类提醒等于失效。既然已经放弃精确，至少要保住「会响」。

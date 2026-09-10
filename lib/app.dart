@@ -33,6 +33,7 @@ import 'design/theme/app_theme.dart';
 import 'domain/value_objects/occurrence_key.dart';
 import 'features/archive/presentation/archive_page.dart';
 import 'features/reminder/application/reminder_providers.dart';
+import 'features/reminder/presentation/reminder_status_card.dart';
 import 'features/settings/application/registry.dart';
 import 'features/settings/application/settings_providers.dart';
 import 'features/settings/presentation/category_manager_page.dart';
@@ -157,6 +158,9 @@ GoRouter buildAppRouter({String? initialLocation}) => GoRouter(
         GoRoute(
           path: 'settings',
           builder: (context, state) => SettingsPage(
+            // 状态卡片由组合根拼进去 —— 设置页不认识别的 feature
+            // （module-map §3，有守卫盯着）。
+            reminderStatus: const ReminderStatusCard(),
             onOpenCategories: () => context.go(AppRoutes.categories),
             onOpenTrash: () => context.go(AppRoutes.trash),
             onOpenArchive: () => context.go(AppRoutes.archive),
