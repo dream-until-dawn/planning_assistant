@@ -104,11 +104,14 @@ final List<SettingSpecBase> settingsRegistry = [
   reminderMaxScheduled,
   reminderVibrate,
   reminderSound,
-  trashRetentionDays,
   defaultCategoryId,
   defaultTaskDuration,
   swipeRight,
   swipeLeft,
+  trashRetentionDays,
+  autoBackupEnabled,
+  autoBackupIntervalDays,
+  autoBackupKeepCount,
 ];
 
 // ── 外观 ────────────────────────────────────────────────────────
@@ -314,6 +317,52 @@ final SettingSpec<int> trashRetentionDays = SettingSpec<int>(
   // 认不出的值回落到默认。**必须显式列出合法值** ——
   // 配置文件被手改成 0 的话，「删了立刻永久消失」就成了默认行为。
   decode: (json) => json is int && const [7, 30, 90].contains(json) ? json : 30,
+);
+
+// ── 备份 ────────────────────────────────────────────────────────
+//
+// settings-spec §2.5 定的三条。**V1 的备份是应用内的** ——
+// 文件写在应用文档目录里，列得出、恢复得回来，但拿不到应用外面去
+// （分享出去要引新插件，那是一次技术栈决定，见 `BackupStore` 的头注）。
+
+/// 自动备份总开关（FR-DATA-05）。
+final SettingSpec<bool> autoBackupEnabled = SettingSpec<bool>(
+  key: 'data.autoBackupEnabled',
+  defaultValue: true,
+  exposure: SettingExposure.exposed,
+  group: SettingGroup.data,
+  label: '自动备份',
+  description: '按下面的间隔在启动时备一份，旧的自动清理',
+  encode: (v) => v,
+  decode: (json) => json is bool ? json : true,
+);
+
+/// 隔几天备一次。
+///
+/// **给档位不给任意天数**，同 `trashRetentionDays` 那条理由：
+/// 一个能填 0 的输入框意味着「每次启动都备一份」，
+/// 那会在保留数以内反复冲掉真正有用的旧备份。
+final SettingSpec<int> autoBackupIntervalDays = SettingSpec<int>(
+  key: 'data.autoBackupIntervalDays',
+  defaultValue: 7,
+  exposure: SettingExposure.exposed,
+  group: SettingGroup.data,
+  editor: SettingEditor.select,
+  label: '备份间隔',
+  options: const [(1, '每天'), (7, '每周'), (30, '每月')],
+  encode: (v) => v,
+  decode: (json) => json is int && const [1, 7, 30].contains(json) ? json : 7,
+);
+
+/// 保留几份。隐藏项：多数人不会有意见，但导出 JSON 里看得见。
+final SettingSpec<int> autoBackupKeepCount = SettingSpec<int>(
+  key: 'data.autoBackupKeepCount',
+  defaultValue: 5,
+  exposure: SettingExposure.hidden,
+  group: SettingGroup.data,
+  label: '保留份数',
+  encode: (v) => v,
+  decode: (json) => json is int && json >= 1 ? json : 5,
 );
 
 /// 新建单事项时，默认的结束离开始多远（FR-TASK-01）。

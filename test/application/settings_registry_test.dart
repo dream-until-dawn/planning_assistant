@@ -135,6 +135,42 @@ void main() {
     });
   });
 
+  group('注册表的顺序（settings-spec §1.2）', () {
+    test('分组是连续的，且顺序与 SettingGroup 的声明顺序一致', () {
+      // ## 为什么这也要管
+      //
+      // 页面按 `SettingGroup.values` 分段渲染，所以**跨组的注册表顺序
+      // 对界面没有影响** —— 看着像一条纯风格约定。
+      //
+      // 但它不是。设置页那条「每个暴露项都出现」是**照注册表顺序
+      // 一路往下滚**的，而 `scrollUntilVisible` 只会往一个方向滚：
+      // 注册表的组序一旦与页面对不上，走到某一项时它已经在上方，
+      // 滚 50 次也找不到，报的是「Bad state: No element」——
+      // 离「注册表的顺序不对」隔着三层。加两条备份配置时撞见过一次。
+      //
+      // 所以把它钉成一条明写的约束，而不是让下一个人再查一遍。
+      final seen = <SettingGroup>[];
+      for (final spec in settingsRegistry) {
+        // 没写 group 的只可能是隐藏项（上面那条「exposed 的项都有 group」
+        // 盯着），它们不上页面，夹在哪儿都不影响顺序。
+        final group = spec.group;
+        if (group == null) continue;
+        if (seen.isNotEmpty && seen.last == group) continue;
+        expect(
+          seen,
+          isNot(contains(group)),
+          reason: '${spec.key} 所在的 ${group.name} 组在注册表里断开了',
+        );
+        seen.add(group);
+      }
+      expect(
+        seen,
+        SettingGroup.values.where(seen.contains).toList(),
+        reason: '注册表的分组顺序与 SettingGroup 的声明顺序不一致',
+      );
+    });
+  });
+
   group('注册表不是空的', () {
     test('至少有一项，且至少有一项是暴露的', () {
       // 空注册表能让上面每一条都「通过」—— 全称量词在空集上恒真。

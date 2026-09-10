@@ -362,6 +362,46 @@ void main() {
     });
   });
 
+  group('导入之后，已经开着的界面要跟着变', () {
+    test('watch 流在 import 之后收到新值（FR-DATA-04）', () async {
+      // ## 为什么这条单独占一组
+      //
+      // 上面那几条往返用例是**导入完再查一次**，所以 import 用什么方式
+      // 写库都无所谓。可界面不是那样读的：它挂着 drift 的 `watch` 流。
+      //
+      // 而 `import` 全程走 `customStatement` —— drift 认不出这种语句
+      // 动了哪张表，于是**一个订阅都不会被通知**。表现是：恢复成功、
+      // 提示也弹了，列表却还是空的，直到用户随便改点别的东西才刷出来。
+      //
+      // 这是「模型有旋钮、界面够不着」的又一例：数据层完全正确，
+      // 而在 J-05 之前没有任何调用方，所以谁也没发现。
+      await seed();
+      final bundle = await exportNow();
+
+      // 清空 —— 走仓库，于是这一步的通知是正常的。
+      for (final row in await db.select(db.tasks).get()) {
+        await (db.delete(db.tasks)..where((t) => t.id.equals(row.id))).go();
+      }
+
+      final seen = <int>[];
+      final sub = db.select(db.tasks).watch().listen((r) => seen.add(r.length));
+      // 首值：空。
+      await pumpEventQueue();
+      expect(seen, [0], reason: '前提没摆好');
+
+      await service.import(decodeExportBundle(encodeExportBundle(bundle)));
+      await pumpEventQueue();
+      await sub.cancel();
+
+      expect(
+        seen.length,
+        greaterThan(1),
+        reason: '导入之后订阅方没收到任何新值 —— 界面会停在导入前的样子',
+      );
+      expect(seen.last, greaterThan(0));
+    });
+  });
+
   group('坏包不写进库', () {
     test('格式版本不匹配时拒绝，且库没被清空', () async {
       // **校验必须在清库之前**：一半写进去再报错，用户的库就成了半截状态，

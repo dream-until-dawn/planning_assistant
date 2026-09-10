@@ -22,6 +22,7 @@ class SettingsPage extends ConsumerWidget {
     this.onOpenCategories,
     this.onOpenTrash,
     this.onOpenArchive,
+    this.onOpenBackup,
     super.key,
   });
 
@@ -52,6 +53,9 @@ class SettingsPage extends ConsumerWidget {
   /// 打开归档列表（FR-TASK-08）。
   final VoidCallback? onOpenArchive;
 
+  /// 打开备份页（FR-DATA-04/05）。同上，为 null 时那一行不出现。
+  final VoidCallback? onOpenBackup;
+
   static const Key pageKey = ValueKey('settings-page');
 
   /// 某一项的 Key。
@@ -65,6 +69,7 @@ class SettingsPage extends ConsumerWidget {
   static const Key categoriesEntryKey = ValueKey('setting-entry-categories');
   static const Key trashEntryKey = ValueKey('setting-entry-trash');
   static const Key archiveEntryKey = ValueKey('setting-entry-archive');
+  static const Key backupEntryKey = ValueKey('setting-entry-backup');
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -105,6 +110,10 @@ class SettingsPage extends ConsumerWidget {
                 _archiveEntry(),
               if (group == SettingGroup.data && onOpenTrash != null)
                 _trashEntry(),
+              // 备份排在最后：归档与回收站是「这条任务怎么办」，
+              // 备份是「整库怎么办」—— 后者更重，也更少用。
+              if (group == SettingGroup.data && onOpenBackup != null)
+                _backupEntry(),
             ],
           ],
         ),
@@ -130,6 +139,16 @@ class SettingsPage extends ConsumerWidget {
     subtitle: const Text('收起来但没删掉的任务'),
     trailing: const Icon(Icons.chevron_right),
     onTap: onOpenArchive,
+  );
+
+  Widget _backupEntry() => ListTile(
+    key: backupEntryKey,
+    contentPadding: EdgeInsets.zero,
+    leading: const Icon(Icons.backup_outlined),
+    title: const Text('备份与恢复'),
+    subtitle: const Text('在这台设备上留一份，随时恢复'),
+    trailing: const Icon(Icons.chevron_right),
+    onTap: onOpenBackup,
   );
 
   Widget _trashEntry() => ListTile(

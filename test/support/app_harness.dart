@@ -9,7 +9,7 @@
 library;
 
 import 'package:drift/native.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +21,7 @@ import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/core/time/time_zone_resolver.dart';
 import 'package:planning_assistant/data/database/app_database.dart';
 import 'package:planning_assistant/data/database/dao/synced_dao.dart';
+import 'package:planning_assistant/data/dto/export_bundle.dart';
 import 'package:planning_assistant/data/repositories/category_repository_impl.dart';
 import 'package:planning_assistant/data/repositories/settings_repository_impl.dart';
 import 'package:planning_assistant/data/repositories/task_repository_impl.dart';
@@ -30,6 +31,7 @@ import 'package:planning_assistant/domain/entities/category.dart';
 import 'package:planning_assistant/domain/entities/stage.dart';
 import 'package:planning_assistant/domain/entities/stage_occurrence_state.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
+import 'package:planning_assistant/features/data_transfer/application/backup_providers.dart';
 import 'package:planning_assistant/features/reminder/application/reminder_providers.dart';
 import 'package:planning_assistant/features/settings/application/settings_providers.dart';
 import 'package:planning_assistant/features/settings/domain/setting_spec.dart';
@@ -44,6 +46,7 @@ import 'package:planning_assistant/features/views/task_list/presentation/occurre
 import 'package:planning_assistant/features/views/timeline/application/timeline_providers.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 
+import 'fake_backup.dart';
 import 'fake_notifications.dart';
 
 /// 一套装好的依赖，供 `ProviderScope(overrides: ...)` 使用。
@@ -54,6 +57,9 @@ typedef Harness = ({
   /// 假的通知平台。**排期到底有没有真的发生**问它 ——
   /// 那是这块功能最容易悄悄断掉的地方（见 `reminder_providers.dart` 的头注）。
   FakeNotificationPlatform notifications,
+
+  /// 内存里的备份目录。备份/恢复/保留策略有没有真的发生，问它。
+  InMemoryBackupStore backups,
 });
 
 /// 装一套跑在内存库上的依赖。
@@ -92,10 +98,14 @@ Harness appHarness({
   );
 
   final notifications = FakeNotificationPlatform();
+  // 落盘换成内存，**导出不换** —— 换掉导出的话，
+  // 「备份 → 恢复 → 数据还在」验的就是假实现的往返了。
+  final backups = InMemoryBackupStore(now: base);
 
   return (
     db: db,
     notifications: notifications,
+    backups: backups,
     overrides: [
       clockProvider.overrideWithValue(clock),
       timeZoneResolverProvider.overrideWithValue(
@@ -132,6 +142,14 @@ Harness appHarness({
       scheduledNotificationStoreProvider.overrideWithValue(
         InMemoryScheduledNotificationStore(),
       ),
+      // 备份这一块。**同上一条，必须在这儿给**：`AutoBackupScope`
+      // 也挂在 `MaterialApp.builder` 上，于是每一个 widget 测试都会
+      // 走一轮「该不该自动备份」。不给的话它们会齐刷刷撞上
+      // 组合根那条 `mustOverride`。
+      exportPortProvider.overrideWithValue(
+        JsonExportAdapter(ExportService(db)),
+      ),
+      backupStoreProvider.overrideWithValue(backups),
     ],
   );
 }
@@ -276,6 +294,11 @@ List<Override> viewPipelineOverrides({
     scheduledNotificationStoreProvider.overrideWithValue(
       InMemoryScheduledNotificationStore(),
     ),
+    // 自动备份同样挂在 `MaterialApp.builder` 上。这套夹具**没有真库**
+    // （喂的是固定数据），所以导出也只能是假的 —— 备份自己的用例走
+    // `appHarness`，那里发的是真的 `JsonExportAdapter`。
+    exportPortProvider.overrideWithValue(FakeExportPort()),
+    backupStoreProvider.overrideWithValue(InMemoryBackupStore()),
     minuteTickProvider.overrideWithValue(tick),
     // 展开按墙钟进行，要时区换算器。夹具里的任务多数不重复，
     // 但展开那一步照样会读它。
@@ -427,6 +450,53 @@ Future<void> seedSetting<T>(
   await container.read(settingsWriterProvider).set(spec, value);
   await tester.pumpAndSettle();
 }
+
+/// 退回上一页。
+///
+/// **不用 `tester.pageBack()`** —— 它找的是 `tooltip == 'Back'` 的按钮，
+/// 而这个应用钉死了中文（`app.dart` 的 `locale: Locale('zh')`），
+/// AppBar 自动加的那个返回键 tooltip 是「返回」。于是 `pageBack()` 报
+/// 「Could not find a suitable back button」，而那句话听起来像
+/// 「这一页没有返回键」—— 它明明有。
+///
+/// 取 `.first`：一个二级页的树里可能同时有上一层的返回键。
+Future<void> tapBack(WidgetTester tester) async {
+  await tester.tap(find.byType(BackButton).first);
+  await tester.pumpAndSettle();
+}
+
+/// 把当前那条 Snackbar 等到消失。
+///
+/// **Snackbar 是排队的**：前一条还在，后一条就不会出现。而
+/// `pumpAndSettle` **等不掉它** —— 显示中的 Snackbar 靠一个定时器收尾，
+/// 期间并没有一直在排帧，于是 settle 当场就返回了。
+///
+/// 症状是「按了第二个按钮却看不到它的提示」，而真正杵在那儿的是
+/// 第一条提示。备份页那两条（备份 → 恢复）撞见过一次。
+Future<void> waitOutSnackBar(WidgetTester tester) async {
+  await tester.pump(const Duration(seconds: 5));
+  await tester.pumpAndSettle();
+}
+
+/// 在**树建起来之前**往库里写一项配置。
+///
+/// ## 为什么不能用 [seedSetting]
+///
+/// 那一个要先有容器（它从 `Navigator` 上取），也就是说应用已经启动过了。
+/// 而有些行为只发生在**启动那一刻**：自动备份就是 —— 「关掉之后启动
+/// 不该备份」这条用例，配置必须在第一帧之前就在库里，
+/// 否则摆不出前提，那条用例会验成「备了一份之后把开关关掉」。
+///
+/// **在 `pumpWidget` 之前调**。
+Future<void> seedSettingBeforeApp<T>(
+  Harness harness,
+  SettingSpec<T> spec,
+  T value,
+) => DriftSettingsRepository(
+  harness.db,
+  const FixedWriterIdentity('test-device'),
+  FixedClock(DateTime.utc(2026, 9, 7, 3)),
+).put(spec.key, spec.encode(value), scope: spec.scope.wireName);
 
 /// 点加号、在面板上选一样，落到新建表单上。
 ///
