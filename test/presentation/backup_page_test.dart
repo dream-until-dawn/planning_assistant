@@ -203,14 +203,26 @@ void main() {
       expect(find.text('自动备份：已关闭'), findsOneWidget);
     });
 
-    testAppWidgets('开着时说出间隔，且改完立刻变', (tester) async {
+    testAppWidgets('开着时**每个档位都说人话**，且改完立刻变', (tester) async {
+      // 遍历注册表里的档位，而不是挑一个写死 —— 一度写的是
+      // 「每 $天数 天一次」，于是「每天」说成「每 1 天一次」、
+      // 「每月」说成「每 30 天一次」（一个月不是 30 天）。
+      // 挑一个档位断言的话，恰好挑中 7 就永远发现不了。
+      //
+      // 这条同时钉住「标签只有一个出处」：句子里的说法必须来自
+      // `options`，加一个新档位不用记着还有第二处要改。
       await _pumpApp(tester);
       await _openBackup(tester);
-
       await seedSetting(tester, autoBackupEnabled, true);
-      await seedSetting(tester, autoBackupIntervalDays, 30);
 
-      expect(find.text('自动备份：每 30 天一次'), findsOneWidget);
+      for (final (value, label) in autoBackupIntervalDays.options) {
+        await seedSetting(tester, autoBackupIntervalDays, value);
+        expect(
+          find.text('自动备份：$label一次'),
+          findsOneWidget,
+          reason: '档位 $value 该说「$label」',
+        );
+      }
     });
   });
 }
