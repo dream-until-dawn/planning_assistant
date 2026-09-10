@@ -117,7 +117,21 @@ List<String> domain({required String ciYaml, required Directory repoRoot}) {
 
 List<Finding> scanSource(String path, String src) {
   final out = <Finding>[];
-  final lines = src.split('\n');
+  // **先把回车符去掉。**
+  //
+  // Dart 的 `.` 不匹配回车符，所以下面那句 `(//|#).*` 加行尾锚在 CRLF 的
+  // 文件上**一个字符都换不掉** —— 注释根本没被剥掉，而这个文件的头注里
+  // 恰好写满了它自己要找的那几个词，于是它把自己报成三处违规。
+  //
+  // ## 这是同一批里的第二次
+  //
+  // 同一个根因在 `ref_after_await_test` 里已经诊断并修过一次。
+  // 两个自己剥注释的扫描器，写在同一批里，只修了一个。
+  //
+  // **而两个惯常视角都照不到它**：这台机器的工作树是混合行尾
+  // （这个文件是刚写的、还是 LF），CI 在 ubuntu 上 checkout 也是 LF ——
+  // 只有**在 Windows 上新克隆一份**才会红。是评审克隆重跑撞出来的。
+  final lines = src.replaceAll('\r', '').split('\n');
   for (var i = 0; i < lines.length; i++) {
     final line = lines[i];
     // 注释里提到名字不算 —— 这一族的说明文字里必然会提到它们。
@@ -164,6 +178,16 @@ bool selfTest(List<String> realDomain, Map<String, String> realSources) {
   );
   print('  误报注释: ${falsePositive.isEmpty ? "否" : "是"}');
   if (falsePositive.isNotEmpty) ok = false;
+
+  // ②b **CRLF 的样本也必须剥得掉注释。**
+  //
+  // 这一条是补出来的：夹具全是 LF 时，「注释剥不掉」这个 bug 在自检里
+  // 完全看不见 —— 而真实的新克隆在 Windows 上就是 CRLF。
+  // **夹具的行尾与真实文件不一致，自检就照不到真实文件上的失效。**
+  final crlfComment = ['// 这里说明为什么不用 $p.run', 'final x = 1;'].join('\r\n');
+  final crlfFalse = scanSource('sample.dart', crlfComment);
+  print('  误报 CRLF 注释: ${crlfFalse.isEmpty ? "否" : "是"}');
+  if (crlfFalse.isNotEmpty) ok = false;
 
   // ③ **这个脚本自己必须在域里，而且是绿的。**
   //    少了这一条，哪天域被改窄、守卫悄悄不再扫自己，没有任何信号。
