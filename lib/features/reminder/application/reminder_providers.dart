@@ -147,9 +147,14 @@ final class ReminderSyncNotifier extends Notifier<void> {
 /// 那正是「读了却不听」那一族：改完之后要等下一次别的原因触发才生效。
 /// 是 `resync_trigger_test` 补上「配置也是数据源」这半条判据之后当场露出来的。
 ///
-/// 不并进 `ReminderSettings`：那是领域侧的契约，而排期纯函数
-/// （`planNotifications`）根本不用窗口 —— 窗口是**调用方**算 `ScheduleWindow`
-/// 用的。往领域契约里塞一个它不用的字段，是把接线问题推给领域。
+/// 不并进 `ReminderSettings`，理由**不是**「排期纯函数不用窗口」——
+/// 它用（`planNotifications` 有一个 `required ScheduleWindow window` 参数）。
+///
+/// 理由是：**窗口已经作为一等参数在契约里了。** 把天数再塞进
+/// `ReminderSettings`，等于同一个东西以两种形态各传一次 ——
+/// 一份它用（`ScheduleWindow`），一份它不用（天数）。
+/// 「重复传参、其中一份无人读」正是这一批第 3 条守卫
+/// （每一列都要被读回）在数据层管的同一件事。
 final reminderWindowDaysProvider = Provider<int>(
   (ref) => settingOf(ref, reminderWindowDays),
 );

@@ -26,12 +26,20 @@
 /// 在同一个块里，`await` 之后出现 `ref.`，而中间没有任何 `mounted` 检查
 /// —— 就报。判据按**块深度**收尾：离开那个块，警戒解除。
 ///
-/// 刻意不引入 analyzer 做完整 AST（同 `lint_tests.dart` 的取舍）。
-/// 代价写在这儿而不是假装没有：
+/// 三条**必须**分辨清楚的形状（每一条都是踩出来的，各自有夹具）：
 ///
-/// - `await` 在嵌套闭包里、`ref` 在闭包外，可能**多报**；
-/// - 同一行里 `await` 在 `ref` 后面（`await ref.read(x).f()`）**不报** ——
-///   那一下的 `ref` 发生在挂起之前，是安全的。
+/// | 写法 | 判 | 因为 |
+/// |---|---|---|
+/// | `await ref.read(x).f()`（本块第一次挂起） | 不报 | `EXPR` 先求值再挂起 |
+/// | `await a(); await ref.read(b).f();` | **报** | 上一次挂起已经发生了 |
+/// | `if (await c()) ref.x;` | **报** | `await` 在一对先于它打开的括号里，括号闭合之后就是挂起之后 |
+///
+/// 另外两条：`case` 标签另起执行路径（Dart 的 switch 不贯穿），
+/// 以及**源文件是 CRLF**（`.` 不匹配回车符，不先归一化的话注释剥不掉）。
+///
+/// 刻意不引入 analyzer 做完整 AST（同 `lint_tests.dart` 的取舍）。
+/// 剩下的代价写在这儿而不是假装没有：`await` 在嵌套闭包里、
+/// `ref` 在闭包外，可能**多报**。
 @TestOn('vm')
 library;
 
@@ -51,7 +59,14 @@ final _mountedCheck = RegExp(r'\bmounted\b');
 /// 扫一段源码。见头注的判据与近似。
 List<RefUse> scanSource(String path, String src) {
   final out = <RefUse>[];
-  final lines = src.split('\n');
+  // **先把 \r 去掉。** 这个仓库的工作树是 CRLF，而 Dart 的 `.`
+  // **不匹配 `\r`** —— 于是 `//.*$` 永远够不到行尾，`replaceAll` 一个字符
+  // 都不换：**注释从来没被剥掉过**。
+  //
+  // 它藏得住，是因为自检样本是写在 dart 源码里的字符串，只有 `\n`。
+  // **夹具与真实文件的行尾不一样，于是自检看不见真实文件上的失效。**
+  // 症状是三处误报，而它们的共同点是「上面的文档注释里有 await 两个字」。
+  final lines = src.replaceAll('\r', '').split('\n');
   var depth = 0;
   int? armedAt; // 在哪个深度上「await 过了」
 
@@ -62,26 +77,79 @@ List<RefUse> scanSource(String path, String src) {
     // 出现 mounted 检查 → 警戒解除。
     if (_mountedCheck.hasMatch(code)) armedAt = null;
 
-    // 先判使用，再判 await。
+    // 警戒已拉响时，这一行上的任何 `ref` 使用都要报。
     //
-    // **同一行里 `await` 排在 `ref` 前面的，一律安全** —— 那一下的 `ref`
-    // 发生在这次挂起**之前**。头一版只是「先判使用再判 await」，
-    // 对单行的 `await ref.read(x)` 够用，但对**折行**的写法不够：
+    // ## 这里一度有一条豁免，它是错的（评审 R-1）
     //
-    //     await ref
-    //         .read(platformProvider)     ← 这一行没有 `ref` 这个词
-    //         .requestPermission();
-    //     await ref.read(syncProvider).resyncNow();   ← 于是这一行被冤枉
+    // 曾经写着「同一行里 `await` 排在 `ref` 前面的一律安全」，理由是
+    // 「那一下的 `ref` 发生在这次挂起之前」。**那句话本身没错，但它答的
+    // 不是安全性要问的问题。**
     //
-    // 上面那句 `await ref` 拉响了警戒，而下面那句其实自己就带着 await。
-    // 仓库里五处命中全是这个形状 —— **全是误报**，一处真缺陷都没有。
-    final refAt = _refUse.firstMatch(code);
-    final awaitAt = _awaitAt.firstMatch(code);
-    final awaitFirst =
-        refAt != null && awaitAt != null && awaitAt.start < refAt.start;
-    if (armedAt != null && refAt != null && !awaitFirst) {
+    // 安全性问的是：这个 `ref` 是不是排在**此前每一次**挂起之前。
+    // 而 `armedAt != null` 的意思就是「早先已经挂起过了」——
+    // **同一行的 await 对更早的那次挂起一个字都没说。**
+    //
+    // 那条豁免于是放走了真缺陷：`reminder_status_card` 里两处
+    // 「等系统权限弹窗 / 跳去系统设置页回来之后再 `ref.read`」，
+    // 挂起窗口是这个应用里最宽的一个。
+    //
+    // 删掉它不会伤到任何真安全的写法：真安全的那种（本行的 `await ref`
+    // 是**本块第一次**挂起）本来就因为 `armedAt == null` 而不会被报。
+
+    // `case` / `default` 标签**另起一条执行路径**：Dart 的 switch 不贯穿，
+    // 所以上一个 case 里的挂起对这一个 case 一个字都没说。
+    // 只在**同层**的标签上解除（`depth <= armedAt`）—— 挂起发生在 switch
+    // **之前**时，armedAt 更小，那些标签就不该解除它。
+    final branchLabel = RegExp(r'^\s*(case\b|default\s*:)').hasMatch(code);
+    if (branchLabel && armedAt != null && depth <= armedAt) armedAt = null;
+
+    if (armedAt != null && _refUse.hasMatch(code)) {
       out.add((file: path, line: i + 1, text: raw.trim()));
       armedAt = null; // 一个块里报一次就够，不刷屏
+    } else {
+      // **本行自己的 await 之后再用 ref，同样要报。**
+      //
+      // 「先判使用再上警戒」对 `await ref.read(x)` 是对的（那个 ref 在挂起
+      // 之前），但它顺带让**整整一族**永远不报：
+      //
+      //     if (await cond()) ref.invalidate(p);      // 单行 if
+      //     while (await next()) ref.read(p);
+      //
+      // 这两种在本仓库合法且常见（`lib/` 里现有 300 多处无花括号的单行
+      // 流程语句），而 `ref` 明明排在挂起之后。评审点名的 A/F 两个样本。
+      // **靠括号深度分辨，不能只比位置。**
+      //
+      // `await EXPR` 是先把 EXPR 求值、再挂起，所以
+      // `await ref.read(x).run()` 里那个 ref 在挂起之前 —— 安全，
+      // 尽管它在 `await` 后面。
+      //
+      // 而 `if (await c()) ref.x;` 里，`await` 被包在一对**先于它打开**的
+      // 括号里；那对括号一闭合，后面的东西就在挂起之后了。
+      // 判据于是是：**await 所在的括号闭合之后，还有没有 ref。**
+      final aw = _awaitAt.firstMatch(code);
+      if (aw != null) {
+        var paren = 0;
+        for (var k = 0; k < aw.start; k++) {
+          if (code[k] == '(') paren++;
+          if (code[k] == ')') paren--;
+        }
+        if (paren > 0) {
+          // 找那对括号的闭合处。
+          var k = aw.start;
+          var d = paren;
+          for (; k < code.length; k++) {
+            if (code[k] == '(') d++;
+            if (code[k] == ')') {
+              d--;
+              if (d < paren) break;
+            }
+          }
+          final after = k < code.length ? code.substring(k) : '';
+          if (_refUse.hasMatch(after)) {
+            out.add((file: path, line: i + 1, text: raw.trim()));
+          }
+        }
+      }
     }
 
     if (_awaitAt.hasMatch(code)) armedAt = armedAt ?? depth;
@@ -169,11 +237,17 @@ Future<void> f() async {
       expect(scanSource('good.dart', good), isEmpty);
     });
 
-    test('折行的 await ref 之后，另一句 await ref.read → 不报', () {
-      // 这是仓库里那五处误报的形状，钉下来。
-      // 前一句折了行，「拉警戒」的那一行上没有 `ref` 这个词；
-      // 后一句自己带着 await，那一下的 ref 在挂起之前。
-      const good = '''
+    test('**挂起过之后，哪怕这一行自己也带 await，照样要报**', () {
+      // 这一条曾经被我写成「不报」，是评审 R-1 打掉的那条豁免。
+      //
+      // 前一句折了行（拉警戒的那一行上没有 `ref` 这个词），
+      // 后一句自己带着 await —— 我当时据此判它安全。**错在**：
+      // 它自己那个 await 只说明「这个 ref 在**本次**挂起之前」，
+      // 对**上一次**挂起一个字都没说。而上一次挂起已经发生了。
+      //
+      // 仓库里的实例：等系统权限弹窗回来之后再 `ref.read` —— 那期间
+      // 用户完全可能已经退出这一页。
+      const bad = '''
 Future<void> f() async {
   await ref
       .read(platformProvider)
@@ -181,21 +255,75 @@ Future<void> f() async {
   await ref.read(syncProvider.notifier).resyncNow();
 }
 ''';
+      expect(scanSource('bad.dart', bad), hasLength(1));
+    });
+
+    test('本块第一次挂起就是 await ref.read → 不报', () {
+      // 删掉那条豁免之后，这一条仍然绿 —— 因为它压根没拉过警戒。
+      // **这就是那条豁免不必要的证据**：它保护的情形本来就不会被报。
+      const good = '''
+Future<void> f() async {
+  final r = await ref.read(serviceProvider).run();
+  print(r);
+}
+''';
       expect(scanSource('good.dart', good), isEmpty);
     });
 
-    test('但折行的 await 之后，**不带 await** 的 ref 仍然要报', () {
-      // 上一条的对照组。少了它，「await 在前就放行」这条会把真缺陷
-      // 一起放走 —— 而真缺陷恰恰长这样（`ref.invalidate` 没有 await）。
+    test('单行 if：`if (await c()) ref.x;` → 报（评审 A）', () {
+      // 这一族一度**永远不报** —— 「先判使用再上警戒」让本行自己的挂起
+      // 管不到本行的 ref。而 `lib/` 里现有 300 多处无花括号的单行流程语句，
+      // 两半都在，只差凑到一起。
       const bad = '''
 Future<void> f() async {
-  await ref
-      .read(platformProvider)
-      .requestPermission();
-  ref.invalidate(listProvider);
+  if (await cond()) ref.invalidate(p);
 }
 ''';
       expect(scanSource('bad.dart', bad), hasLength(1));
+    });
+
+    test('单行 while：`while (await n()) ref.read(p);` → 报（评审 F）', () {
+      const bad = '''
+Future<void> f() async {
+  while (await next()) ref.read(p);
+}
+''';
+      expect(scanSource('bad.dart', bad), hasLength(1));
+    });
+
+    test('switch 的两个 case 互斥 → 后一个不因前一个的 await 而被报', () {
+      // Dart 的 switch 不贯穿，所以上一个 case 里的挂起对这一个一个字都没说。
+      // 这是 `swipe_row.dart` 那处误报的形状。
+      const good = '''
+Future<void> f() async {
+  switch (action) {
+    case A.one:
+      final a = await ref.read(oneProvider).call();
+      tell(a);
+    case A.two:
+      final b = await ref.read(twoProvider).call();
+      tell(b);
+  }
+}
+''';
+      expect(scanSource('good.dart', good), isEmpty);
+    });
+
+    test('CRLF 的源文件里，注释照样剥得掉', () {
+      // **这一条是真实文件与夹具行尾不一致栽出来的。**
+      // Dart 的 `.` 不匹配回车符，于是 `//.*` 加行尾锚在 CRLF 文件上
+      // 一个字符都换不掉 —— **注释从来没被剥过**。
+      //
+      // 夹具全是 LF，所以自检看不见：症状是真实仓库上三处误报，
+      // 而它们的共同点是「上面的文档注释里有 await 两个字」。
+      // **夹具的行尾与真实文件不一致，自检就照不到真实文件上的失效。**
+      final crlf = [
+        '/// 在 await 之前把 messenger 取好',
+        'Future<void> f() async {',
+        '  ref.invalidate(p);',
+        '}',
+      ].join('\r\n');
+      expect(scanSource('good.dart', crlf), isEmpty);
     });
 
     test('离开那个块之后，警戒解除 → 不报', () {
