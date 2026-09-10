@@ -1176,6 +1176,92 @@ PR 里能看到测试从红变绿。这条由 code review 检查。
 已对真实仓库演示过失败：往一个 `test/` 下的守卫里注入
 `Process.runSync('git', …)` 后当场报出并定位到行，还原后报绿。
 
+### 3.7 每一列都要有人读回来
+
+[`test/architecture/column_read_back_test.dart`](../../test/architecture/column_read_back_test.dart)。
+
+**这一族栽过四次**，四次都是「两侧各自有测试、中间那根线没人接」，
+四次都是干别的时顺手撞见的：
+
+| | 那一列 / 那个字段 | 断在哪 |
+|---|---|---|
+| M2 | `durationMinutes` | 声明了、引擎读、引擎测了 —— 写入侧没有生产者 |
+| 时间轴 | `isOverdue` | 卡片读、组件测了 —— 整形那一步没接上 |
+| M3 | `occurrence_overrides.completed_at` | 写路径写、**读路径不取** → 叠加例外时丢失 |
+| M4 | `categories.isSystemDefault` | 声明了，全 `lib/` 只有表定义提到它 |
+
+它立得起结构性断言，是因为**域可枚举**：表的列是一个有限的、具名的集合。
+
+> 每张表的每一列，都必须在**对应 mapper 的读方向**里出现。
+> 出现不了，要么进豁免表（写明理由），要么它就是一列死数据。
+
+**只看读方向**是这条成立的前提：`toCompanion`（写方向）住在 `on 实体`
+的扩展里，天然分得开 —— 只看写方向的话，`completed_at` 那次抓不到。
+
+**域是「有 mapper 的那 7 张表」。** 另外五张（`change_log`、
+`scheduled_notifications`、`settings`、`tags`、`task_tags`）不映射到领域实体、
+没有 mapper，**在这条规则的域之外，不是被豁免**。两者的差别不是措辞：
+豁免是「本该管、这次放过」，域外是「这条规则压根没说它」——
+把域外写成豁免，下一个人会以为那儿开了个口子。这五张表因此不受本守卫保护，
+是已知边界。
+
+豁免共三类，都带反僵尸自检（还在不在 / 还在被违反吗 / 落在扫描范围里吗 /
+为什么改实现不如开豁免）：同步信封那 6 列（由 `SyncedDao` 盖章，V3 才用）、
+`Categories.isSystemDefault`（写下来的无使用者）、`OccurrenceOverrides.id`
+（派生的代理键）。
+
+### 3.8 读到的每个源，都要在触发集里
+
+[`test/architecture/resync_trigger_test.dart`](../../test/architecture/resync_trigger_test.dart)。
+
+与 §3.7 同形，只是域从「列」换成「provider」：那边问「写进去的读回来了没有」，
+这边问「读的东西变了会不会重算」。
+
+> `resyncNow()` 读到的每一个 provider，要么直接在 `ref.listen` 的触发集里，
+> 要么**传递地**依赖触发集里的某一个；否则进豁免表，写明「它变了为什么
+> 不需要重排」。
+
+「传递地」那一半靠一张**会被核对的别名表**：声明
+`stagesByTaskProvider ← allStagesProvider`，守卫回去找那个 provider 的定义、
+确认它真的 `watch` 了所声明的源。声明与实现分叉，那条自检先红。
+
+#### 补上「配置也是数据源」之后，当场露出一个真缺陷
+
+头一版只认 `ref.read(...)` 一种拼法，于是**全绿** —— 而 `resyncNow` 里那句
+`settingOf(ref, reminderWindowDays)` 它根本看不见。
+**机制要锚在判据上，不是锚在判据的一种写法上。**
+
+补上之后报出来：`reminderSettingsProvider` 是个**记录**，成分里没有窗口，
+所以**改「滚动排期窗口」不会触发续排**。修法是给窗口一个自己的 provider
+并监听它 —— 不并进 `ReminderSettings`，因为排期纯函数根本不用窗口，
+往领域契约里塞一个它不用的字段，是把接线问题推给领域。
+
+### 3.9 `await` 之后再用 `ref`，要先确认还在树上
+
+[`test/architecture/ref_after_await_test.dart`](../../test/architecture/ref_after_await_test.dart)。
+
+`flutter_lints` 的 `use_build_context_synchronously` 盯的是 **`BuildContext`**，
+不盯 `ref`。而两者绑在**同一个 Element** 上，那个 Element 没了，一起失效。
+
+M4 收尾时的实例说明了为什么光靠「知道原理」不够：`backup_page.dart` 的
+`_backupNow` 里写着「messenger 先取：await 之后 context 可能已经不在树上了」
+—— 作者知道这条原理、为 `context` 做了规避，然后在**同一个函数里**对 `ref`
+犯了同一个错。三处漏的都只碰 `ref`，唯一带守卫的那处恰好碰了 `context`。
+
+> `use_build_context_synchronously` 的域是 `context`，
+> 而这个项目真实的危险面是 `context` ∪ `ref`。
+
+#### 误报是自己找出来的，不是等出来的
+
+第一版在真仓库上报了 5 处，**5 处全是误报**，且全是同一个形状：
+折行写的 `await ref\n.read(…)` 拉响了警戒（那一行上没有 `ref` 这个词），
+于是下一句 `await ref.read(…)` 被冤枉 —— 而它自己带着 await，
+那一下的 `ref` 发生在挂起之前。
+
+判据补成「同一行里 `await` 排在 `ref` 前面的一律安全」，并**同时**补了
+对照组用例（折行 await 之后**不带 await** 的 `ref` 仍然要报）——
+少了对照组，这条放行会把真缺陷一起放走，而真缺陷恰恰长那样。
+
 ## 4. 时间相关测试的特殊纪律
 
 时间是本项目最大的 bug 温床，也是最容易写出永远绿测试的地方。
