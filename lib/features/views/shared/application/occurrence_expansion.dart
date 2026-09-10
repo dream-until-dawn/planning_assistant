@@ -494,6 +494,11 @@ int? _durationOf(Task task, PlanDate start) {
   // 这是「每一列都要有人读回来」那条守卫的**镜像**：那边是「写了没人
   // 读」，这边是「读了没人写」。看见它恒等于 1 就顺手化简的话，
   // 会在同步落地的第一天炸，而在那之前没有任何东西会红。
+  //
+  // **这条前提不是它一个人在用**：`task_editor_controller` 里
+  // 「阶段事项走到命令构造时 `isAllDay` 恒为 false」靠的也是「没有生产者」。
+  // 两处会在**同一天**同时失效 —— V3 导入落地的那天。
+  // 分别写着各自的「今天没事」而互不知情，正是那段注释在讲的那个毛病。
   if (task.isAllDay) return days * _minutesPerDay;
 
   final startMinute = task.startMinute?.value ?? 0;
