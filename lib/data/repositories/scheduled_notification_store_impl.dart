@@ -22,10 +22,15 @@ import '../database/app_database.dart';
 
 /// 已排期通知的状态列取值（表定义里那三个）。
 ///
-/// V1 只写 `scheduled` 一种：`fired` 要靠通知回调才知道，而那条回调在
-/// 应用没运行时收不到；`cancelled` 的行我们直接删掉 —— 留着一行
-/// 「已取消」除了让对账多一种要排除的状态，没有别的用处。
+/// V1 写 `scheduled` 与 `cancelled` 两种。`fired` 不写 —— 它要靠通知回调
+/// 才知道，而那条回调在应用没运行时收不到。
 const String kScheduledState = 'scheduled';
+
+/// 取消掉的那一条**留一行墓碑**，不物理删。
+///
+/// 这一行存在的唯一理由是**让 `max(osNotificationId)` 不会掉下去**，
+/// 见 [DriftScheduledNotificationStore.nextOsId]。
+const String kCancelledState = 'cancelled';
 
 final class DriftScheduledNotificationStore
     implements ScheduledNotificationStore {
@@ -76,24 +81,50 @@ final class DriftScheduledNotificationStore
 
   @override
   Future<void> remove(int osId) async {
-    await (_db.delete(
-      _db.scheduledNotifications,
-    )..where((t) => t.osNotificationId.equals(osId))).go();
+    await _db.transaction(() async {
+      // **标成已取消，不物理删** —— 删掉最大那条会让下一个 id 掉回去，
+      // 于是新排的通知复用一个刚被取消的 id。
+      await (_db.update(
+        _db.scheduledNotifications,
+      )..where((t) => t.osNotificationId.equals(osId))).write(
+        const ScheduledNotificationsCompanion(state: Value(kCancelledState)),
+      );
+
+      // 墓碑只留**最高的那一行**：它是撑住 `max` 的那一个，其余的留着
+      // 只会让这张表无限长。留一行的开销是 O(1)，而「全删」会让 max 掉、
+      // 「全留」会让表一直涨。
+      final highest = await _highestCancelled();
+      if (highest == null) return;
+      await (_db.delete(_db.scheduledNotifications)..where(
+            (t) =>
+                t.state.equals(kCancelledState) &
+                t.osNotificationId.isSmallerThanValue(highest),
+          ))
+          .go();
+    });
+  }
+
+  Future<int?> _highestCancelled() async {
+    final q = _db.selectOnly(_db.scheduledNotifications)
+      ..addColumns([_db.scheduledNotifications.osNotificationId.max()])
+      ..where(_db.scheduledNotifications.state.equals(kCancelledState));
+    return q
+        .map((r) => r.read(_db.scheduledNotifications.osNotificationId.max()))
+        .getSingleOrNull();
   }
 
   @override
   Future<int> nextOsId() async {
-    // **max + 1，不是 count + 1**：删掉中间几行之后 count 会撞上还活着的 id，
+    // **max + 1，而 max 算上墓碑行 —— 于是 id 永不复用。**
+    //
+    // 上一版的 max 只算活着的行，所以删掉最大那条之后 id 会被复用。
+    // 那**当时**是安全的，但安全的理由在另一个文件里：
+    // `ReminderScheduler.resync` 先让系统取消、再从库里删。
+    // 评审指出这个形状不好 —— **跨文件的时序约定迟早会被人对调，
+    // 而不存在的约定不会**。所以约定被去掉了，不是加一层小心。
+    //
+    // count + 1 更不行：删掉中间几行之后它会撞上还活着的 id，
     // 而撞了的后果是排第二条时系统把第一条顶掉，且没有任何报错。
-    //
-    // **max 取的是还活着的行，所以删掉最大那条之后 id 会被复用。**
-    // 这是安全的，但安全的理由不在这儿，而在 `ReminderScheduler.resync`：
-    // 它**先让系统取消、再从库里删**。所以一个能被复用的 id，
-    // 对应的系统闹钟必定已经不在了。
-    //
-    // 反过来说：将来若有谁把「删库」挪到「取消」之前，复用就会顶掉
-    // 一条还活着的闹钟 —— 那时要改的是这里（改成单独存一个计数器），
-    // 不是在那边补一层小心。
     final query = _db.selectOnly(_db.scheduledNotifications)
       ..addColumns([_db.scheduledNotifications.osNotificationId.max()]);
     final maxId = await query

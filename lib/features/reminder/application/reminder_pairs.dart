@@ -76,8 +76,17 @@ Occurrence? _occurrenceOf(TaskOccurrence row) {
     timeZoneId: row.task.timeZoneId,
   );
 
-  final endDate = row.endDate;
-  final endMinute = row.endMinute;
+  // **走有效结束，不是存储的那个**（data-model §4.7）：末阶段可能排到
+  // `endDate` 之后，那时跨度以阶段为准。「结束前一小时提醒我」说的是
+  // **这件事真正结束**的时候 —— 用存储值的话，把末阶段往后挪三小时，
+  // 提醒还留在原来那个钟点。
+  //
+  // 视图层有一条 lint 盯着「不得直接读 `endDate`/`endMinute`」，
+  // 而它只扫 `features/views/` —— 这个文件在 `features/reminder/` 下，
+  // 扫不到。所以这里是自己撞出来的，不是守卫拦下的（守卫的扫描范围
+  // 已经跟着扩了）。
+  final endDate = row.effectiveEndDate;
+  final endMinute = row.effectiveEndMinute;
 
   return Occurrence(
     taskId: row.task.id,

@@ -30,13 +30,17 @@ Future<Harness> _pumpApp(WidgetTester tester) async {
 }
 
 /// 同 `reminder_sync_test`：续排是 fire-and-forget 的，`pumpAndSettle` 不够。
+///
+/// **这里一度是三轮循环**，理由写的是「保存一次连发四条命令，一轮收不完」。
+/// 那是假的 —— 三是试出来的，而真正没收敛的原因是续排在监听回调里同步读
+/// 派生 provider（评审 M4-B1）。那个修好之后一轮就够，三轮删掉了。
+///
+/// 教训：**「多等几轮」凑出来的数，多半是在补偿别处一个真的缺陷。**
+/// 收敛轮数取决于传播链有多长，链一变数就得重试 —— 一个要重试的常数
+/// 本身就是信号。
 Future<void> _settleSync(WidgetTester tester) async {
-  // 保存一次会连发好几条命令（任务、阶段、清单、提醒），每条各自触发
-  // 一轮续排，而续排里还要读几次内存库 —— 一轮 pump 收不完。
-  for (var i = 0; i < 3; i++) {
-    await tester.pumpAndSettle();
-    await tester.pump(const Duration(milliseconds: 50));
-  }
+  await tester.pumpAndSettle();
+  await tester.pump(const Duration(milliseconds: 50));
   await tester.pumpAndSettle();
 }
 

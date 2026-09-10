@@ -45,8 +45,6 @@ final reminderSchedulerProvider = Provider<ReminderScheduler>(
 );
 
 /// 按 taskId 分组，**纯函数**。
-///
-/// 单独抽出来是因为续排**不能走派生 provider**，见 [remindersByTaskProvider]。
 Map<String, List<Reminder>> groupRemindersByTask(List<Reminder> all) {
   final out = <String, List<Reminder>>{};
   for (final r in all) {
@@ -56,17 +54,7 @@ Map<String, List<Reminder>> groupRemindersByTask(List<Reminder> all) {
   return out;
 }
 
-/// 全部提醒，按 taskId 索引。**给界面用**。
-///
-/// ## 续排不读它
-///
-/// 一个**没人 watch 的派生 provider，`read` 出来可能是旧值**：
-/// 上游 `allRemindersProvider` 已经推到 `-60` 了，这一个 `read` 回来还是
-/// `-15`。表现极难认：监听触发了、次数也对，唯独那一轮算出「什么都没变」，
-/// 而紧接着手动再调一次立刻就对。
-///
-/// 所以 `resyncNow` 直接读源头的 `allRemindersProvider`，
-/// 自己用 [groupRemindersByTask] 分组 —— 中间少一层，就少一个会滞后的缓存。
+/// 全部提醒，按 taskId 索引。
 final remindersByTaskProvider = Provider<Map<String, List<Reminder>>>(
   (ref) => groupRemindersByTask(switch (ref.watch(allRemindersProvider)) {
     AsyncData(:final value) => value,
@@ -140,13 +128,7 @@ final class ReminderSyncNotifier extends Notifier<void> {
         .resync(
           pairs: reminderPairsOf(
             rows: rows,
-            // **读源头，不读派生的那一个**（见 `remindersByTaskProvider`）。
-            remindersByTask: groupRemindersByTask(switch (ref.read(
-              allRemindersProvider,
-            )) {
-              AsyncData(:final value) => value,
-              _ => const [],
-            }),
+            remindersByTask: ref.read(remindersByTaskProvider),
           ),
           settings: ref.read(reminderSettingsProvider),
           nowUtc: now,
@@ -211,7 +193,22 @@ class _ReminderSyncScopeState extends ConsumerState<ReminderSyncScope>
     if (state == AppLifecycleState.resumed) _sync();
   }
 
+  /// 跑一轮续排。**推迟一个微任务再读数据。**
+  ///
+  /// 监听回调是在变更**传播到一半**的时候被调用的：那一刻同步去 `read`
+  /// 下游的派生 provider，拿到的值不可靠（时对时错，与有没有 watcher 无关 ——
+  /// `riverpod_read_timing_test` 把这三种情形都钉住了）。
+  ///
+  /// 这是**这一类**问题的修法，不是某一个 provider 的。曾经只把其中一个
+  /// （`remindersByTaskProvider`）绕开成「直接读源头」，那是点修：
+  /// `resyncNow` 还读着另外好几个派生的，下一个撞上的人得从头查一遍。
+  ///
+  /// 走过的两条歧路都记下来：先把等待从一轮加到八轮（没用 —— **「等得更久」
+  /// 治不了「读错时刻」**），再把长命对象改成 Notifier（也没用）。
+  /// 两次都在加码等待，而没有去问「它到底看见了什么」。
   Future<void> _sync() async {
+    if (!mounted) return;
+    await Future<void>.microtask(() {});
     if (!mounted) return;
     final outcome = await ref.read(reminderSyncProvider.notifier).resyncNow();
     if (!mounted) return;
@@ -225,9 +222,18 @@ class _ReminderSyncScopeState extends ConsumerState<ReminderSyncScope>
     // **watch 着它，让它别被自动回收** —— 它的 `ref` 就是续排读数据用的
     // 那一个，实例没了那个 ref 也就跟着失效（见 `ReminderSyncNotifier`）。
     ref.watch(reminderSyncProvider);
+    // **`_sync()` 读到的每一个数据源都要在这儿**，否则那个源变了不重排。
+    //
+    // 阶段那两条一度不在这儿，而 `resyncNow` 读着它们：改一个阶段的时间会
+    // 让这一次的**有效结束**变（data-model §4.7：末阶段可能排到 endDate
+    // 之后），于是 `relativeToEnd` 的提醒该跟着挪 —— 却没有任何监听被触发。
+    // 影响有界（进前台会整窗口重排），但提醒恰恰是在后台等着响的东西，
+    // 那个窗口正是它最该准的时候。评审挑出来的。
     ref.listen(visibleTasksProvider, (_, _) => _sync());
     ref.listen(allRemindersProvider, (_, _) => _sync());
     ref.listen(allOverridesProvider, (_, _) => _sync());
+    ref.listen(allStagesProvider, (_, _) => _sync());
+    ref.listen(allStageStatesProvider, (_, _) => _sync());
     ref.listen(reminderSettingsProvider, (_, _) => _sync());
     return widget.child;
   }

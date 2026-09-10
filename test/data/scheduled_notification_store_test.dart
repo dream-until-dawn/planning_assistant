@@ -148,13 +148,11 @@ void main() {
       expect(await store.nextOsId(), 4, reason: 'count+1 会给出 2，而 2 刚被删、3 还活着');
     });
 
-    test('**删掉最大那条之后，id 会被复用** —— 把这条行为钉下来', () async {
-      // max 取的是还活着的行，所以这是复用，不是单调递增。
-      // 它安全的理由不在存储这一层，而在 `ReminderScheduler.resync`
-      // **先取消再删库**：能被复用的 id，对应的系统闹钟必定已经不在了。
-      //
-      // 钉住它是因为那个理由写在别处 —— 哪天有人把两步对调，
-      // 这条用例不会红（它只描述存储），但实现里那段注释点名了该改哪儿。
+    test('**id 永不复用** —— 连最大那条被取消之后也不复用', () async {
+      // 上一版这里钉的是相反的行为（复用），而它安全的理由写在
+      // 另一个文件里（`resync` 先取消再删库）。评审指出那个形状不好：
+      // **跨文件的时序约定迟早会被人对调，而不存在的约定不会。**
+      // 所以约定被去掉了 —— 取消的那一行留成墓碑，max 就掉不下去。
       await store.save(
         ScheduledNotification(
           osId: 9,
@@ -163,7 +161,30 @@ void main() {
         ),
       );
       await store.remove(9);
-      expect(await store.nextOsId(), 1);
+
+      expect(await store.loadAll(), isEmpty, reason: '取消之后不该再读得到');
+      expect(await store.nextOsId(), 10, reason: '复用了刚被取消的 id');
+    });
+
+    test('墓碑只留最高那一行 —— 这张表不会一直涨', () async {
+      // 全留的话表无限长，全删的话 max 会掉、id 又复用了。
+      // 留最高的那一行是这两者之间唯一的解，开销 O(1)。
+      for (final id in [1, 2, 3]) {
+        await store.save(
+          ScheduledNotification(
+            osId: id,
+            key: _key('t$id', 'r$id', '2026-03-10T09:00'),
+            fireAtUtc: _at,
+          ),
+        );
+      }
+      for (final id in [1, 2, 3]) {
+        await store.remove(id);
+      }
+
+      final rows = await db.select(db.scheduledNotifications).get();
+      expect(rows.map((r) => r.osNotificationId), [3], reason: '墓碑不止一行');
+      expect(await store.nextOsId(), 4);
     });
   });
 
