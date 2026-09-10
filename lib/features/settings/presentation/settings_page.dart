@@ -62,6 +62,10 @@ class SettingsPage extends ConsumerWidget {
   static Key itemKey(String settingKey) => ValueKey('setting-$settingKey');
 
   /// 某一项的某个选项的 Key。
+  /// 某个开关项的 Key。
+  static Key toggleKey(String settingKey) =>
+      ValueKey('setting-toggle-$settingKey');
+
   static Key optionKey(String settingKey, String storageValue) =>
       ValueKey('setting-$settingKey-$storageValue');
 
@@ -197,17 +201,48 @@ class _SettingTile extends ConsumerWidget {
     final text = Theme.of(context).textTheme;
     final current = ref.settingDynamic(spec);
 
+    final title = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(spec.label!, style: text.bodyLarge),
+        if (spec.description != null) ...[
+          const SizedBox(height: Spacing.xxs),
+          Text(spec.description!, style: text.bodySmall),
+        ],
+      ],
+    );
+
+    // 开关跟在标题**同一行的右边**，别的控件另起一行。
+    //
+    // 不是排版偏好：一个占满整行的开关看不出它管的是上面哪一句，
+    // 而这一页是一行接一行的配置项。系统设置里的开关也都在右边 ——
+    // 这里没有理由自成一格。
+    if (spec.editor == SettingEditor.toggle && current is bool) {
+      return Padding(
+        key: SettingsPage.itemKey(spec.key),
+        padding: const EdgeInsets.only(bottom: Spacing.lg),
+        child: Row(
+          children: [
+            Expanded(child: title),
+            const SizedBox(width: Spacing.md),
+            Switch(
+              key: SettingsPage.toggleKey(spec.key),
+              value: current,
+              onChanged: (v) =>
+                  ref.read(settingsWriterProvider).setDynamic(spec, v),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Padding(
       key: SettingsPage.itemKey(spec.key),
       padding: const EdgeInsets.only(bottom: Spacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(spec.label!, style: text.bodyLarge),
-          if (spec.description != null) ...[
-            const SizedBox(height: Spacing.xxs),
-            Text(spec.description!, style: text.bodySmall),
-          ],
+          title,
           const SizedBox(height: Spacing.sm),
           switch (spec.editor) {
             // `select` 用一排 Chip 而不是下拉：选项都在两三个到四个之间，
@@ -215,6 +250,10 @@ class _SettingTile extends ConsumerWidget {
             SettingEditor.select => _Options(spec: spec, current: current),
             // 其余控件等有对应的配置项时再做。**不放占位控件** ——
             // 点了没反应的开关比没有更糟。
+            //
+            // 这句话现在只可能出现在 slider / color 上，而暴露项里一个都
+            // 没有 —— `settings_page_test` 有一条盯着「每个暴露项都画出了
+            // 能操作的控件」，真出现了它会红。
             _ => Text(
               '（这个类型的控件还没做：${spec.editor.name}）',
               style: text.bodySmall,

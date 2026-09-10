@@ -84,6 +84,34 @@ void main() {
       }
     });
 
+    testAppWidgets('每个暴露项都画出了**能操作的控件**，没有一处占位文字', (tester) async {
+      // ## 为什么「出现了」不够
+      //
+      // 上面那条只问「这一行在不在」。而 `_SettingTile` 对没实现的
+      // 控件类型画的是一句灰字（「这个类型的控件还没做：toggle」）——
+      // 那一行**照样在**，key 也照样有，于是那条完全通得过。
+      //
+      // 后果撞见过：`SettingEditor` 的默认值是 `toggle`，而 toggle
+      // 一直没实现，于是**每一个暴露的布尔项都是一句灰字** ——
+      // 提醒总开关、减少动效、免打扰、自动备份，四个开关用户一个也拨不动。
+      // 真机截图上一眼就看见了，而 1699 条用例全绿。
+      //
+      // 「模型有旋钮、界面够不着」的又一例，所以补这一条。
+      await _pumpApp(tester);
+      await _openSettings(tester);
+
+      for (final spec in settingsRegistry.where((s) => s.isExposed)) {
+        final tile = find.byKey(SettingsPage.itemKey(spec.key));
+        await tester.scrollUntilVisible(tile, 200);
+        await tester.pumpAndSettle();
+        expect(
+          find.descendant(of: tile, matching: find.textContaining('还没做')),
+          findsNothing,
+          reason: '${spec.key} 画的是占位文字 —— 它的 ${spec.editor.name} 控件没实现',
+        );
+      }
+    });
+
     testAppWidgets('分组标题按 SettingGroup 的顺序出现', (tester) async {
       await _pumpApp(tester);
       await _openSettings(tester);
@@ -125,6 +153,20 @@ void main() {
   });
 
   group('改了真的生效', () {
+    testAppWidgets('拨一下开关，配置写进库，别的页面读到的也变了', (tester) async {
+      // 开关这一类控件的「生效」尤其容易只做一半：`Switch` 自己会
+      // **看起来**被拨过去（它是受控的，但 Flutter 的开关有动画），
+      // 而值没写进库。所以断言落在**另一页读出来的那句话**上，
+      // 不落在开关自己的外观上。
+      await _pumpApp(tester);
+      await _openSettings(tester);
+
+      await tapVisible(tester, SettingsPage.toggleKey(autoBackupEnabled.key));
+      await tapVisible(tester, SettingsPage.backupEntryKey);
+
+      expect(find.text('自动备份：已关闭'), findsOneWidget);
+    });
+
     testAppWidgets('改「列表分组」，列表的分组标题跟着变', (tester) async {
       // 这条是整个设置页的意义所在。只验「页面画出来了」的话，
       // 一个写不进库的实现也能全绿。
