@@ -25,7 +25,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:planning_assistant/app.dart';
-import 'package:planning_assistant/design/components/task_card.dart';
 import 'package:planning_assistant/features/task/application/task_shape.dart';
 import 'package:planning_assistant/features/task/presentation/task_editor_page.dart';
 
@@ -46,12 +45,6 @@ Future<List<String>> _createStaged(WidgetTester tester) async {
   await tapCreate(tester, TaskShape.staged);
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
   await tester.pump();
-  // **拨成全天**：这一份验的是「任务整体挪动时阶段偏移不动」，
-  // 而它下面有一条前提断言「这条任务还是全天的」。
-  // 新建默认是定时的（起止必填那条改动之后），所以要拨回来 ——
-  // 全天与偏移无关，换成定时只会给这份夹具多两个变量。
-  await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
-
   final ids = <String>[];
   for (final name in ['打包', '搬运']) {
     await tapVisible(tester, TaskEditorPage.addStageKey);
@@ -86,93 +79,112 @@ Future<void> _reopen(WidgetTester tester) async {
 /// 所有阶段的绝对时刻跟着后移。
 /// 不用时间选择器再拨一次是因为那个对话框在测试里只接受默认值 ——
 /// 而验 R-52 需要的只是**锚点真的动了**，不是动到几点。
-Future<void> _makeTimed(WidgetTester tester) async {
-  await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
-  await tapVisible(tester, TaskEditorPage.timeFieldKey);
-  await tester.tap(find.text('确定'));
-  await tester.pumpAndSettle();
-}
 
 void main() {
-  testAppWidgets('R-52 任务整体挪动之后，阶段的偏移**原样不动**', (tester) async {
-    // 「跟随后移」不是靠算出来的，是靠**没人去动那个偏移**。
-    // 编辑器若在改开始时刻时顺手保持阶段的绝对时刻（听起来很贴心），
+  testAppWidgets('R-52 阶段之间的相对关系，不因为任务起止变了而被重算', (tester) async {
+    // ## 这一条被改写过（用户 2026-09-10 定：阶段事项的起止由阶段推出）
+    //
+    // 原来的形态是「把任务整体挪动（关掉全天、给它一个时刻），
+    // 断言阶段偏移原样不动」。**那条路没有了** —— 阶段事项的起止不再由
+    // 用户直接填，日期/全天/时刻那几个控件已经不出现在表单上。
+    //
+    // **不是删掉，是换观察点。** R-52 守的性质还在，只是现在只能从
+    // 「改阶段」那一侧看：改了一个阶段的时间之后，任务的起止跟着走，
+    // 而**另一个阶段与它的相对距离不变**。
+    // 若哪天有人在推导里顺手「保持每个阶段的绝对时刻」（听起来很贴心），
     // 这条会红 —— 而那正是 §4.1 权衡掉的那一半。
     final harness = await _pumpApp(tester);
     final ids = await _createStaged(tester);
 
-    final before = (await harness.db.select(harness.db.stages).get())
-        .firstWhere((s) => s.id == ids[1]);
-    expect(before.startOffsetMinutes, 0);
-    expect(before.durationMinutes, 60);
+    final before = await harness.db.select(harness.db.stages).get();
     expect(
-      (await harness.db.select(harness.db.tasks).get()).single.startMinute,
-      isNull,
-      reason: '前提：这条任务还是全天的',
+      before.firstWhere((s) => s.id == ids[1]).startOffsetMinutes,
+      0,
+      reason: '前提：第二个阶段从任务开始那一刻起',
     );
 
+    // 给**第一个**阶段也定上时间（对话框默认「任务开始起、一小时」）。
     await _reopen(tester);
-    await _makeTimed(tester);
+    await tapVisible(tester, TaskEditorPage.stageTimeKey(ids[0]));
+    await tester.tap(find.byKey(TaskEditorPage.stageTimeConfirmKey));
+    await tester.pumpAndSettle();
     await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
-    final task = (await harness.db.select(harness.db.tasks).get()).single;
-    expect(task.startMinute, isNotNull, reason: '锚点没动，这条用例就什么也没验');
-    expect(task.isAllDay, isFalse);
+    final after = await harness.db.select(harness.db.stages).get();
+    final a = after.firstWhere((s) => s.id == ids[0]);
+    final b = after.firstWhere((s) => s.id == ids[1]);
 
-    final after = (await harness.db.select(harness.db.stages).get()).firstWhere(
-      (s) => s.id == ids[1],
-    );
+    // 两个阶段现在从同一刻起 —— 相对距离是 0，而且**两边都是 0**：
+    // 谁也没有被推导挪走。
+    expect(a.startOffsetMinutes, 0);
+    expect(b.startOffsetMinutes, 0);
     expect(
-      after.startOffsetMinutes,
-      before.startOffsetMinutes,
-      reason: '阶段的偏移被重算了 —— 那样阶段就不会跟着任务走',
+      b.durationMinutes,
+      before.firstWhere((s) => s.id == ids[1]).durationMinutes,
+      reason: '别人的时长被动了 —— 推导只该改偏移的基准，不该碰时长',
     );
-    expect(after.durationMinutes, before.durationMinutes);
   });
 
-  testAppWidgets('R-52 顺带钉住：关掉「全天」再保存不会崩', (tester) async {
-    // **这是写上面那条时撞出来的真缺陷。**
-    // R-27 把形态切换做成了一条单独的命令，而它在保存流程里排在
-    // `UpdateTaskFieldsCommand` **之后** —— 那条命令带着 startMinute，
-    // 而库里那条还是全天，于是 `checkInvariants` 当场抛
-    // 「是全天任务却带 startMinute」。
+  testAppWidgets('**推导是幂等的**：什么都不改地重开再保存，一个字都不动', (tester) async {
+    // 这一条是整条改动的回归闸。推导每次改阶段时间都会跑一遍，
+    // 不幂等的话，什么都不改地保存两次，任务会一次次往前挪 ——
+    // 而用户看到的是「我什么都没干，它自己动了」。
     //
-    // 也就是说：**关掉「全天」、选个时刻、保存** —— 这条最普通不过的
-    // 编辑会直接崩。R-27 自己那批测试没覆盖它：要么只验开关能拨
-    // （没保存），要么直接发命令（没走编辑器这条「改形态 + 改字段」
-    // 同时发生的路）。
+    // `derived_span_test` 在纯函数那一层验过同一件事；这一条验的是
+    // **接线**：编辑器真的按那个函数走，而不是另算了一遍。
     final harness = await _pumpApp(tester);
-    // 这一条与阶段无关，用临时事项起手 —— 它默认就是全天、没日期，
-    // 正好是「关掉全天」这个动作的起点。
-    await tapCreate(tester, TaskShape.scratch);
-    await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
-    await tester.pump();
-    await tapVisible(tester, TaskEditorPage.saveButtonKey);
+    await _createStaged(tester);
+
+    final task0 = (await harness.db.select(harness.db.tasks).get()).single;
+    final stages0 = await harness.db.select(harness.db.stages).get();
 
     await _reopen(tester);
-    await _makeTimed(tester);
     await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
-    final task = (await harness.db.select(harness.db.tasks).get()).single;
-    expect(task.isAllDay, isFalse);
-    expect(task.startMinute, isNotNull);
-    // 回到列表 = 真的存下去了（崩的话会停在编辑页上）。
-    expect(find.byType(TaskCard), findsOneWidget);
+    final task1 = (await harness.db.select(harness.db.tasks).get()).single;
+    final stages1 = await harness.db.select(harness.db.stages).get();
+
+    expect(task1.planDate, task0.planDate);
+    expect(task1.startMinute, task0.startMinute);
+    expect(task1.endDate, task0.endDate);
+    expect(task1.endMinute, task0.endMinute);
+    expect(
+      stages1.map((s) => s.startOffsetMinutes),
+      stages0.map((s) => s.startOffsetMinutes),
+    );
   });
 
-  testAppWidgets('对照组：改结束日期不缩放阶段时长（§4.1 刻意如此）', (tester) async {
-    // 「不自动缩放」是写进文档的取舍：静默改变用户排好的阶段时长
-    // 比不改更糟。少了这条，一个「整体等比缩放」的实现能让上面那条绿。
+  testAppWidgets('对照组：任务的结束由**最晚那个阶段**决定，不缩放任何阶段时长', (tester) async {
+    // ## 也被改写过，理由同上一条
+    //
+    // 原来验的是「改任务的结束日期不缩放阶段时长」，而任务的结束现在
+    // 不是用户填的了。换成从阶段那一侧看同一件事：
+    // 任务的结束跟着最晚那个阶段走，而**没有任何阶段的时长被动过**。
+    //
+    // 「不自动缩放」是写进文档的取舍（§4.1）：静默改变用户排好的阶段
+    // 时长比不改更糟。少了这条，一个「整体等比缩放」的实现能让上一条绿。
     final harness = await _pumpApp(tester);
     final ids = await _createStaged(tester);
 
-    await _reopen(tester);
-    await tapVisible(tester, TaskEditorPage.endSwitchKey);
-    await tapVisible(tester, TaskEditorPage.saveButtonKey);
-
-    final after = (await harness.db.select(harness.db.stages).get()).firstWhere(
+    final task = (await harness.db.select(harness.db.tasks).get()).single;
+    final timed = (await harness.db.select(harness.db.stages).get()).firstWhere(
       (s) => s.id == ids[1],
     );
-    expect(after.durationMinutes, 60, reason: '阶段时长被跟着缩放了');
+
+    expect(timed.durationMinutes, 60, reason: '前提：那个阶段是一小时');
+    // 那个阶段从任务开始起、一小时 —— 于是任务的结束就该是它的结束。
+    expect(timed.startOffsetMinutes, 0);
+    expect(
+      task.endMinute! - task.startMinute!,
+      60,
+      reason: '任务的跨度不等于最晚那个阶段的结束 —— 推导取错了边界',
+    );
+    expect(
+      (await harness.db.select(harness.db.stages).get()).map(
+        (s) => s.durationMinutes,
+      ),
+      [null, 60],
+      reason: '有阶段的时长被推导动过了',
+    );
   });
 }

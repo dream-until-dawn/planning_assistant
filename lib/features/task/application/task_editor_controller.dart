@@ -29,6 +29,7 @@ import '../../settings/application/registry.dart';
 import '../../settings/application/settings_providers.dart';
 import '../../views/shared/application/category_providers.dart';
 import '../../views/shared/application/task_providers.dart';
+import 'derived_span.dart';
 import 'recurrence_draft.dart';
 import 'task_shape.dart';
 
@@ -925,6 +926,57 @@ final class TaskEditorController extends Notifier<TaskDraft> {
             )
           else
             s,
+      ],
+    );
+    _rederiveSpanIfStaged();
+  }
+
+  /// 阶段事项的起止**由阶段推出**（用户 2026-09-10 定）。
+  ///
+  /// 每次阶段的时间变了就重推一遍，而不是等到保存 —— 编辑器上那一行
+  /// 「由阶段决定：…」要当场跟着变，否则用户改完看不出改到了哪儿。
+  ///
+  /// 推导本身是纯函数（`derived_span.dart`），这里只负责**什么时候推**
+  /// 与**推完写回哪儿**。它是幂等的，所以多推几次无害。
+  ///
+  /// **只对有阶段的形态推**：单事项挂着阶段是旧数据里才有的形状
+  /// （早期版本没这条约束），对它们推等于拿新规矩改一条本来合法的旧数据。
+  void _rederiveSpanIfStaged() {
+    if (!state.shape.hasStages) return;
+    final anchor = DateAndMinute(
+      state.planDate ?? _today(),
+      state.startMinute ?? MinuteOfDay(0),
+    );
+    final derived = deriveSpanFromStages(anchor, [
+      for (final s in state.stages)
+        (
+          startOffsetMinutes: s.startOffsetMinutes,
+          durationMinutes: s.durationMinutes,
+        ),
+    ]);
+    // 推不出来（一个阶段都没填时间）就**保持原样** ——
+    // 把起止清掉的话，用户填第一个阶段之前那条任务会先失去日期。
+    if (derived == null) return;
+
+    state = state.copyWith(
+      // **推出来的起止带时刻，所以它一定不是全天的。**
+      //
+      // 不一起改的话，一条旧的「全天阶段任务」在填了阶段时间之后会变成
+      // 「全天却带 startMinute」—— `checkInvariants` 当场拒，
+      // 而用户看到的只是保存时炸了一下。
+      // （R-52 那批用例撞出来的：它们原本靠「关掉全天」给阶段任务加时刻，
+      // 而那条路现在没有了 —— 时刻只能从阶段来。）
+      isAllDay: false,
+      planDate: derived.start.date,
+      startMinute: derived.start.minute,
+      endDate: derived.end.date,
+      endMinute: derived.end.minute,
+      stages: [
+        for (final (i, s) in state.stages.indexed)
+          s.copyWith(
+            startOffsetMinutes: derived.stages[i].startOffsetMinutes,
+            durationMinutes: derived.stages[i].durationMinutes,
+          ),
       ],
     );
   }

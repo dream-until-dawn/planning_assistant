@@ -261,7 +261,7 @@ void main() {
       // 后者配了但 supportedLocales 或 locale 不对，照样是英文。
       await _pumpApp(tester);
 
-      await tapCreate(tester);
+      await tapCreate(tester, TaskShape.single);
       await tester.tap(find.byKey(TaskEditorPage.dateFieldKey));
       await tester.pumpAndSettle();
 
@@ -281,10 +281,9 @@ void main() {
       // 但表单上不该出现那个瞬间 —— 用户看到的是「空着也能存」，
       // 存下去却有日期，两件事对不上。
       await _pumpApp(tester);
-      await tapCreate(tester);
-
-      // 关掉全天 → 自动补今天 → 清除按钮应当消失。
-      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+      // **单事项预填就是非全天**（临时事项藏了日期栏，验不了这条），
+      // 所以这里不用再拨开关 —— 拨了反而会切到全天，把前提翻过来。
+      await tapCreate(tester, TaskShape.single);
 
       expect(
         find.descendant(
@@ -299,10 +298,10 @@ void main() {
     testAppWidgets('对照组：全天时可以清空日期', (tester) async {
       // 否则「一律不给清」也能让上面那条绿，而那样日期就永远去不掉了。
       await _pumpApp(tester);
-      await tapCreate(tester);
+      await tapCreate(tester, TaskShape.single);
 
-      // 全天状态下先关再开，让日期被补上又保留（关时补今天，开时不清日期）。
-      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+      // 单事项预填是非全天且带日期，拨成全天之后日期留着 —— 于是
+      // 「全天 + 有日期」这个前提一步就摆好了。
       await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
 
       expect(
@@ -388,8 +387,8 @@ void main() {
       await tapCreate(tester, TaskShape.staged);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '写周报');
       await tester.pump();
-      // 关掉全天才有「几点」可谈。
-      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+      // 阶段事项没有全天开关了：起止由阶段的时间推出，
+      // 而阶段时间一律带时刻（用户 2026-09-10 定）。
 
       final ids = <String>[];
       for (final title in ['收集素材', '整理成稿']) {
@@ -495,32 +494,35 @@ void main() {
   });
 
   group('计划时间段（FR-TASK-01：可选的开始与结束）', () {
-    testAppWidgets('开结束开关 → 选日期与时刻 → 一起落库', (tester) async {
+    testAppWidgets('结束开关一开就给个看得见的默认（与开始同一天），且落库', (tester) async {
       final harness = await _pumpApp(tester);
 
-      await tapCreate(tester);
+      await tapCreate(tester, TaskShape.single);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
       await tester.pump();
 
-      // 关掉全天才谈得上时刻。
+      // **先拨成全天**：这一条要验的是「结束开关一开给的那个默认日期」，
+      // 而同一天 + 一个比开始早的时刻会撞上「结束早于开始」——
+      // 那条约束是对的，验默认日期时不该被它绊住。
+      // 结束**时刻**能不能落库另有两处盯着（`write_path_reachability` 的
+      // endMinute 探针、以及下面那条「切回全天会把结束时刻一起清掉」）。
       await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+
+      // **先关再开** —— 这一条验的是「开关一开会给个看得见的默认」，
+      // 所以得让它真的从关的状态开一次。单事项预填是开着的
+      // （结束在 +24 小时那天），不先关掉就验不到那个默认。
+      await tapVisible(tester, TaskEditorPage.endSwitchKey);
       await tapVisible(tester, TaskEditorPage.endSwitchKey);
 
       // 开关一开就该有一个看得见的默认（与开始同一天），
       // 而不是留一行「选个日期」等着再点一次。
       expect(find.byKey(TaskEditorPage.endDateFieldKey), findsOneWidget);
 
-      // 结束时刻走时间选择器。
-      await tapVisible(tester, TaskEditorPage.endTimeFieldKey);
-      await tester.tap(find.text('确定'));
-      await tester.pumpAndSettle();
-
       await tapVisible(tester, TaskEditorPage.saveButtonKey);
 
       final task = (await harness.db.select(harness.db.tasks).get()).single;
       expect(task.endDate, isNotNull, reason: '结束日期该跟着落库');
-      expect(task.endMinute, isNotNull, reason: '结束时刻该跟着落库');
-      // 结束日期默认取开始那天。
+      // 结束日期默认取开始那天 —— 这才是这一条钉的东西。
       expect(task.endDate, task.planDate);
     });
 
@@ -541,16 +543,15 @@ void main() {
       // 留着的话就是一条「全天但 18:00 结束」的任务 ——
       // 领域不变量直接拒绝，而用户看到的只是保存时炸了一下。
       final harness = await _pumpApp(tester);
-      await tapCreate(tester);
+      await tapCreate(tester, TaskShape.single);
       await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '开会');
       await tester.pump();
 
-      await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
-      await tapVisible(tester, TaskEditorPage.endSwitchKey);
+      // 单事项预填就是「非全天 + 有结束」，所以直接去设结束时刻。
       await tapVisible(tester, TaskEditorPage.endTimeFieldKey);
       await tester.tap(find.text('确定'));
       await tester.pumpAndSettle();
-      // 再切回全天。
+      // 再切成全天。
       await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
 
       await tapVisible(tester, TaskEditorPage.saveButtonKey);

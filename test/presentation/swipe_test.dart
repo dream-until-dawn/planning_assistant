@@ -57,9 +57,14 @@ Future<void> _create(
   bool withDate = true,
 }) async {
   // 形态在面板上就选定了，进表单之后不必再拨重复开关。
+  //
+  // **要日期就得选单事项**（用户 2026-09-10 定）：临时事项现在把日期栏
+  // 一并藏了 —— 它本来就不排时间，留一个填了没用的输入框比没有更糟。
   await tapCreate(
     tester,
-    recurring ? TaskShape.recurringSingle : TaskShape.scratch,
+    recurring
+        ? TaskShape.recurringSingle
+        : (withDate ? TaskShape.single : TaskShape.scratch),
   );
   await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), title);
   await tester.pump();

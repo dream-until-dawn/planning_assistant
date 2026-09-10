@@ -370,75 +370,91 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
               onSelected: controller.setPriority,
             ),
             const SizedBox(height: Spacing.xl),
-            _DateRow(
-              key: TaskEditorPage.dateFieldKey,
-              date: draft.planDate,
-              today: _today(),
-              // 非全天时**不许清空日期**：清了就又回到「有时刻没哪天」。
-              // save() 那道兜底会把它补回来，但表单上不该出现那个瞬间 ——
-              // 用户看到的是「日期空着也能存」，而存下去却有日期。
-              clearable: draft.isAllDay,
-              onPick: controller.setPlanDate,
-            ),
-            SwitchListTile(
-              key: TaskEditorPage.allDaySwitchKey,
-              contentPadding: EdgeInsets.zero,
-              title: const Text('全天'),
-              // **编辑时一度是禁用的**：全天 ⇄ 定时会改变 occurrenceKey
-              // 的形态，已有的单次例外要在同一事务里迁移 key
-              // （data-model §4.6、R-27）。没有那条命令之前，
-              // 让它能拨却存不下去就是又一个「改了没反应」的开关。
-              // `ConvertTaskAllDayModeCommand` 做出来了，于是放开。
-              subtitle: draft.allDayModeChanged
-                  ? Text('保存时会把这条任务的单次例外一并迁移', style: text.bodySmall)
-                  : null,
-              value: draft.isAllDay,
-              onChanged: controller.setAllDay,
-            ),
-            if (!draft.isAllDay)
-              _TimeRow(
-                key: TaskEditorPage.timeFieldKey,
-                minute: draft.startMinute,
-                onPick: controller.setStartMinute,
-              ),
-            SwitchListTile(
-              key: TaskEditorPage.endSwitchKey,
-              contentPadding: EdgeInsets.zero,
-              title: const Text('有结束时间'),
-              subtitle: Text(
-                draft.endDate == null ? '不设结束' : '到 ${_endText(draft)}',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              value: draft.endDate != null,
-              // 打开时**先给一个看得见的默认**（与开始同一天），
-              // 而不是打开后留一行「选个日期」等着用户再点一次。
-              onChanged: (on) => controller.setEndDate(
-                on ? (draft.planDate ?? _today()) : null,
-              ),
-            ),
-            if (draft.endDate != null) ...[
+            // ── 时间区 ──────────────────────────────────────────
+            //
+            // **按形态收起**（用户 2026-09-10 定）：阶段事项的起止由阶段
+            // 推出、临时事项压根不排时间 —— 两者都不该出现这几个控件。
+            // 填了也会被推导盖掉，而一个填了没用的输入框比没有更糟。
+            //
+            // **但「当前有数据」时照样显示。** 旧数据里有形态与内容对不上
+            // 的行（早期版本没有这些约束），藏起来的话它们在界面上就再也
+            // 够不着了 —— 这条逃生口原本写在阶段区那儿，现在是全表通用的
+            // 判据（见 `_showsSpanFields`）。
+            // 阶段事项那一行**独立于输入控件**：控件藏了，这一行才更要在 ——
+            // 它同时回答了「起止是多少」和「日期栏为什么不见了」。
+            if (draft.shape.spanDerivedFromStages)
+              _DerivedSpanLine(draft: draft),
+            if (_showsSpanFields(draft)) ...[
               _DateRow(
-                key: TaskEditorPage.endDateFieldKey,
-                date: draft.endDate,
+                key: TaskEditorPage.dateFieldKey,
+                date: draft.planDate,
                 today: _today(),
-                // 结束日期不在这里清 —— 关上面那个开关才是「不设结束」。
-                // 留一个清除按钮的话，清完还剩一个「有结束时间」开着的
-                // 空行，那是个没有意义的中间态。
-                clearable: false,
-                label: '结束日期',
-                // 结束不能早于开始。选择器就把下界卡在这儿，
-                // 顺手挡掉一半的错法；另一半（先选结束再改开始）
-                // 由 `TaskDraft.blockedReason` 兜。
-                firstDate: draft.planDate,
-                onPick: controller.setEndDate,
+                // 非全天时**不许清空日期**：清了就又回到「有时刻没哪天」。
+                // save() 那道兜底会把它补回来，但表单上不该出现那个瞬间 ——
+                // 用户看到的是「日期空着也能存」，而存下去却有日期。
+                clearable: draft.isAllDay,
+                onPick: controller.setPlanDate,
+              ),
+              SwitchListTile(
+                key: TaskEditorPage.allDaySwitchKey,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('全天'),
+                // **编辑时一度是禁用的**：全天 ⇄ 定时会改变 occurrenceKey
+                // 的形态，已有的单次例外要在同一事务里迁移 key
+                // （data-model §4.6、R-27）。没有那条命令之前，
+                // 让它能拨却存不下去就是又一个「改了没反应」的开关。
+                // `ConvertTaskAllDayModeCommand` 做出来了，于是放开。
+                subtitle: draft.allDayModeChanged
+                    ? Text('保存时会把这条任务的单次例外一并迁移', style: text.bodySmall)
+                    : null,
+                value: draft.isAllDay,
+                onChanged: controller.setAllDay,
               ),
               if (!draft.isAllDay)
                 _TimeRow(
-                  key: TaskEditorPage.endTimeFieldKey,
-                  minute: draft.endMinute,
-                  label: '结束时间',
-                  onPick: controller.setEndMinute,
+                  key: TaskEditorPage.timeFieldKey,
+                  minute: draft.startMinute,
+                  onPick: controller.setStartMinute,
                 ),
+              SwitchListTile(
+                key: TaskEditorPage.endSwitchKey,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('有结束时间'),
+                subtitle: Text(
+                  draft.endDate == null ? '不设结束' : '到 ${_endText(draft)}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                value: draft.endDate != null,
+                // 打开时**先给一个看得见的默认**（与开始同一天），
+                // 而不是打开后留一行「选个日期」等着用户再点一次。
+                onChanged: (on) => controller.setEndDate(
+                  on ? (draft.planDate ?? _today()) : null,
+                ),
+              ),
+              if (draft.endDate != null) ...[
+                _DateRow(
+                  key: TaskEditorPage.endDateFieldKey,
+                  date: draft.endDate,
+                  today: _today(),
+                  // 结束日期不在这里清 —— 关上面那个开关才是「不设结束」。
+                  // 留一个清除按钮的话，清完还剩一个「有结束时间」开着的
+                  // 空行，那是个没有意义的中间态。
+                  clearable: false,
+                  label: '结束日期',
+                  // 结束不能早于开始。选择器就把下界卡在这儿，
+                  // 顺手挡掉一半的错法；另一半（先选结束再改开始）
+                  // 由 `TaskDraft.blockedReason` 兜。
+                  firstDate: draft.planDate,
+                  onPick: controller.setEndDate,
+                ),
+                if (!draft.isAllDay)
+                  _TimeRow(
+                    key: TaskEditorPage.endTimeFieldKey,
+                    minute: draft.endMinute,
+                    label: '结束时间',
+                    onPick: controller.setEndMinute,
+                  ),
+              ],
             ],
             // ## 按形态显示区块（FR-TASK-01/02/03）
             //
@@ -483,8 +499,14 @@ class _TaskEditorPageState extends ConsumerState<TaskEditorPage> {
             ],
             // 提醒排在清单之前：它跟时间有关，紧接着上面那几段时间设置；
             // 清单是「顺手记几件小事」，与时间无关，放最后。
-            const SizedBox(height: Spacing.xl),
-            _ReminderSection(draft: draft, controller: controller),
+            // 临时事项不排时间，所以提醒也无从谈起 —— 编辑器里那句话
+            // 本来就写着「没有日期的任务不会提醒」。留一个设了不会响的区，
+            // 正是这个项目一直在防的「点了没反应」。
+            // 同上：**已经设过提醒时照样显示**，否则那些提醒够不着了。
+            if (draft.shape.canRemind || draft.reminders.isNotEmpty) ...[
+              const SizedBox(height: Spacing.xl),
+              _ReminderSection(draft: draft, controller: controller),
+            ],
             const SizedBox(height: Spacing.xl),
             _ChecklistSection(draft: draft, controller: controller),
             const SizedBox(height: Spacing.xxxl),
@@ -832,6 +854,84 @@ String _endText(TaskDraft draft) {
   return '$date '
       '${m.hour.toString().padLeft(2, '0')}:'
       '${m.minute.toString().padLeft(2, '0')}';
+}
+
+/// 时间那几个控件要不要出现。
+///
+/// **两条并起来**：
+///
+///  1. 这个形态本来就该填时间（`needsSchedule`，且起止不是推出来的）；
+///  2. **或者**当前已经有数据 —— 逃生口。
+///
+/// 第 2 条不是兜底，是必须的：旧数据里有形态与内容对不上的行
+/// （早期版本没有这些约束）。只按形态藏的话，一条「临时事项却带着日期」
+/// 的旧任务，用户在界面上再也改不到那个日期 ——
+/// **界面够不着的数据，与不存在的数据在用户看来一样，
+/// 但它还在影响列表怎么排。**
+bool _showsSpanFields(TaskDraft draft) {
+  // ① 阶段事项：起止是**推出来的**，这几个控件不出现 ——
+  //    填了也会被下一次推导盖掉，而一个填了没用的输入框比没有更糟。
+  if (draft.shape.spanDerivedFromStages) {
+    // 唯一的例外：**编辑**一条 `kind=staged` 却一个阶段都没有的旧数据
+    // （早期版本允许这种行）。那时没有东西能推，藏起来等于把它锁死。
+    //
+    // **只在编辑时**。新建的阶段事项本来就是从零个阶段起步的，
+    // 把这个例外写成「没有阶段就显示」的话，它每一次新建都会命中 ——
+    // 那正是这条守卫头一次跑就抓到的。
+    return draft.isEditing && draft.stages.isEmpty;
+  }
+
+  // ② **编辑已有任务时始终显示。**
+  //
+  // 「给这条临时事项加上时间」是正当的编辑，而形态是从**当前字段**反推的
+  // （`TaskShape.of` 只看它现在是什么样）—— 藏起来的话那条路就断了：
+  // 想加时间要先变成单事项，而想变成单事项又得先加时间。
+  // 与重复区、阶段区那两处「只在新建时收窄」是同一条理由。
+  if (draft.isEditing) return true;
+
+  // ③ 新建：按形态。临时事项不排时间，所以不出现。
+  return draft.shape.needsSchedule;
+}
+
+/// 阶段事项那一行只读的「由阶段决定：…」。
+///
+/// **推出来的东西也要给人看见。** 起止决定这条任务落在日历与甘特图的
+/// 哪一段 —— 不显示的话，用户改完阶段时间不知道任务挪到了哪儿，
+/// 而那恰恰是他改阶段时间想控制的东西。
+///
+/// 一个阶段都还没填时间时不画：那时没有可报的事实，
+/// 而「由阶段决定：（空）」只会让人以为坏了。
+class _DerivedSpanLine extends StatelessWidget {
+  const _DerivedSpanLine({required this.draft});
+
+  final TaskDraft draft;
+
+  static const Key spanKey = ValueKey('editor-derived-span');
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.appColors;
+    // 还没有任何阶段带时间时**照样画**，只是换一句话 ——
+    // 那时它回答的是「日期栏哪儿去了」。不画的话，用户会以为表单坏了。
+    final hasSpan = draft.stages.any((s) => s.hasTime);
+    return Padding(
+      key: spanKey,
+      padding: const EdgeInsets.only(bottom: Spacing.sm),
+      child: Text(
+        hasSpan ? '由阶段决定：${_spanText(draft)}' : '起止由阶段的时间决定',
+        style: Theme.of(context).textTheme.bodySmall
+            ?.copyWith(color: colors.disabledText),
+      ),
+    );
+  }
+}
+
+String _spanText(TaskDraft draft) {
+  String at(PlanDate? d, MinuteOfDay? m) =>
+      d == null ? '—' : '$d${m == null ? '' : ' $m'}';
+  final start = at(draft.planDate, draft.startMinute);
+  final end = at(draft.endDate, draft.endMinute);
+  return start == end ? start : '$start → $end';
 }
 
 class _DateRow extends StatelessWidget {

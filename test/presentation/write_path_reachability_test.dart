@@ -146,52 +146,57 @@ final List<_Entry> _taskFields = [
     // 比枚举的话这里恒不相等。
     check: (task, _) => expect(task.priority, TaskPriority.urgent.value),
   ),
+  // ── 时间那几个字段：探针改在**单事项**上跑 ──────────────────
+  //
+  // 临时事项现在把日期栏一并藏了（用户 2026-09-10 定：它本来就不排时间）。
+  // 换到单事项之后有一处**必须一起改**：单事项的表单是**预填**的
+  // （今天、下一个整点、按默认时长的结束）——
+  // 原来那几条 `isNotNull` 于是变成恒真，而这条守卫的全部意义
+  // 正在于「拨到**非默认值**」。
+  //
+  // 所以下面每一条都拨到一个**与预填不同**的值：
+  // 全天拨成 true（预填是 false）、时刻清成 null（预填有值）、
+  // 日期在选择器里点到另一天（夹具时钟钉死在 2026-09-07，所以
+  // 「点 15 号」是确定的）。
   (
     field: 'isAllDay',
     kind: _Kind.reachable,
     why: '',
     drive: (t) => tapVisible(t, TaskEditorPage.allDaySwitchKey),
-    check: (task, _) => expect(task.isAllDay, isFalse, reason: '默认是全天'),
+    check: (task, _) => expect(task.isAllDay, isTrue, reason: '单事项预填的是非全天'),
   ),
   (
     field: 'planDate',
     kind: _Kind.reachable,
     why: '',
-    // 关掉全天会补上今天 —— 那也是一条真实的、用户看得见的路径。
-    drive: (t) => tapVisible(t, TaskEditorPage.allDaySwitchKey),
-    check: (task, _) => expect(task.planDate, isNotNull),
+    // **往前挑，不往后。** 预填的结束是 09-08（默认时长 +24 小时），
+    // 把开始拨到 09-15 会撞上「结束早于开始」而存不下去 ——
+    // 那条约束是对的，探针该绕开它，不该去改它。
+    drive: (t) => _pickDay(t, TaskEditorPage.dateFieldKey, 3),
+    check: (task, _) => expect(task.planDate, '2026-09-03'),
   ),
   (
     field: 'startMinute',
     kind: _Kind.reachable,
     why: '',
-    drive: (t) async {
-      await tapVisible(t, TaskEditorPage.allDaySwitchKey);
-      await tapVisible(t, TaskEditorPage.timeFieldKey);
-      await t.tap(find.text('确定'));
-      await t.pumpAndSettle();
-    },
-    check: (task, _) => expect(task.startMinute, isNotNull),
+    // 拨成全天 → 时刻被清掉。**清掉也是一条写路径**：预填是有值的，
+    // 所以 null 证明界面真的写了它（而不是「从来没设过」）。
+    drive: (t) => tapVisible(t, TaskEditorPage.allDaySwitchKey),
+    check: (task, _) => expect(task.startMinute, isNull, reason: '预填有时刻'),
   ),
   (
     field: 'endDate',
     kind: _Kind.reachable,
     why: '',
-    drive: (t) => tapVisible(t, TaskEditorPage.endSwitchKey),
-    check: (task, _) => expect(task.endDate, isNotNull),
+    drive: (t) => _pickDay(t, TaskEditorPage.endDateFieldKey, 20),
+    check: (task, _) => expect(task.endDate, '2026-09-20'),
   ),
   (
     field: 'endMinute',
     kind: _Kind.reachable,
     why: '',
-    drive: (t) async {
-      await tapVisible(t, TaskEditorPage.allDaySwitchKey);
-      await tapVisible(t, TaskEditorPage.endSwitchKey);
-      await tapVisible(t, TaskEditorPage.endTimeFieldKey);
-      await t.tap(find.text('确定'));
-      await t.pumpAndSettle();
-    },
-    check: (task, _) => expect(task.endMinute, isNotNull),
+    drive: (t) => tapVisible(t, TaskEditorPage.allDaySwitchKey),
+    check: (task, _) => expect(task.endMinute, isNull, reason: '预填有结束时刻'),
   ),
   (
     field: 'recurrenceRule',
@@ -326,6 +331,18 @@ Future<Harness> _pumpEditor(
   return harness;
 }
 
+/// 在日期选择器里点到某一天，再确定。
+///
+/// 夹具时钟钉死在 2026-09-07，所以「点 15 号」落在同一个月里、是确定的
+/// —— 不钉时钟的话这一下会随跑测试的日子落到不同月份。
+Future<void> _pickDay(WidgetTester tester, Key row, int day) async {
+  await tapVisible(tester, row);
+  await tester.tap(find.text('$day'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('确定'));
+  await tester.pumpAndSettle();
+}
+
 /// 扫构造器的 `this.x`，取字段全集。
 Set<String> _constructorFields(String path, String signature) {
   final source = File(path).readAsStringSync();
@@ -344,11 +361,21 @@ void main() {
       testAppWidgets('${e.field}：界面上拨得到，而且落库', (tester) async {
         // 每条探针挑自己那一样：`recurrenceRule` 要重复区在场，
         // `kind` 要阶段区在场（它靠「填够两个阶段」拨出来），
-        // 其余按临时事项起手 —— 那是最空的一张表，别的字段都从
-        // 默认值拨起。
+        // 时间那几个字段要**单事项** —— 临时事项现在把日期栏一并藏了
+        // （用户 2026-09-10 定：它本来就不排时间）。
+        // 其余按临时事项起手 —— 那是最空的一张表，别的字段都从默认值拨起。
+        //
+        // **这张表本身就是那条要求的一半证据**：字段仍然「界面上拨得到」，
+        // 只是拨得到它的那张表换了一张。藏掉一个字段与**让它够不着**
+        // 是两回事，而这条守卫问的正是后者。
         final harness = await _pumpEditor(tester, switch (e.field) {
           'recurrenceRule' => TaskShape.recurringSingle,
           'kind' => TaskShape.staged,
+          'isAllDay' ||
+          'planDate' ||
+          'startMinute' ||
+          'endDate' ||
+          'endMinute' => TaskShape.single,
           _ => TaskShape.scratch,
         });
         await e.drive!(tester);
@@ -370,7 +397,7 @@ void main() {
     for (final e in _stageFields.where((e) => e.kind == _Kind.reachable)) {
       testAppWidgets('${e.field}：界面上拨得到，而且落库', (tester) async {
         final harness = await _pumpEditor(tester, TaskShape.staged);
-        await tapVisible(tester, TaskEditorPage.allDaySwitchKey);
+        // 阶段事项没有全天开关了 —— 时刻只能从阶段来。
 
         for (final title in ['第一步', '第二步']) {
           await tapVisible(tester, TaskEditorPage.addStageKey);
