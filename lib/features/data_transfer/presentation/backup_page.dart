@@ -11,6 +11,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../design/components/app_button.dart';
 import '../../../design/components/empty_illustration.dart';
 import '../../../design/components/empty_state.dart';
 import '../../../design/theme/app_theme.dart';
@@ -111,11 +112,16 @@ class _Header extends ConsumerWidget {
             style: text.bodySmall?.copyWith(color: colors.disabledText),
           ),
           const SizedBox(height: Spacing.md),
-          FilledButton.icon(
+          // **用设计系统的按钮，不用 `FilledButton`。**
+          // 全项目就这一处一度是原生的 —— 而 `AppButton` 管着圆角档位、
+          // 对比度约束（primary 是 `onBrand` 6.62，白字只有 1.78）
+          // 与禁用态，这几样在原生按钮上各走各的。
+          AppButton(
             key: BackupPage.backupNowKey,
+            label: '立即备份',
+            icon: Icons.backup_outlined,
+            expand: true,
             onPressed: () => _backupNow(context, ref, keep),
-            icon: const Icon(Icons.backup_outlined),
-            label: const Text('立即备份'),
           ),
         ],
       ),

@@ -5,6 +5,7 @@
 @TestOn('vm')
 library;
 
+import 'dart:io';
 import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
@@ -285,6 +286,64 @@ void main() {
         seen.add(r);
       }
       expect(seen.length, 3, reason: '三档画出同一个圆角 = 配置项等于不存在');
+    });
+  });
+
+  group('页面用的是设计系统的按钮，不是 Material 的（design-system §8.5）', () {
+    // ## 为什么要扫源码
+    //
+    // `AppButton` 管着三样东西：圆角档位（`CornerStyle`）、对比度约束
+    // （primary 用 `onBrand` 6.62，白字只有 1.78 是禁止的）、以及禁用态
+    // 的画法。原生的 `FilledButton` / `ElevatedButton` / `OutlinedButton`
+    // 三样各走各的，而画出来**只是差一点** —— 差一点正是这个项目
+    // 反复栽的那一类：截图上看着对，量起来不对。
+    //
+    // 备份页一度是全项目唯一一处原生 `FilledButton`，真机截图之后才发现。
+    //
+    // **`TextButton` 不在这条里**：对话框的「取消/确定」是平台惯例，
+    // 而 `AppButton` 的 `text` 变体不是为对话框做的。这条线是有意画的，
+    // 不是漏了。
+    const banned = ['FilledButton', 'ElevatedButton', 'OutlinedButton'];
+
+    List<String> offenders(Iterable<({String path, String source})> files) => [
+      for (final f in files)
+        for (final name in banned)
+          // **raw 串 + 拼接，不用插值。** 普通字符串里反斜杠 b 是退格符、
+          // 反斜杠 s 会被静默丢掉，而 Dart 编译期对这一族一声不吭 ——
+          // 插值写法会把这个正则变成一个匹配不到任何东西的东西，守卫全绿。
+          // （写这一行时当场栽了一次，是下面那条自检把它拦住的。）
+          if (RegExp(r'\b' + name + r'\s*[.(]').hasMatch(f.source))
+            '${f.path} 用了 $name',
+    ];
+
+    test('守卫自身能失败（§1.4）', () {
+      // 一个永远返回空表的扫描器与「全项目都合规」在结果上一模一样。
+      expect(
+        offenders([
+          (path: 'fake.dart', source: 'FilledButton.icon(onPressed: null)'),
+        ]),
+        ['fake.dart 用了 FilledButton'],
+      );
+      expect(
+        offenders([
+          // `TextButton` 与只是提到名字的注释都不该被算进来。
+          (
+            path: 'fake.dart',
+            source: '// 不用 FilledButtonish\nTextButton(child: x)',
+          ),
+        ]),
+        isEmpty,
+      );
+    });
+
+    test('lib/ 下一处都没有', () {
+      final files = [
+        for (final f in Directory('lib').listSync(recursive: true))
+          if (f is File && f.path.endsWith('.dart'))
+            (path: f.path.replaceAll('\\', '/'), source: f.readAsStringSync()),
+      ];
+      expect(files, isNotEmpty, reason: '一个文件都没扫到 —— 守卫是僵尸');
+      expect(offenders(files), isEmpty);
     });
   });
 }
