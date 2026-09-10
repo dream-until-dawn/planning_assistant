@@ -157,8 +157,8 @@ Stream<T> watchSetting<T>(SettingSpec<T> spec);
 
 | key | 类型 | 默认值 | 暴露 | 说明 |
 |---|---|---|---|---|
-| `data.autoBackupEnabled` | bool | `true` | ✅ | |
-| `data.autoBackupIntervalDays` | int | `7` | ✅ | |
+| `data.autoBackupEnabled` | bool | `true` | ✅ | 按间隔在**启动时**备一份。不挂生命周期：备份是天级的事，进前台是分钟级的 |
+| `data.autoBackupIntervalDays` | int | `7` | ✅ | **给档位不给任意天数**：1 / 7 / 30。能填 0 的输入框意味着「每次启动都备一份」，那会在保留数以内反复冲掉真正有用的旧备份 |
 | `data.trashRetentionDays` | int | `30` | ✅ | 回收站保留期 |
 | `data.autoBackupKeepCount` | int | `5` | 🔒 | 保留几份备份 |
 | `data.exportIncludeTombstones` | bool | `true` | 🔒 | 导出是否含墓碑（同步需要） |
@@ -186,7 +186,7 @@ Stream<T> watchSetting<T>(SettingSpec<T> spec);
 | `device.notificationPermissionAsked` | bool | `false` | 是否已请求过通知权限 |
 | `device.exactAlarmAvailable` | bool | `false` | 精确闹钟是否可用（每次启动刷新） |
 | `device.lastKnownTimeZone` | string | 系统值 | 用于检测时区变更并重排提醒 |
-| `device.lastBackupAt` | int | `0` | |
+| ~~`device.lastBackupAt`~~ | — | — | **不做**。判据改成「最近一份备份文件的时间」——存一个时间戳就多一份可能与文件对不上的状态：用户把备份删光之后，那个戳还说「刚备过」，于是再也不自动备份。文件本身就是记录（`backup_service_test` 有一条专门盯着这件事） |
 
 ---
 

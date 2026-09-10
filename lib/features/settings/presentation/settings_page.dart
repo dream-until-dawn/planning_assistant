@@ -18,9 +18,11 @@ import '../domain/setting_spec.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({
+    this.reminderStatus,
     this.onOpenCategories,
     this.onOpenTrash,
     this.onOpenArchive,
+    this.onOpenBackup,
     super.key,
   });
 
@@ -33,6 +35,16 @@ class SettingsPage extends ConsumerWidget {
   /// 拦得住的只有这条约定。
   ///
   /// 为 null 时那一行不出现 —— 一个点不动的入口比没有更糟。
+
+  /// 提醒的状态卡片（FR-NOTI-04），挂在「提醒」组之后。
+  ///
+  /// **由外面传进来，不在这儿 import。** 跨 feature 只能经 application
+  /// 层的 Provider 通信（module-map §3，有守卫盯着）——
+  /// 设置页直接 import `reminder/presentation` 会被拦下。
+  /// 与 [onOpenCategories] 那几个回调同一个办法：页面不认识别的 feature，
+  /// 由组合根把它们拼起来。
+  final Widget? reminderStatus;
+
   final VoidCallback? onOpenCategories;
 
   /// 打开回收站（FR-TASK-08）。同上，为 null 时那一行不出现。
@@ -41,12 +53,19 @@ class SettingsPage extends ConsumerWidget {
   /// 打开归档列表（FR-TASK-08）。
   final VoidCallback? onOpenArchive;
 
+  /// 打开备份页（FR-DATA-04/05）。同上，为 null 时那一行不出现。
+  final VoidCallback? onOpenBackup;
+
   static const Key pageKey = ValueKey('settings-page');
 
   /// 某一项的 Key。
   static Key itemKey(String settingKey) => ValueKey('setting-$settingKey');
 
   /// 某一项的某个选项的 Key。
+  /// 某个开关项的 Key。
+  static Key toggleKey(String settingKey) =>
+      ValueKey('setting-toggle-$settingKey');
+
   static Key optionKey(String settingKey, String storageValue) =>
       ValueKey('setting-$settingKey-$storageValue');
 
@@ -54,6 +73,7 @@ class SettingsPage extends ConsumerWidget {
   static const Key categoriesEntryKey = ValueKey('setting-entry-categories');
   static const Key trashEntryKey = ValueKey('setting-entry-trash');
   static const Key archiveEntryKey = ValueKey('setting-entry-archive');
+  static const Key backupEntryKey = ValueKey('setting-entry-backup');
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -78,6 +98,11 @@ class SettingsPage extends ConsumerWidget {
           children: [
             for (final group in SettingGroup.values) ...[
               ..._groupSection(context, ref, group, exposed),
+              // 提醒的状态卡片挂在「提醒」组之后（FR-NOTI-04）。
+              // **紧挨着那几条开关**：用户是在这一组里问「提醒怎么设」的，
+              // 「它现在到底能不能响」是同一个问题的另一半。
+              if (group == SettingGroup.reminder && reminderStatus != null)
+                reminderStatus!,
               // 分类**不是配置项**（它是 `categories` 表里的实体），
               // 所以不进注册表；但管理入口在设置里（settings-spec §3）。
               // 挂在「行为」组之后 —— 那一组管的就是「默认怎么做」。
@@ -89,6 +114,10 @@ class SettingsPage extends ConsumerWidget {
                 _archiveEntry(),
               if (group == SettingGroup.data && onOpenTrash != null)
                 _trashEntry(),
+              // 备份排在最后：归档与回收站是「这条任务怎么办」，
+              // 备份是「整库怎么办」—— 后者更重，也更少用。
+              if (group == SettingGroup.data && onOpenBackup != null)
+                _backupEntry(),
             ],
           ],
         ),
@@ -114,6 +143,16 @@ class SettingsPage extends ConsumerWidget {
     subtitle: const Text('收起来但没删掉的任务'),
     trailing: const Icon(Icons.chevron_right),
     onTap: onOpenArchive,
+  );
+
+  Widget _backupEntry() => ListTile(
+    key: backupEntryKey,
+    contentPadding: EdgeInsets.zero,
+    leading: const Icon(Icons.backup_outlined),
+    title: const Text('备份与恢复'),
+    subtitle: const Text('在这台设备上留一份，随时恢复'),
+    trailing: const Icon(Icons.chevron_right),
+    onTap: onOpenBackup,
   );
 
   Widget _trashEntry() => ListTile(
@@ -162,17 +201,61 @@ class _SettingTile extends ConsumerWidget {
     final text = Theme.of(context).textTheme;
     final current = ref.settingDynamic(spec);
 
+    final title = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(spec.label!, style: text.bodyLarge),
+        if (spec.description != null) ...[
+          const SizedBox(height: Spacing.xxs),
+          Text(spec.description!, style: text.bodySmall),
+        ],
+      ],
+    );
+
+    // 开关跟在标题**同一行的右边**，别的控件另起一行。
+    //
+    // 不是排版偏好：一个占满整行的开关看不出它管的是上面哪一句，
+    // 而这一页是一行接一行的配置项。系统设置里的开关也都在右边 ——
+    // 这里没有理由自成一格。
+    // **`current` 一定是 bool，所以这里不做 `is bool` 兜底。**
+    //
+    // 一度写着 `&& current is bool`，看着像一层防守，其实是**死代码**，
+    // 而且死得危险：条件不成立时会静默落到下面那句「这个类型的控件
+    // 还没做」—— 一句看起来像「功能没做」的灰字，掩盖的却是「数据坏了」。
+    //
+    // 它到不了：`SettingSpec<bool>.decode` 的返回类型就是 `bool`，
+    // 而 `settingDynamic` 在 decode 抛异常时回落到 `defaultValue` ——
+    // 后者由注册表自检钉着必须是 bool。所以手改坏的配置文件（值写成
+    // 字符串）读出来的是**默认值**，不是一个非 bool。
+    // 那条事实由 `settings_page_test` 的「配置文件里把开关写坏了」盯着。
+    //
+    // 真到不了的那一天，`as bool` 会当场吵起来 —— 那比一句灰字好。
+    if (spec.editor == SettingEditor.toggle) {
+      return Padding(
+        key: SettingsPage.itemKey(spec.key),
+        padding: const EdgeInsets.only(bottom: Spacing.lg),
+        child: Row(
+          children: [
+            Expanded(child: title),
+            const SizedBox(width: Spacing.md),
+            Switch(
+              key: SettingsPage.toggleKey(spec.key),
+              value: current! as bool,
+              onChanged: (v) =>
+                  ref.read(settingsWriterProvider).setDynamic(spec, v),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Padding(
       key: SettingsPage.itemKey(spec.key),
       padding: const EdgeInsets.only(bottom: Spacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(spec.label!, style: text.bodyLarge),
-          if (spec.description != null) ...[
-            const SizedBox(height: Spacing.xxs),
-            Text(spec.description!, style: text.bodySmall),
-          ],
+          title,
           const SizedBox(height: Spacing.sm),
           switch (spec.editor) {
             // `select` 用一排 Chip 而不是下拉：选项都在两三个到四个之间，
@@ -180,6 +263,10 @@ class _SettingTile extends ConsumerWidget {
             SettingEditor.select => _Options(spec: spec, current: current),
             // 其余控件等有对应的配置项时再做。**不放占位控件** ——
             // 点了没反应的开关比没有更糟。
+            //
+            // 这句话现在只可能出现在 slider / color 上，而暴露项里一个都
+            // 没有 —— `settings_page_test` 有一条盯着「每个暴露项都画出了
+            // 能操作的控件」，真出现了它会红。
             _ => Text(
               '（这个类型的控件还没做：${spec.editor.name}）',
               style: text.bodySmall,

@@ -20,10 +20,15 @@ import 'core/time/time_zone_bootstrap.dart';
 import 'core/time/time_zone_resolver.dart';
 import 'data/database/app_database.dart';
 import 'data/database/dao/synced_dao.dart';
+import 'data/dto/export_bundle.dart';
 import 'data/repositories/category_repository_impl.dart';
+import 'data/repositories/scheduled_notification_store_impl.dart';
 import 'data/repositories/settings_repository_impl.dart';
 import 'data/repositories/task_repository_impl.dart';
 import 'domain/commands/command_dispatcher.dart';
+import 'features/data_transfer/application/backup_providers.dart';
+import 'features/reminder/application/reminder_providers.dart';
+import 'platform/storage/documents_backup_store.dart';
 import 'platform/timezone/platform_time_zone.dart';
 
 /// 启动应用。
@@ -99,6 +104,16 @@ Future<void> bootstrap(
         categoryRepositoryProvider.overrideWithValue(categories),
         settingsRepositoryProvider.overrideWithValue(settings),
         timeZoneSetupProvider.overrideWithValue(tzResult),
+        scheduledNotificationStoreProvider.overrideWithValue(
+          DriftScheduledNotificationStore(db),
+        ),
+        // 备份的两样实现（FR-DATA-04/05）。**只有这里认识它们**：
+        // 导出住在 `data/`、落盘住在 `platform/`，而备份服务在
+        // feature 的 application 层，够不着那两处（module-map §3）。
+        exportPortProvider.overrideWithValue(
+          JsonExportAdapter(ExportService(db)),
+        ),
+        backupStoreProvider.overrideWithValue(const DocumentsBackupStore()),
       ],
       child: appBuilder(),
     ),

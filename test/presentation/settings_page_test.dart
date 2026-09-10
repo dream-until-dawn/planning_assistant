@@ -84,6 +84,81 @@ void main() {
       }
     });
 
+    testAppWidgets('每个暴露项都画出了**能操作的控件**，没有一处占位文字', (tester) async {
+      // ## 为什么「出现了」不够
+      //
+      // 上面那条只问「这一行在不在」。而 `_SettingTile` 对没实现的
+      // 控件类型画的是一句灰字（「这个类型的控件还没做：toggle」）——
+      // 那一行**照样在**，key 也照样有，于是那条完全通得过。
+      //
+      // 后果撞见过：`SettingEditor` 的默认值是 `toggle`，而 toggle
+      // 一直没实现，于是**每一个暴露的布尔项都是一句灰字** ——
+      // 提醒总开关、减少动效、免打扰、自动备份，四个开关用户一个也拨不动。
+      // 真机截图上一眼就看见了，而 1699 条用例全绿。
+      //
+      // 「模型有旋钮、界面够不着」的又一例，所以补这一条。
+      await _pumpApp(tester);
+      await _openSettings(tester);
+
+      for (final spec in settingsRegistry.where((s) => s.isExposed)) {
+        final tile = find.byKey(SettingsPage.itemKey(spec.key));
+        await tester.scrollUntilVisible(tile, 200);
+        await tester.pumpAndSettle();
+        expect(
+          find.descendant(of: tile, matching: find.textContaining('还没做')),
+          findsNothing,
+          reason: '${spec.key} 画的是占位文字 —— 它的 ${spec.editor.name} 控件没实现',
+        );
+      }
+    });
+
+    testAppWidgets('配置文件里把开关写坏了，页面照样是个开关（回落到默认值）', (tester) async {
+      // ## 这条钉的是一句「到不了」的话
+      //
+      // settings-spec §5 明写着隐藏项可以由手改的配置文件覆盖，
+      // 于是有人会问：**值的类型写错了会怎样？** 评审问的就是这个，
+      // 猜测是「静默退回那句『控件还没做』的灰字」——
+      // 那会让一个「数据坏了」看起来像一个「功能没做」。
+      //
+      // 实测不是：`SettingSpec<bool>.decode` 的返回类型就是 `bool`，
+      // 解不动时回落到默认值。所以页面上永远是个能拨的开关。
+      //
+      // 把这条钉下来，是因为 `_SettingTile` 里那个 `as bool` 依赖它。
+      //
+      // **它被哪种改动推倒，演练过**：把 `settingDynamic` 改成跳过
+      // decode、直接交出库里存的值（一个看着像优化的改动），
+      // 这条当场报 `type 'String' is not a subtype of type 'bool'`。
+      // 而只把某条 `decode` 改成遇坏值抛异常**不会**让它红 ——
+      // 那一层外面还有一道 catch 回落到默认值。两件事都记下来，
+      // 免得下一个人以为它守着后者。
+      final harness = appHarness();
+      await seedSettingBeforeApp(harness, autoBackupEnabled, false);
+      // 绕开 SettingSpec 直接写一个坏值 —— 手改配置文件就是这样。
+      await seedRawSetting(harness, autoBackupEnabled.key, 'yes');
+
+      await setScreenSize(tester, const Size(390, 844));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: harness.overrides,
+          child: PlanningAssistantApp(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openSettings(tester);
+
+      final tile = find.byKey(SettingsPage.itemKey(autoBackupEnabled.key));
+      await tester.scrollUntilVisible(tile, 200);
+      await tester.pumpAndSettle();
+
+      final toggle = find.descendant(of: tile, matching: find.byType(Switch));
+      expect(toggle, findsOneWidget, reason: '坏值把开关变没了');
+      expect(
+        tester.widget<Switch>(toggle).value,
+        autoBackupEnabled.defaultValue,
+        reason: '坏值该回落到默认值',
+      );
+    });
+
     testAppWidgets('分组标题按 SettingGroup 的顺序出现', (tester) async {
       await _pumpApp(tester);
       await _openSettings(tester);
@@ -125,6 +200,20 @@ void main() {
   });
 
   group('改了真的生效', () {
+    testAppWidgets('拨一下开关，配置写进库，别的页面读到的也变了', (tester) async {
+      // 开关这一类控件的「生效」尤其容易只做一半：`Switch` 自己会
+      // **看起来**被拨过去（它是受控的，但 Flutter 的开关有动画），
+      // 而值没写进库。所以断言落在**另一页读出来的那句话**上，
+      // 不落在开关自己的外观上。
+      await _pumpApp(tester);
+      await _openSettings(tester);
+
+      await tapVisible(tester, SettingsPage.toggleKey(autoBackupEnabled.key));
+      await tapVisible(tester, SettingsPage.backupEntryKey);
+
+      expect(find.text('自动备份：已关闭'), findsOneWidget);
+    });
+
     testAppWidgets('改「列表分组」，列表的分组标题跟着变', (tester) async {
       // 这条是整个设置页的意义所在。只验「页面画出来了」的话，
       // 一个写不进库的实现也能全绿。

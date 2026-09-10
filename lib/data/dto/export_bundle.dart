@@ -15,6 +15,11 @@ library;
 
 import 'dart:convert';
 
+// 只要 `TableUpdate` 一个名字：drift 的顶层导出里有 `isNull` 之类
+// 与别处重名的东西，全量导入迟早撞上。
+import 'package:drift/drift.dart' show TableUpdate;
+
+import '../../domain/repositories/export_port.dart';
 import '../database/app_database.dart';
 import '../database/dao/table_daos.dart';
 
@@ -135,6 +140,19 @@ final class ExportService {
           );
         }
       }
+
+      // **必须自己告诉 drift 动了哪些表。**
+      //
+      // 上面全程走 `customStatement` —— drift 不解析 SQL，认不出这种
+      // 语句影响了什么，于是**一个 `watch` 订阅都不会被通知**。
+      // 后果不在数据层（导入完再查一次是对的），而在界面：恢复成功、
+      // 提示也弹了，列表却停在导入前的样子，直到用户随便改点别的
+      // 才刷出来。在 J-05 把这条路走通之前，`import` 没有任何调用方，
+      // 所以谁也没发现。
+      //
+      // 放在事务**里面**：drift 会攒到提交时再一次性发出去，
+      // 于是订阅方不会在半截状态上被叫醒。
+      _db.notifyUpdates({for (final table in _wipeOrder) TableUpdate(table)});
     });
   }
 
@@ -319,6 +337,34 @@ final class ExportService {
 ///
 /// 用带缩进的编码：备份文件是用户可能会打开看的东西，
 /// 也是出问题时最先被贴进 issue 的东西。
+/// [ExportPort] 的实现：把整库导出成 JSON 文本、从文本导回来。
+///
+/// **薄薄一层适配**，它存在的唯一理由是把编解码留在这个文件里 ——
+/// 格式契约（缩进、顶层校验、二次编码列）都写在这儿，
+/// 让上层自己 `jsonEncode` 等于把这份契约拆成两半。
+final class JsonExportAdapter implements ExportPort {
+  const JsonExportAdapter(this._service);
+
+  final ExportService _service;
+
+  @override
+  Future<String> exportJson({
+    required String appVersion,
+    required String deviceId,
+    required DateTime exportedAt,
+  }) async => encodeExportBundle(
+    await _service.export(
+      appVersion: appVersion,
+      deviceId: deviceId,
+      exportedAt: exportedAt,
+    ),
+  );
+
+  @override
+  Future<void> importJson(String json) =>
+      _service.import(decodeExportBundle(json));
+}
+
 String encodeExportBundle(Map<String, Object?> bundle) =>
     const JsonEncoder.withIndent('  ').convert(bundle);
 

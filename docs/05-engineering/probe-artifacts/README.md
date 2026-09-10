@@ -131,6 +131,47 @@ python docs/05-engineering/probe-artifacts/freezed-constraints/enumerate.py free
 > 该包的 analyzer 约束在 3.x 内部**非单调**（3.2.1/3.2.2 已是 `^8.0.0`，3.2.3 又退回 `<9.0.0`），
 > 所以「按手头那个版本推断整个 3.x」在它身上注定失败，不是运气问题。
 
+### `alarm-limit/`（无独立目录，探针在 `integration_test/`）
+
+产出[通知设计 §11](../../04-platform/notifications.md) 那次测量的依据。
+
+**探针本体**：`integration_test/alarm_limit_probe_test.dart`。它**不能**做成
+本目录下的独立 Dart 工程 —— 要真的排闹钟就得有 Android 应用与插件在场，
+所以它以 integration test 的形式留在仓库里（CI 不跑它）。
+
+**复现**：
+
+```bash
+flutter test integration_test/alarm_limit_probe_test.dart -d <device>
+# 测试会在末尾停 45 秒，趁这段时间从进程外数：
+adb shell dumpsys alarm | grep -c "Alarm{.*com.dreamuntildawn.planning_assistant"
+```
+
+**实测输出**（2026-09-09，雷电模拟器 **Android 9 / API 28**）：
+
+```
+PROBE canScheduleExact=true requested=600 pluginPending=600
+dumpsys: Alarm{ 行 600 / operation 行 600 / tag 行 600     ← 系统实收 600，无拐点
+```
+
+**这次测量最重要的产出不是那个数，是两条方法学结论**：
+
+1. **`pendingNotificationRequests()` 量不了这件事。** 它读的是插件自己写在
+   SharedPreferences 里的 JSON（`FlutterLocalNotificationsPlugin.java:1617 → :536`），
+   不问 AlarmManager —— 回读永远等于排进去的条数。规格里原本就是这么写的，
+   照着做会得到一个**不可能失败的探针**。真实状态只能从进程外看。
+2. **API 28 上量到的数说明不了 API 31+ 的事。** `SCHEDULE_EXACT_ALARM`
+   与 `POST_NOTIFICATIONS` 的版本门分别在 API 31 / 33，低于它们两个权限查询
+   恒为 true。这台机器上「600 条全收」是在所有现代约束都不生效的前提下量的。
+   → 与 `rrule/` 那条「只在单一时区跑的探针不可能暴露该缺陷」同型：
+   **探针的适用范围由它跑在什么上面决定，不由它测了多少条决定。**
+
+> ⚠️ **别用 `flutter test integration_test/` 去测存着真实数据的设备。**
+> 它跑完会卸载应用，连带清掉应用数据。第一次就是这么把模拟器上的演示数据
+> 弄没的，而且事后 dumpsys 数到 0 会看起来像「系统一条都没接受」——
+> 实际上说明的只是「应用已经不在了」。设备探针要么用空 AVD，
+> 要么走 `flutter install` + 应用内入口。
+
 ## 维护规矩
 
 - 依赖版本变更时，**同一个 PR** 里重新生成 `dependency-matrix/pubspec.lock` 并更新版本矩阵。

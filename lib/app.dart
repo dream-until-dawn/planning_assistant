@@ -32,6 +32,10 @@ import 'core/time/plan_date.dart';
 import 'design/theme/app_theme.dart';
 import 'domain/value_objects/occurrence_key.dart';
 import 'features/archive/presentation/archive_page.dart';
+import 'features/data_transfer/application/backup_providers.dart';
+import 'features/data_transfer/presentation/backup_page.dart';
+import 'features/reminder/application/reminder_providers.dart';
+import 'features/reminder/presentation/reminder_status_card.dart';
 import 'features/settings/application/registry.dart';
 import 'features/settings/application/settings_providers.dart';
 import 'features/settings/presentation/category_manager_page.dart';
@@ -115,6 +119,9 @@ abstract final class AppRoutes {
   /// 归档列表。
   static const String archive = '/settings/archive';
 
+  /// 备份与恢复（FR-DATA-04/05）。同样是设置页的二级页。
+  static const String backup = '/settings/backup';
+
   /// 编辑一条已有任务。
   ///
   /// [from] 非空时是「本次及以后」的分割点（FR-TASK-06）——
@@ -156,9 +163,13 @@ GoRouter buildAppRouter({String? initialLocation}) => GoRouter(
         GoRoute(
           path: 'settings',
           builder: (context, state) => SettingsPage(
+            // 状态卡片由组合根拼进去 —— 设置页不认识别的 feature
+            // （module-map §3，有守卫盯着）。
+            reminderStatus: const ReminderStatusCard(),
             onOpenCategories: () => context.go(AppRoutes.categories),
             onOpenTrash: () => context.go(AppRoutes.trash),
             onOpenArchive: () => context.go(AppRoutes.archive),
+            onOpenBackup: () => context.go(AppRoutes.backup),
           ),
           routes: [
             GoRoute(
@@ -172,6 +183,10 @@ GoRouter buildAppRouter({String? initialLocation}) => GoRouter(
             GoRoute(
               path: 'archive',
               builder: (context, state) => const ArchivePage(),
+            ),
+            GoRoute(
+              path: 'backup',
+              builder: (context, state) => const BackupPage(),
             ),
           ],
         ),
@@ -295,6 +310,21 @@ class _PlanningAssistantAppState extends ConsumerState<PlanningAssistantApp> {
         ThemeModeSetting.dark => ThemeMode.dark,
       },
       routerConfig: widget._router,
+      // 提醒的续排挂在这儿（notifications.md §3 的「续排触发点」）。
+      //
+      // **包在 `builder` 里而不是包住 `MaterialApp`**：它要读
+      // `WidgetsBinding` 的生命周期，也要能在应用真正跑起来之后
+      // 才发第一轮 —— 而 `builder` 的子树正是路由内容那一层。
+      //
+      // 不挂的话，前面几层全都跑不起来：又一次「模型有旋钮、界面够不着」。
+      //
+      // 自动备份挂在同一层，理由也同一条：它要读配置（那几条配置活在
+      // 容器里），而 `bootstrap` 那一刻容器还没建好。
+      // 套在续排**外面**没有先后含义 —— 两者互不相干，
+      // 各自等各自的前提（见 `AutoBackupScope` 的头注）。
+      builder: (context, child) => AutoBackupScope(
+        child: ReminderSyncScope(child: child ?? const SizedBox.shrink()),
+      ),
     );
   }
 }

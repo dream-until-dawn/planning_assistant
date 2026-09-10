@@ -18,11 +18,13 @@ import '../../../core/time/minute_of_day.dart';
 import '../../../core/time/plan_date.dart';
 import '../../../domain/commands/task_command.dart';
 import '../../../domain/entities/checklist_item.dart';
+import '../../../domain/entities/reminder.dart';
 import '../../../domain/entities/stage.dart';
 import '../../../domain/entities/task.dart';
 import '../../../domain/value_objects/occurrence_key.dart';
 import '../../../domain/value_objects/recurrence.dart';
 import '../../../domain/value_objects/task_status.dart';
+import '../../reminder/application/reminder_providers.dart';
 import '../../settings/application/registry.dart';
 import '../../settings/application/settings_providers.dart';
 import '../../views/shared/application/category_providers.dart';
@@ -61,6 +63,36 @@ final class ChecklistDraft {
     title: title ?? this.title,
     isDone: isDone ?? this.isDone,
   );
+}
+
+/// 表单里的一条提醒（FR-NOTI-01）。
+///
+/// **只做相对开始的那一种**。三种 kind 里，`relativeToEnd` 与 `absolute`
+/// 领域层都支持、排期也算得对，但界面上先只给最常用的这一档 ——
+/// 多给两档要多两个控件（选基准点、选绝对日期时刻），
+/// 而「提前多久」覆盖了绝大多数场景。
+///
+/// 这不是「领域层做多了」：另外两种是**导入与将来的 Agent** 构造得出来的
+/// （FR-AI-01），排期照样处理。界面够不着不等于它们不存在。
+final class ReminderDraft {
+  const ReminderDraft({
+    required this.id,
+    required this.offsetMinutes,
+    this.isEnabled = true,
+  });
+
+  final String id;
+
+  /// 负数 = 提前，与 `Reminder.offsetMinutes` 同一套约定。
+  final int offsetMinutes;
+  final bool isEnabled;
+
+  ReminderDraft copyWith({int? offsetMinutes, bool? isEnabled}) =>
+      ReminderDraft(
+        id: id,
+        offsetMinutes: offsetMinutes ?? this.offsetMinutes,
+        isEnabled: isEnabled ?? this.isEnabled,
+      );
 }
 
 final class StageDraft {
@@ -137,6 +169,7 @@ final class TaskDraft {
     this.priority = TaskPriority.normal,
     this.stages = const [],
     this.checklist = const [],
+    this.reminders = const [],
     this.recurrence = const RecurrenceDraft(),
     this.initialIsAllDay,
   });
@@ -211,6 +244,9 @@ final class TaskDraft {
 
   /// 清单项（FR-TASK-09）。
   final List<ChecklistDraft> checklist;
+
+  /// 提醒（FR-NOTI-01）。空 = 这条任务不提醒。
+  final List<ReminderDraft> reminders;
 
   /// 打开这张表单时任务是不是全天的。**新建时为 null。**
   ///
@@ -346,6 +382,7 @@ final class TaskDraft {
     TaskPriority? priority,
     List<StageDraft>? stages,
     List<ChecklistDraft>? checklist,
+    List<ReminderDraft>? reminders,
     bool? initialIsAllDay,
     RecurrenceDraft? recurrence,
   }) => TaskDraft(
@@ -370,6 +407,7 @@ final class TaskDraft {
     priority: priority ?? this.priority,
     stages: stages ?? this.stages,
     checklist: checklist ?? this.checklist,
+    reminders: reminders ?? this.reminders,
     initialIsAllDay: initialIsAllDay ?? this.initialIsAllDay,
     recurrence: recurrence ?? this.recurrence,
   );
@@ -385,6 +423,7 @@ TaskDraft draftFromTask(
   Task task,
   List<Stage> stages, {
   List<ChecklistItem> checklist = const [],
+  List<Reminder> reminders = const [],
   OccurrenceKey? splitAt,
 }) {
   final recurrence = task.recurrence;
@@ -421,6 +460,18 @@ TaskDraft draftFromTask(
           durationMinutes: s.durationMinutes,
           status: s.status,
         ),
+    ],
+    reminders: [
+      for (final r in reminders)
+        // **只把界面表达得了的那些读进草稿**（见 [ReminderDraft]）。
+        // 别的 kind 读进来会在保存时被整表替换掉 —— 那等于用户点开
+        // 编辑页看一眼，导入进来的绝对提醒就没了。
+        if (r.kind == ReminderKind.relativeToStart)
+          ReminderDraft(
+            id: r.id,
+            offsetMinutes: r.offsetMinutes ?? 0,
+            isEnabled: r.isEnabled,
+          ),
     ],
     checklist: [
       for (final i in checklist)
@@ -599,6 +650,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
       task,
       ref.read(stagesByTaskProvider)[task.id] ?? const [],
       checklist: ref.read(checklistByTaskProvider)[task.id] ?? const [],
+      reminders: ref.read(remindersByTaskProvider)[task.id] ?? const [],
       splitAt: ref.read(editingSplitAtProvider),
     );
   }
@@ -749,6 +801,44 @@ final class TaskEditorController extends Notifier<TaskDraft> {
   }
 
   /// 加一个空阶段行。
+  /// 加一条提醒（FR-NOTI-01）。
+  ///
+  /// 默认提前量取配置项 `reminder.defaultOffsetMinutes` ——
+  /// 写死 15 分钟的话，那条配置就成了「设了没人读」。
+  void addReminder() => state = state.copyWith(
+    reminders: [
+      ...state.reminders,
+      ReminderDraft(
+        id: ref.read(idGeneratorProvider).newId(),
+        offsetMinutes: settingOf(ref, defaultReminderOffset),
+      ),
+    ],
+  );
+
+  void setReminderOffset(String id, int offsetMinutes) =>
+      state = state.copyWith(
+        reminders: [
+          for (final r in state.reminders)
+            if (r.id == id) r.copyWith(offsetMinutes: offsetMinutes) else r,
+        ],
+      );
+
+  void setReminderEnabled(String id, bool isEnabled) => state = state.copyWith(
+    reminders: [
+      for (final r in state.reminders)
+        if (r.id == id) r.copyWith(isEnabled: isEnabled) else r,
+    ],
+  );
+
+  /// 删掉一条提醒。**整条移出草稿**，不是把它标成关掉 ——
+  /// 「关掉」是另一个动作，用户可能只是这阵子不想被吵。
+  void removeReminder(String id) => state = state.copyWith(
+    reminders: [
+      for (final r in state.reminders)
+        if (r.id != id) r,
+    ],
+  );
+
   /// 加一条清单项（FR-TASK-09）。
   void addChecklistItem() => state = state.copyWith(
     checklist: [
@@ -976,6 +1066,33 @@ final class TaskEditorController extends Notifier<TaskDraft> {
         );
   }
 
+  /// 把提醒整表写回（FR-NOTI-01）。
+  ///
+  /// 与清单同一个形状，包括「编辑时没有提醒也要发一条空的」——
+  /// 不发的话，用户把提醒全删了，库里那些原地不动，
+  /// 而排期照着库读 —— 表现是**删掉的提醒照样响**。
+  Future<void> _replaceReminders(String taskId, TaskDraft draft) {
+    if (!draft.isEditing && draft.reminders.isEmpty) {
+      return Future<void>.value();
+    }
+    return ref
+        .read(taskCommandDispatcherProvider)
+        .dispatch(
+          ReplaceRemindersCommand(
+            taskId: taskId,
+            reminders: [
+              for (final r in draft.reminders)
+                ReminderSpec(
+                  id: r.id,
+                  kind: ReminderKind.relativeToStart,
+                  offsetMinutes: r.offsetMinutes,
+                  isEnabled: r.isEnabled,
+                ),
+            ],
+          ),
+        );
+  }
+
   /// 把清单整表写回（FR-TASK-09）。
   ///
   /// **编辑时也要发，而且没有项时要发一条空的** —— 与阶段同一个理由：
@@ -1109,6 +1226,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
           );
       await _replaceStages(id, draft);
       await _replaceChecklist(id, draft);
+      await _replaceReminders(id, draft);
       return id;
     }
 
@@ -1124,6 +1242,7 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     // （改已有任务的阶段时只发后一条）。
     await _replaceStages(id, draft);
     await _replaceChecklist(id, draft);
+    await _replaceReminders(id, draft);
 
     return id;
   }

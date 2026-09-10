@@ -19,6 +19,7 @@ library;
 
 import '../../../core/time/weekday.dart';
 import '../../../design/tokens/dimensions.dart';
+import '../../../domain/value_objects/quiet_hours_behavior.dart';
 import '../../task/application/default_duration.dart';
 import '../../views/calendar/application/calendar_split.dart';
 import '../../views/gantt/application/gantt_layout.dart';
@@ -91,11 +92,26 @@ final List<SettingSpecBase> settingsRegistry = [
   firstDayOfWeek,
   calendarSplitRatio,
   ganttLaneBy,
-  trashRetentionDays,
+  reminderEnabled,
+  defaultReminderOffset,
+  allDayReminderMinute,
+  quietHoursEnabled,
+  quietHoursStart,
+  quietHoursEnd,
+  quietHoursBehavior,
+  reminderMergeThreshold,
+  reminderWindowDays,
+  reminderMaxScheduled,
+  reminderVibrate,
+  reminderSound,
   defaultCategoryId,
   defaultTaskDuration,
   swipeRight,
   swipeLeft,
+  trashRetentionDays,
+  autoBackupEnabled,
+  autoBackupIntervalDays,
+  autoBackupKeepCount,
 ];
 
 // ── 外观 ────────────────────────────────────────────────────────
@@ -303,6 +319,52 @@ final SettingSpec<int> trashRetentionDays = SettingSpec<int>(
   decode: (json) => json is int && const [7, 30, 90].contains(json) ? json : 30,
 );
 
+// ── 备份 ────────────────────────────────────────────────────────
+//
+// settings-spec §2.5 定的三条。**V1 的备份是应用内的** ——
+// 文件写在应用文档目录里，列得出、恢复得回来，但拿不到应用外面去
+// （分享出去要引新插件，那是一次技术栈决定，见 `BackupStore` 的头注）。
+
+/// 自动备份总开关（FR-DATA-05）。
+final SettingSpec<bool> autoBackupEnabled = SettingSpec<bool>(
+  key: 'data.autoBackupEnabled',
+  defaultValue: true,
+  exposure: SettingExposure.exposed,
+  group: SettingGroup.data,
+  label: '自动备份',
+  description: '按下面的间隔在启动时备一份，旧的自动清理',
+  encode: (v) => v,
+  decode: (json) => json is bool ? json : true,
+);
+
+/// 隔几天备一次。
+///
+/// **给档位不给任意天数**，同 `trashRetentionDays` 那条理由：
+/// 一个能填 0 的输入框意味着「每次启动都备一份」，
+/// 那会在保留数以内反复冲掉真正有用的旧备份。
+final SettingSpec<int> autoBackupIntervalDays = SettingSpec<int>(
+  key: 'data.autoBackupIntervalDays',
+  defaultValue: 7,
+  exposure: SettingExposure.exposed,
+  group: SettingGroup.data,
+  editor: SettingEditor.select,
+  label: '备份间隔',
+  options: const [(1, '每天'), (7, '每周'), (30, '每月')],
+  encode: (v) => v,
+  decode: (json) => json is int && const [1, 7, 30].contains(json) ? json : 7,
+);
+
+/// 保留几份。隐藏项：多数人不会有意见，但导出 JSON 里看得见。
+final SettingSpec<int> autoBackupKeepCount = SettingSpec<int>(
+  key: 'data.autoBackupKeepCount',
+  defaultValue: 5,
+  exposure: SettingExposure.hidden,
+  group: SettingGroup.data,
+  label: '保留份数',
+  encode: (v) => v,
+  decode: (json) => json is int && json >= 1 ? json : 5,
+);
+
 /// 新建单事项时，默认的结束离开始多远（FR-TASK-01）。
 ///
 /// 单事项现在必须有起止（2026-09-09 用户定的），所以新建时必须给一个
@@ -320,6 +382,203 @@ final SettingSpec<DefaultTaskDuration> defaultTaskDuration = _enumSpec(
   group: SettingGroup.behavior,
   label: '新建任务默认时长',
   description: '新建单事项时，结束时间默认离开始多远',
+);
+
+// ── 提醒 ────────────────────────────────────────────────────────
+//
+// settings-spec §2.3 定了 12 条，这里一次补齐。
+//
+// **时刻类的项给档位，不给任意分钟数**，同 `trashRetentionDays` 那条理由：
+// 一个能填任意值的输入框，第一件事就是让人填出 `quietHoursStart ==
+// quietHoursEnd`（时段长度为零，还是二十四小时？）。档位把这类问题
+// 从「运行时要防」变成「压根表达不出来」。
+
+/// 提醒总开关（FR-NOTI-01）。
+///
+/// **关掉是「不排期」，不是「排了不响」**：后者要么留下一堆待触发闹钟
+/// 白占系统配额，要么在重开时集中补响一批过期提醒。
+final SettingSpec<bool> reminderEnabled = SettingSpec<bool>(
+  key: 'reminder.enabled',
+  defaultValue: true,
+  exposure: SettingExposure.exposed,
+  group: SettingGroup.reminder,
+  label: '任务提醒',
+  description: '关掉之后不再排期，已排的会被取消',
+  encode: (v) => v,
+  decode: (json) => json is bool ? json : true,
+);
+
+/// 新任务的默认提前量，负数 = 提前（data-model §3.8 的 `offsetMinutes`）。
+final SettingSpec<int> defaultReminderOffset = SettingSpec<int>(
+  key: 'reminder.defaultOffsetMinutes',
+  defaultValue: -15,
+  exposure: SettingExposure.exposed,
+  group: SettingGroup.reminder,
+  editor: SettingEditor.select,
+  label: '默认提前',
+  description: '新建任务时预设的提醒时间',
+  options: const [
+    (0, '准时'),
+    (-5, '5 分钟'),
+    (-15, '15 分钟'),
+    (-30, '30 分钟'),
+    (-60, '1 小时'),
+    (-1440, '1 天'),
+  ],
+  encode: (v) => v,
+  decode: (json) =>
+      json is int && const [0, -5, -15, -30, -60, -1440].contains(json)
+      ? json
+      : -15,
+);
+
+/// 全天任务几点提醒。
+///
+/// 全天任务没有开始时刻，相对提前量对它无意义 —— 「提前 15 分钟」
+/// 要从哪一刻算起？所以它单独有一个绝对时刻。
+final SettingSpec<int> allDayReminderMinute = SettingSpec<int>(
+  key: 'reminder.allDayReminderMinute',
+  defaultValue: 540,
+  exposure: SettingExposure.exposed,
+  group: SettingGroup.reminder,
+  editor: SettingEditor.select,
+  label: '全天任务提醒时刻',
+  options: const [
+    (420, '07:00'),
+    (480, '08:00'),
+    (540, '09:00'),
+    (600, '10:00'),
+    (720, '12:00'),
+  ],
+  encode: (v) => v,
+  decode: (json) =>
+      json is int && const [420, 480, 540, 600, 720].contains(json)
+      ? json
+      : 540,
+);
+
+final SettingSpec<bool> quietHoursEnabled = SettingSpec<bool>(
+  key: 'reminder.quietHoursEnabled',
+  defaultValue: false,
+  exposure: SettingExposure.exposed,
+  group: SettingGroup.reminder,
+  label: '免打扰时段',
+  description: '这段时间内的提醒按下面那条处理',
+  encode: (v) => v,
+  decode: (json) => json is bool ? json : false,
+);
+
+/// 免打扰开始（MinuteOfDay）。跨零点是**正常情况**（22:00–07:00 就是默认）。
+final SettingSpec<int> quietHoursStart = SettingSpec<int>(
+  key: 'reminder.quietHoursStart',
+  defaultValue: 1320,
+  exposure: SettingExposure.exposed,
+  group: SettingGroup.reminder,
+  editor: SettingEditor.select,
+  label: '免打扰开始',
+  options: const [
+    (1200, '20:00'),
+    (1260, '21:00'),
+    (1320, '22:00'),
+    (1380, '23:00'),
+    (0, '00:00'),
+  ],
+  encode: (v) => v,
+  decode: (json) =>
+      json is int && const [1200, 1260, 1320, 1380, 0].contains(json)
+      ? json
+      : 1320,
+);
+
+final SettingSpec<int> quietHoursEnd = SettingSpec<int>(
+  key: 'reminder.quietHoursEnd',
+  defaultValue: 420,
+  exposure: SettingExposure.exposed,
+  group: SettingGroup.reminder,
+  editor: SettingEditor.select,
+  label: '免打扰结束',
+  options: const [
+    (300, '05:00'),
+    (360, '06:00'),
+    (420, '07:00'),
+    (480, '08:00'),
+    (540, '09:00'),
+  ],
+  encode: (v) => v,
+  decode: (json) =>
+      json is int && const [300, 360, 420, 480, 540].contains(json)
+      ? json
+      : 420,
+);
+
+final SettingSpec<QuietHoursBehavior> quietHoursBehavior = _enumSpec(
+  key: 'reminder.quietHoursBehavior',
+  defaultValue: QuietHoursBehavior.postpone,
+  options: [for (final v in QuietHoursBehavior.values) (v, v.label)],
+  storageKeyOf: (v) => v.storageKey,
+  fromStorageKey: QuietHoursBehavior.fromStorageKey,
+  group: SettingGroup.reminder,
+  label: '免打扰时段内',
+);
+
+/// 同一时刻超过 N 条就合并成一条摘要（notifications.md §8）。
+///
+/// 隐藏项：它调的是「几条算多」，而多数人不会有意见；但导出 JSON 里看得见，
+/// 高级用户改得动（`SettingExposure.hidden` 的约定）。
+final SettingSpec<int> reminderMergeThreshold = SettingSpec<int>(
+  key: 'reminder.mergeThreshold',
+  defaultValue: 3,
+  exposure: SettingExposure.hidden,
+  group: SettingGroup.reminder,
+  label: '合并阈值',
+  encode: (v) => v,
+  decode: (json) => json is int && json >= 2 ? json : 3,
+);
+
+/// 滚动排期窗口（notifications.md §3）。
+final SettingSpec<int> reminderWindowDays = SettingSpec<int>(
+  key: 'reminder.scheduleWindowDays',
+  defaultValue: 14,
+  exposure: SettingExposure.hidden,
+  group: SettingGroup.reminder,
+  label: '排期窗口天数',
+  encode: (v) => v,
+  decode: (json) => json is int && json >= 1 ? json : 14,
+);
+
+/// 待触发排期的条数上限。
+///
+/// **400 是保守估计，不是实测的拐点** —— 那一项已降级为不验收
+/// （notifications.md §11）。在 Android 9 上量到 600 条全收，但那台机器上
+/// API 31/33 的两道约束都不生效，所以那个数不能拿来定这里。
+final SettingSpec<int> reminderMaxScheduled = SettingSpec<int>(
+  key: 'reminder.maxScheduled',
+  defaultValue: 400,
+  exposure: SettingExposure.hidden,
+  group: SettingGroup.reminder,
+  label: '排期条数上限',
+  encode: (v) => v,
+  decode: (json) => json is int && json >= 1 ? json : 400,
+);
+
+final SettingSpec<bool> reminderVibrate = SettingSpec<bool>(
+  key: 'reminder.vibrate',
+  defaultValue: true,
+  exposure: SettingExposure.hidden,
+  group: SettingGroup.reminder,
+  label: '震动',
+  encode: (v) => v,
+  decode: (json) => json is bool ? json : true,
+);
+
+final SettingSpec<String> reminderSound = SettingSpec<String>(
+  key: 'reminder.sound',
+  defaultValue: 'default',
+  exposure: SettingExposure.hidden,
+  group: SettingGroup.reminder,
+  label: '提示音',
+  encode: (v) => v,
+  decode: (json) => json is String && json.isNotEmpty ? json : 'default',
 );
 
 /// 甘特的泳道按什么分（view-specs §4.3）。

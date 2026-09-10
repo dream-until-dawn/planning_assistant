@@ -14,6 +14,7 @@ import 'package:drift/drift.dart';
 import '../../core/time/clock.dart';
 import '../../domain/entities/checklist_item.dart';
 import '../../domain/entities/occurrence_override.dart';
+import '../../domain/entities/reminder.dart';
 import '../../domain/entities/stage.dart';
 import '../../domain/entities/stage_occurrence_state.dart';
 import '../../domain/entities/task.dart';
@@ -27,6 +28,7 @@ import '../database/dao/synced_dao.dart';
 import '../database/dao/table_daos.dart';
 import '../mappers/checklist_item_mapper.dart';
 import '../mappers/occurrence_override_mapper.dart';
+import '../mappers/reminder_mapper.dart';
 import '../mappers/stage_occurrence_state_mapper.dart';
 import '../mappers/task_mapper.dart';
 
@@ -37,6 +39,7 @@ final class DriftTaskRepository implements TaskRepository {
       _overrides = OccurrenceOverrideDao(_db, writer, clock),
       _stageStates = StageOccurrenceStateDao(_db, writer, clock),
       _checklist = ChecklistItemDao(_db, writer, clock),
+      _reminders = ReminderDao(_db, writer, clock),
       _clock = clock;
 
   final AppDatabase _db;
@@ -45,6 +48,7 @@ final class DriftTaskRepository implements TaskRepository {
   final OccurrenceOverrideDao _overrides;
   final StageOccurrenceStateDao _stageStates;
   final ChecklistItemDao _checklist;
+  final ReminderDao _reminders;
   final Clock _clock;
 
   /// 三个可见性谓词翻译成 SQL 的**唯一出处**。
@@ -127,6 +131,32 @@ final class DriftTaskRepository implements TaskRepository {
           (rows) => [for (final r in rows) _db.tasks.map(r.data).toEntity()],
         );
   }
+
+  @override
+  Future<List<Reminder>> findRemindersOfTask(
+    String taskId, {
+    TaskScope scope = TaskScope.active,
+  }) async {
+    final q = _db.select(_db.reminders)..where((t) => t.taskId.equals(taskId));
+    if (scope != TaskScope.all) {
+      q.where((t) => t.deletedAt.isNull());
+    }
+    return (await q.get()).map(reminderFromRow).toList();
+  }
+
+  @override
+  Future<void> saveReminders(String taskId, List<Reminder> reminders) async {
+    await _db.transaction(() async {
+      for (final r in reminders) {
+        await _reminders.upsert(reminderToCompanion(r));
+      }
+    });
+  }
+
+  @override
+  Stream<List<Reminder>> watchAllReminders() => _reminders.watchAll().map(
+    (rows) => [for (final r in rows) reminderFromRow(r)],
+  );
 
   @override
   Stream<List<OccurrenceOverride>> watchAllOverrides() => _overrides

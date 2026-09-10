@@ -18,6 +18,7 @@ import 'package:planning_assistant/core/time/minute_of_day.dart';
 import 'package:planning_assistant/core/time/plan_date.dart';
 import 'package:planning_assistant/domain/commands/task_command.dart';
 import 'package:planning_assistant/domain/entities/occurrence.dart';
+import 'package:planning_assistant/domain/entities/reminder.dart';
 import 'package:planning_assistant/domain/entities/task.dart';
 import 'package:planning_assistant/domain/value_objects/occurrence_key.dart';
 import 'package:planning_assistant/domain/value_objects/task_status.dart';
@@ -83,6 +84,25 @@ final _samples = <TaskCommand>[
     ],
   ),
   const CompleteTaskWithStagesCommand('task-1'),
+  // 两种 kind 各来一条：只放相对那种的话，绝对提醒的日期与时刻
+  // 在往返里一个字节都不会被碰到。
+  ReplaceRemindersCommand(
+    taskId: 'task-1',
+    reminders: [
+      const ReminderSpec(
+        id: 'rem-0',
+        kind: ReminderKind.relativeToStart,
+        offsetMinutes: -15,
+      ),
+      ReminderSpec(
+        id: 'rem-1',
+        kind: ReminderKind.absolute,
+        absoluteDate: const PlanDate(2026, 9, 20),
+        absoluteMinute: MinuteOfDay.of(8, 30),
+        isEnabled: false,
+      ),
+    ],
+  ),
   SetOccurrenceStatusCommand(
     taskId: 'task-1',
     occurrenceKey: _key,

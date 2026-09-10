@@ -8,6 +8,7 @@ library;
 
 import '../entities/checklist_item.dart';
 import '../entities/occurrence_override.dart';
+import '../entities/reminder.dart';
 import '../entities/stage.dart';
 import '../entities/stage_occurrence_state.dart';
 import '../entities/task.dart';
@@ -68,6 +69,22 @@ abstract interface class TaskRepository {
   ///
   /// 返回真正删掉了几条任务（子实体不计）。
   Future<int> purgeDeleted(Iterable<String> taskIds);
+
+  /// 某任务的提醒。
+  Future<List<Reminder>> findRemindersOfTask(
+    String taskId, {
+    TaskScope scope = TaskScope.active,
+  });
+
+  /// 整表写回提醒（同一事务，理由同 [saveChecklist]）。
+  Future<void> saveReminders(String taskId, List<Reminder> reminders);
+
+  /// 全部提醒，持续推送（FR-NOTI-01）。
+  ///
+  /// **一次取全部，不按任务分**：排期一轮要看窗口内所有任务的提醒，
+  /// 逐条查库就是 N+1；而提醒总量与任务同量级，很小。
+  /// 同 [watchAllOverrides] 那条理由。
+  Stream<List<Reminder>> watchAllReminders();
 
   /// 全部单次例外，持续推送。
   ///

@@ -79,6 +79,24 @@ bool _isGeneratedPath(String relToLib) =>
 
 String _norm(String path) => path.replaceAll(r'\', '/');
 
+/// 两条「行」lint 的扫描范围：**凡是拿得到 `TaskOccurrence` 的文件**。
+///
+/// 一度只扫 `features/views/`。那条范围是按「谁会写视图代码」划的，
+/// 而真正该问的是「谁拿得到那个类型」—— `features/reminder/` 下的
+/// `reminder_pairs.dart` 就把 `TaskOccurrence` 收进来算提醒的触发时刻，
+/// 而它**用了存储的 `endDate` 而不是有效结束**，于是把末阶段往后挪三小时，
+/// 「结束前十五分钟」的提醒还留在原来那个钟点。
+///
+/// 守卫没拦下它 —— 那个文件不在扫描范围里。是写用例时自己撞出来的。
+/// 与「豁免落在扫描范围之外」是同一族：**范围划错了，规则再对也够不着。**
+Set<String> _rowLintScope(List<File> libFiles) => {
+  for (final f in libFiles)
+    if (_relToLib(f.path) case final rel?)
+      if (rel.startsWith('features/views/') ||
+          f.readAsStringSync().contains('application/task_occurrence.dart'))
+        rel,
+};
+
 /// **豁免必须落在守卫的扫描范围里**，而且要按 lib 相对路径锚。
 ///
 /// 两件事，都被踩过：
@@ -93,11 +111,7 @@ String _norm(String path) => path.replaceAll(r'\', '/');
 /// `features/views/**` 下**任何**一个 `foo.dart` 都被豁免 ——
 /// 豁免范围大于它写明的范围。评审提的。
 void _expectExemptionsAreReachable(Set<String> allowed, List<File> libFiles) {
-  final scanned = libFiles
-      .map((f) => _relToLib(f.path))
-      .whereType<String>()
-      .where((r) => r.startsWith('features/views/'))
-      .toSet();
+  final scanned = _rowLintScope(libFiles);
   for (final path in allowed) {
     expect(scanned, contains(path), reason: '豁免 $path 落在扫描范围之外 —— 它从来没生效过，删掉它');
   }
@@ -670,6 +684,7 @@ import
     // **必须用 raw 串拼**：普通串里的 `\b` 是退格符，不是单词边界 ——
     // 那样的正则一个都匹配不上，这条守卫会**空转着报绿**。写这条时就踩了，
     // 是「故意写一处违规看它红不红」这一步把它揪出来的（§1.4 那条规矩）。
+    final scope = _rowLintScope(libFiles);
     final pattern = RegExp(
       r'\b(' + receivers.join('|') + r')\.(endDate|endMinute)\b',
     );
@@ -677,7 +692,7 @@ import
     var scanned = 0;
     for (final file in libFiles) {
       final rel = _relToLib(file.path);
-      if (rel == null || !rel.startsWith('features/views/')) continue;
+      if (rel == null || !scope.contains(rel)) continue;
       if (allowed.contains(rel)) continue;
       scanned++;
       final lines = file.readAsLinesSync();
@@ -690,7 +705,7 @@ import
     }
 
     // 自检：白名单把该扫的全排除掉的话，这条守卫就成了复读机。
-    expect(scanned, greaterThan(5), reason: '视图层只扫到 $scanned 个文件，守卫大概率失效了');
+    expect(scanned, greaterThan(5), reason: '只扫到 $scanned 个文件，守卫大概率失效了');
     expect(
       violations,
       isEmpty,
@@ -735,6 +750,7 @@ import
       'features/views/shared/application/task_occurrence.dart',
     };
 
+    final scope = _rowLintScope(libFiles);
     final pattern = RegExp(
       r'\bstageStatusFor\s*\(|\b(' + receivers.join('|') + r')\.status\b',
     );
@@ -742,7 +758,7 @@ import
     var scanned = 0;
     for (final file in libFiles) {
       final rel = _relToLib(file.path);
-      if (rel == null || !rel.startsWith('features/views/')) continue;
+      if (rel == null || !scope.contains(rel)) continue;
       if (allowed.contains(rel)) continue;
       scanned++;
       final lines = file.readAsLinesSync();
@@ -754,7 +770,7 @@ import
       }
     }
 
-    expect(scanned, greaterThan(5), reason: '视图层只扫到 $scanned 个文件，守卫大概率失效了');
+    expect(scanned, greaterThan(5), reason: '只扫到 $scanned 个文件，守卫大概率失效了');
     expect(
       violations,
       isEmpty,

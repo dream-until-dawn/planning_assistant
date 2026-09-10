@@ -16,6 +16,7 @@ import '../../core/patch/unset.dart';
 import '../../core/time/minute_of_day.dart';
 import '../../core/time/plan_date.dart';
 import '../entities/occurrence.dart';
+import '../entities/reminder.dart';
 import '../entities/task.dart';
 import '../value_objects/occurrence_key.dart';
 import '../value_objects/task_status.dart';
@@ -69,6 +70,7 @@ sealed class TaskCommand {
       ),
       CompleteTaskWithStagesCommand.kType =>
         CompleteTaskWithStagesCommand.fromJson(json),
+      ReplaceRemindersCommand.kType => ReplaceRemindersCommand.fromJson(json),
       SetStageOccurrenceStatusCommand.kType =>
         SetStageOccurrenceStatusCommand.fromJson(json),
       ReplaceChecklistCommand.kType => ReplaceChecklistCommand.fromJson(json),
@@ -89,6 +91,7 @@ sealed class TaskCommand {
     RestoreTaskCommand.kType,
     ReplaceStagesCommand.kType,
     CompleteTaskWithStagesCommand.kType,
+    ReplaceRemindersCommand.kType,
     SetOccurrenceStatusCommand.kType,
     SkipOccurrenceCommand.kType,
     MoveOccurrenceCommand.kType,
@@ -850,6 +853,86 @@ final class ChecklistItemSpec {
 /// 混进那条命令的话，任何一条改标题的路径都得顺带考虑 key 迁移。
 ///
 /// 迁移规则与撞车检查是纯函数 `convertAllDayMode`。
+/// 整表替换一条任务的提醒（FR-NOTI-01）。
+///
+/// 与阶段、清单同一个形状：编辑器每次保存都把当前那几条整表写回。
+/// **不做「加一条 / 删一条」的细粒度命令** —— 编辑器里用户可以连着
+/// 增删改好几下才按保存，逐条发命令的话，中途取消就留下一半改动。
+final class ReplaceRemindersCommand extends TaskCommand {
+  const ReplaceRemindersCommand({
+    required this.taskId,
+    required this.reminders,
+  });
+
+  static const kType = 'replaceReminders';
+
+  final String taskId;
+  final List<ReminderSpec> reminders;
+
+  @override
+  String get type => kType;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'type': kType,
+    'taskId': taskId,
+    'reminders': [for (final r in reminders) r.toJson()],
+  };
+
+  static ReplaceRemindersCommand fromJson(Map<String, Object?> json) =>
+      ReplaceRemindersCommand(
+        taskId: json['taskId']! as String,
+        reminders: [
+          for (final r in json['reminders']! as List)
+            ReminderSpec.fromJson(r as Map<String, Object?>),
+        ],
+      );
+}
+
+/// 命令载荷里的一条提醒。
+///
+/// 与实体分开的理由同 [ChecklistItemSpec]：命令要能序列化往返，
+/// 而墓碑与时间戳是仓库那一侧的事。
+final class ReminderSpec {
+  const ReminderSpec({
+    required this.id,
+    required this.kind,
+    this.offsetMinutes,
+    this.absoluteDate,
+    this.absoluteMinute,
+    this.isEnabled = true,
+  });
+
+  final String id;
+  final ReminderKind kind;
+  final int? offsetMinutes;
+  final PlanDate? absoluteDate;
+  final MinuteOfDay? absoluteMinute;
+  final bool isEnabled;
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'kind': kind.wireName,
+    'offsetMinutes': offsetMinutes,
+    'absoluteDate': absoluteDate?.toString(),
+    'absoluteMinute': absoluteMinute?.value,
+    'isEnabled': isEnabled,
+  };
+
+  static ReminderSpec fromJson(Map<String, Object?> json) => ReminderSpec(
+    id: json['id']! as String,
+    kind: ReminderKind.fromWireName(json['kind']! as String),
+    offsetMinutes: json['offsetMinutes'] as int?,
+    absoluteDate: json['absoluteDate'] == null
+        ? null
+        : PlanDate.parse(json['absoluteDate']! as String),
+    absoluteMinute: json['absoluteMinute'] == null
+        ? null
+        : MinuteOfDay(json['absoluteMinute']! as int),
+    isEnabled: json['isEnabled'] as bool? ?? true,
+  );
+}
+
 final class ConvertTaskAllDayModeCommand extends TaskCommand {
   const ConvertTaskAllDayModeCommand({
     required this.taskId,

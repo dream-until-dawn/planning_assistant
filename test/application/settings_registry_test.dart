@@ -109,6 +109,33 @@ void main() {
     });
   });
 
+  group('控件类型与值的类型对得上', () {
+    test('暴露的 toggle 项，值必须是 bool', () {
+      // `SettingEditor` 的默认值就是 `toggle`，所以**忘了写 editor 的项
+      // 会静悄悄变成开关**。值不是 bool 的话，设置页画不出开关，
+      // 只能回落到那句「这个类型的控件还没做」——
+      // 而那一行在页面上看着与别的项一样，key 也照样有。
+      //
+      // **只管暴露项**：隐藏项不上页面，逼它们挑一个控件是在问一个
+      // 没人需要答的问题（`view.calendarSplitRatio` 就是一例：
+      // 它是个 double，而 slider 这个控件根本还没做）。
+      // 哪天把某个隐藏项暴露出来，这条当场就会拦住它 —— 而那正是
+      // 需要答这个问题的时刻。
+      for (final spec in settingsRegistry.where(
+        (s) => s.isExposed && s.editor == SettingEditor.toggle,
+      )) {
+        expect(
+          spec.defaultValueDynamic,
+          isA<bool>(),
+          reason:
+              '${spec.key} 用的是 toggle，但默认值是 '
+              '${spec.defaultValueDynamic.runtimeType} —— '
+              '多半是忘了写 editor',
+        );
+      }
+    });
+  });
+
   group('解码的稳健性', () {
     test('认不出的存储值回落到默认，不抛', () {
       // 用户降级安装、或配置被别的版本写过时会读到这种值。
@@ -132,6 +159,42 @@ void main() {
           );
         }
       }
+    });
+  });
+
+  group('注册表的顺序（settings-spec §1.2）', () {
+    test('分组是连续的，且顺序与 SettingGroup 的声明顺序一致', () {
+      // ## 为什么这也要管
+      //
+      // 页面按 `SettingGroup.values` 分段渲染，所以**跨组的注册表顺序
+      // 对界面没有影响** —— 看着像一条纯风格约定。
+      //
+      // 但它不是。设置页那条「每个暴露项都出现」是**照注册表顺序
+      // 一路往下滚**的，而 `scrollUntilVisible` 只会往一个方向滚：
+      // 注册表的组序一旦与页面对不上，走到某一项时它已经在上方，
+      // 滚 50 次也找不到，报的是「Bad state: No element」——
+      // 离「注册表的顺序不对」隔着三层。加两条备份配置时撞见过一次。
+      //
+      // 所以把它钉成一条明写的约束，而不是让下一个人再查一遍。
+      final seen = <SettingGroup>[];
+      for (final spec in settingsRegistry) {
+        // 没写 group 的只可能是隐藏项（上面那条「exposed 的项都有 group」
+        // 盯着），它们不上页面，夹在哪儿都不影响顺序。
+        final group = spec.group;
+        if (group == null) continue;
+        if (seen.isNotEmpty && seen.last == group) continue;
+        expect(
+          seen,
+          isNot(contains(group)),
+          reason: '${spec.key} 所在的 ${group.name} 组在注册表里断开了',
+        );
+        seen.add(group);
+      }
+      expect(
+        seen,
+        SettingGroup.values.where(seen.contains).toList(),
+        reason: '注册表的分组顺序与 SettingGroup 的声明顺序不一致',
+      );
     });
   });
 

@@ -61,10 +61,17 @@ List<PlannedNotification> planNotifications({
 
 **超上限时的截断策略**：按触发时刻升序保留前 N 条，丢弃最远的。因为最近的更可能真的被用到，而远期的会在下次续排时补上。
 
-> ⬜ **待验证（M4）**：Android 对单应用待触发 `AlarmManager` 闹钟数量的实际上限。
-> 网上流传的数字不一致，**必须实测**：写一个循环排 N 条并用 `pendingNotificationRequests()`
-> 回读实际条数，找到真实拐点，再据此定 `maxScheduled` 的默认值。
-> 现在的 400 是保守估计，**不是**已验证的数字。
+> 🔻 **原计划的验证方法是错的，且这一条已降级为不验收 —— 见 §11。**
+>
+> 原文写的是「排 N 条并用 `pendingNotificationRequests()` 回读实际条数，找到真实拐点」。
+> 读插件源码之后这条路是断的：`pendingNotificationRequests()` 走
+> `loadScheduledNotifications()`（`FlutterLocalNotificationsPlugin.java:1617 → :536`），
+> 读的是插件**自己写在 SharedPreferences 里的一段 JSON**，不问 AlarmManager。
+> 那个回读永远等于排进去的条数 —— 一个不可能失败的探针。
+>
+> 真实状态只能从进程外看：`adb shell dumpsys alarm | grep <包名>`。
+> 按这个方法量过一次，结论与它的适用范围见 §11。
+> `maxScheduled` 的 400 仍然是**保守估计，不是实测的拐点**。
 
 ## 4. 权限
 
@@ -109,6 +116,15 @@ List<PlannedNotification> planNotifications({
 | `zonedSchedule(...)` | 按时区排期 |
 | `cancel(id:)` / `cancelAll()` | 取消 |
 
+> ⚠️ **这两个权限 API 在 API 31 / 33 以下是空的，别拿旧系统的返回值当验证。**
+> 插件源码里两道版本门：`checkCanScheduleExactAlarms` 只在
+> `SDK_INT >= S`（API 31）才真的问 `canScheduleExactAlarms()`（`:797`）；
+> `POST_NOTIFICATIONS` 只在 `>= TIRAMISU`（API 33）才申请（`:1921`）。
+> 低于这两个版本，`canScheduleExactNotifications()` 与
+> `requestNotificationsPermission()` 都恒为 true —— 看起来「权限都有」，
+> 其实是这两条约束根本没生效。在 Android 9 的模拟器上跑出来的绿，
+> 说明不了任何事情（这不是假设，见 §11）。
+
 > 由于插件已自带这两个权限申请能力，**`permission_handler` 对通知场景并非必需**。
 > 这直接关系到能否把 `compileSdk` 从预览版 37 降回稳定版 36，见
 > [环境探针结论 §3.2](../05-engineering/environment-notes.md)。M0 检查表项。
@@ -129,9 +145,14 @@ List<PlannedNotification> planNotifications({
 
 | 状态 | 行为 | UI |
 |---|---|---|
-| 通知权限被拒 | 不排期 | 设置页显示状态卡片 + 一键跳系统设置 |
-| 精确闹钟不可用 | 用 **`inexactAllowWhileIdle`** 继续排 | 明确告知「提醒可能延迟几分钟」，不假装一切正常 |
-| 两者都可用 | `exactAllowWhileIdle` | — |
+| 通知权限被拒 | 不排期 | 状态卡片「提醒暂时不会响」+「去开权限」（`ReminderStatusCard`） |
+| 精确闹钟不可用 | 用 **`inexactAllowWhileIdle`** 继续排 | 状态卡片「提醒可能晚几分钟」+「去设精确闹钟」 |
+| 两者都可用 | `exactAllowWhileIdle` | **不显示卡片** —— 常驻一条「一切正常」等于每次进设置页都说一件用户没问的事 |
+
+卡片挂在设置页「提醒」组之后，由**组合根**拼进去 ——
+设置页不 import 别的 feature 的 presentation（module-map §3，有守卫盯着）。
+两种状态同时成立时**只说权限那条**：没权限时一条都没排，
+「可能晚几分钟」是句废话，而两张卡片摞着用户不知道先处理哪个。
 
 > 降级目标选 `inexactAllowWhileIdle` 而**不是** `inexact`：后者在 Doze 下可能被推迟到下一个
 > 维护窗口，对「今天 9 点的会议」这类提醒等于失效。既然已经放弃精确，至少要保住「会响」。
@@ -142,14 +163,28 @@ List<PlannedNotification> planNotifications({
 
 ## 5. 重启恢复（FR-NOTI-03）
 
-两道保险：
-
 1. 注册插件的 `ScheduledNotificationBootReceiver`（§4.1），由插件自行恢复。
-2. App 下次启动时，用 `pendingNotificationRequests()` 回读系统实际待触发列表，
+2. App 下次启动时，用 `pendingNotificationRequests()` 回读插件那份排期清单，
    与本地 `scheduled_notifications` 表**对账**：缺的补排，多的取消。
+3. **每次进前台按当前数据重排一遍**（§3 的续排触发点）。
 
-> 第 2 条是关键。只依赖第 1 条等于把正确性交给外部组件，而这恰恰是**测不出来**的部分。
-> 对账逻辑是纯函数（输入两个列表，输出差异），可以做满测试。
+> ### 第 1、2 条**不是两道独立的保险**，初版说反了
+>
+> 原文写「第 2 条是关键，只依赖第 1 条等于把正确性交给外部组件」。
+> 但两者读的是**同一份数据**：插件的 boot receiver 从 SharedPreferences
+> 恢复，而 `pendingNotificationRequests()` 读的也是那份 SharedPreferences
+> （`FlutterLocalNotificationsPlugin.java:536`）。系统真把某条闹钟丢了，
+> 两边的清单里它都还在 —— 对账对不出来。
+>
+> 所以第 2 条能查的是**我们的库与插件的记账之间**的分歧
+> （比如某次 `zonedSchedule` 抛了、或某次 `cancel` 没执行）。那仍然值得做，
+> 但它不是「系统丢了闹钟」的兜底。
+>
+> **真正的兜底是第 3 条**：不去问「系统还剩什么」，而是每次进前台
+> 按当前数据把窗口内的排期重算一遍。它不依赖任何外部记账，
+> 也正因为不依赖，才不会像前两条那样悄悄失效。
+>
+> 对账逻辑仍是纯函数（输入两个列表，输出差异），可以做满测试（N-10/N-11）。
 
 ## 6. 时区变更
 
@@ -158,9 +193,10 @@ List<PlannedNotification> planNotifications({
 - 不同 → 全量重排（墙钟不变，但绝对触发时刻变了）
 - 相同 → 增量续排
 
-> ⬜ **待验证（M4）**：Android 时区变更广播 `ACTION_TIMEZONE_CHANGED` 是否需要单独监听，
-> 还是「下次启动时检查」已经足够。倾向后者（更省电、更简单），但要实测确认在时区改变后、
-> App 未启动期间不会触发错误时刻的提醒。
+> 🔻 **降级为不验收，见 §11。** 原计划实测「`ACTION_TIMEZONE_CHANGED` 是否需要单独监听，
+> 还是下次启动时检查就够」。V1 采用**下次启动时检查**（更省电、更简单），
+> 但这是**设计选择，不是实测结论** —— 「App 未启动期间时区变了会不会在错误时刻响」
+> 这个问题没有被验证过。拿到真机后按原方案量。
 
 ## 7. 免打扰（FR-CFG 的 `reminder.quietHours*`）
 
@@ -211,7 +247,47 @@ String buildDigestText(TodayDigest digest);   // V2 常驻通知复用
 | N-11 | 对账：系统列表多 3 条（任务已删） | 取消这 3 条 |
 | N-12 | 时区从上海改到伦敦 | 全量重排，墙钟时刻不变 |
 | N-13 | 同一时刻 5 条提醒，阈值 3 | 合并为 1 条摘要 |
-| N-14 | 精确闹钟不可用 | 降级为 **`inexactAllowWhileIdle`**（不是 `inexact`），且 UI 状态可查 |
+| N-14 | 精确闹钟不可用 | 降级为 **`inexactAllowWhileIdle`**（不是 `inexact`），且 UI 状态可查 🔻 |
 
-N-01..N-13 全部可在**纯 Dart 层**用假时钟与假通知平台测完，不需要设备。
-只有 N-14 与实际触发时刻精度需要真机验证（M4 的手工验收项）。
+N-01..N-13 全部可在**纯 Dart 层**用假时钟与假通知平台测完，不需要设备 ——
+**这十三条是 V1 真正验收的部分**。
+
+🔻 N-14 与实际触发精度**降级为不验收**（§11）。注意 N-14 的「精确闹钟不可用」
+这个前提在 API 31 以下**造不出来**：那些系统上 `canScheduleExactNotifications()`
+恒为 true（§4.3）。所以它不是「还没测」，是**在手头的设备上测不了**。
+
+## 11. 降级：三项真机验证在 V1 不验收
+
+用户 2026-09-09 明确决定：**API 33+ 的设备不作为 V1 的前提，后续用自己的实机测**。
+
+**降级的是哪三项**：
+
+| 项 | 原计划 | 现状 |
+|---|---|---|
+| §3 待触发闹钟上限 | 实测拐点，据此定 `maxScheduled` | 400 是保守估计，**未实测** |
+| §6 时区变更 | 实测「下次启动检查」是否够 | 采用该方案，**未验证** |
+| N-14 降级路径 | 真机验精确闹钟不可用时的行为 | **在 API 31 以下造不出这个前提** |
+
+**已经量到的，以及它为什么不够**。2026-09-09 在一台 **Android 9 / API 28** 的
+模拟器上跑了 `integration_test/alarm_limit_probe_test.dart`，用
+`adb shell dumpsys alarm` 从进程外数：
+
+```
+排 600 条 → 插件记账 600 条 → AlarmManager 实收 600 条（Alarm{ 行 600）
+```
+
+没有传说中 500 的拐点。**但这个数字不能拿来定 `maxScheduled`**：API 28 上
+`SCHEDULE_EXACT_ALARM`（API 31 起）与 `POST_NOTIFICATIONS`（API 33 起）两道
+约束都不生效（§4.3），也就是说它是在「所有现代限制都不存在」的平台上量的。
+量到的是 API 28 的上限，不是设计要防的那个上限。
+
+**降级成什么**。窗口 + 上限 + 截断的机制照做（§3），阈值留着；V1 **不声称
+验过**这三项。当前实际验的是它们的上游代理：
+
+| 真正的问题 | V1 验的 | 差在哪 |
+|---|---|---|
+| 系统能挂多少条 | 纯函数按 `maxScheduled` 截断（N-03） | 只验「我们按上限截断了」，不验「那个上限对不对」 |
+| 时区变了会不会错时 | 纯函数按新时区重算（N-12） | 只验重算逻辑，不验 App 没运行时系统的行为 |
+| 精确闹钟不可用时降级 | 平台层按 `canScheduleExact` 选 mode（可用假实现测） | 不验真机上那个查询本身返回什么 |
+
+代理绿了不等于这三条满足了。**这一节就是为了让那句话写在纸上。**
