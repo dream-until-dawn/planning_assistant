@@ -77,8 +77,9 @@ RecurrenceConversion? convertRecurrenceMode(
   final now = updated.isRecurring;
   if (was == now) return null;
 
-  // 没有开始时刻就没有「第一次」可指。重复任务必须有日期
-  // （`needsDateForRecurrence`），所以这一支实际到不了 ——
+  // 没有开始时刻就没有「第一次」可指。经编辑器进来的重复任务必有日期
+  // （`TaskEditorController.setRecurrence` 打开重复时补今天，判据叫
+  // `TaskDraft.needsDateForRecurrence`），所以这一支从那条路到不了 ——
   // 但它是**导入/同步也走得到**的路径，不能靠界面的约束兜底。
   final start = updated.startWallTime;
   if (start == null) return null;

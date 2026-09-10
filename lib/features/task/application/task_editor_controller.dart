@@ -281,6 +281,12 @@ final class TaskDraft {
 
   /// 重复任务**必须有日期**：RRULE 的展开以 DTSTART 为锚点，
   /// 没有起点就无从展开。与「非全天必须有日期」是同一类约束。
+  ///
+  /// **维持它的是 [TaskEditorController.setRecurrence]**（打开重复时补今天），
+  /// 而那儿读的就是这个 getter —— 一度是各写一遍同一个表达式，
+  /// 于是这个名字在别处被当成保证引用（`recurrence_conversion.dart` 里那句
+  /// 「所以这一支实际到不了」），而它自己**没有任何调用方**。
+  /// 又一次「拿一个名字当成了一个保证」。
   bool get needsDateForRecurrence => recurrence.enabled && planDate == null;
 
   /// 能不能保存。
@@ -775,7 +781,10 @@ final class TaskEditorController extends Notifier<TaskDraft> {
     // 打开重复时**没有日期就补今天** —— RRULE 的展开以 DTSTART 为锚点，
     // 没有起点就无从展开。与「关掉全天补今天」是同一条道理，
     // 而且补得看得见，用户不同意可以当场改。
-    final needsDate = value.enabled && state.planDate == null;
+    // **问那个 getter，别把同一个表达式再写一遍。**
+    // 它是「重复任务必须有日期」这条约束唯一的名字，别处的注释也引它 ——
+    // 各写一遍的话，改了一处另一处仍然照旧成立着，而没人会发现。
+    final needsDate = state.copyWith(recurrence: value).needsDateForRecurrence;
     // **关掉重复时，把第一次发生的阶段进度搬回草稿**（FR-TASK-07）。
     //
     // 阶段状态有两个存储位置：不重复看 `Stage.status`，重复看那张表。

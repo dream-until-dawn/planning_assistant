@@ -26,28 +26,44 @@ import 'package:planning_assistant/features/task/application/task_editor_control
 import 'package:planning_assistant/features/task/application/task_shape.dart';
 
 const _d1 = PlanDate(2026, 9, 7);
-const _d2 = PlanDate(2026, 9, 9);
 final _m9 = MinuteOfDay.of(9, 0);
 final _m18 = MinuteOfDay.of(18, 0);
 
 StageDraft _stage(String id, {int? offset}) =>
     StageDraft(id: id, title: id, startOffsetMinutes: offset);
 
-/// 一条**填全了**的草稿，按形态给。每条用例从它出发，只拿掉一样东西 ——
+/// 每种形态的**最小可存**草稿。每条用例从它出发，只拿掉一样东西 ——
 /// 「拿掉这一个就不能存」比「凭空拼一个不能存的」说得清得多。
+///
+/// ## 「最小」不是「填得满」（评审 S-1）
+///
+/// 头一版是**填得很满**的：阶段事项那条连 `planDate` / `endDate` /
+/// 两个时刻都给上了，而 `blockedReason` 对阶段形态**一个都不查**
+/// （它的起止是推出来的）。
+///
+/// 后果落在这一批新出现的那一侧：
+///
+/// > 谁哪天给 `blockedReason` 加一条「阶段事项也要填开始日期」，
+/// > 「填全了就能存」照旧绿（夹具本来就填了），而它没有对应的 drop 用例
+/// > —— **这张表不会响。**
+///
+/// 也就是说：填得满的样本钉得住「这些是必填的」，钉不住
+/// **「只有这些是必填的」**。而 `canSave` 合并 `blockedReason` 之后，
+/// 一条多出来的规则不再只是多显一行红字，是**直接存不下去**。
+///
+/// 改成最小之后，「填全了就能存」才是一条关于**边界**的断言。
 TaskDraft _complete(TaskShape shape) => switch (shape) {
   TaskShape.scratch => const TaskDraft(shape: TaskShape.scratch, title: '随手记'),
+  // 阶段形态：**一个日期都不给**。起止由阶段推出，
+  // 用户在表单上也确实填不到它们。
   TaskShape.staged || TaskShape.recurringStaged => TaskDraft(
     shape: shape,
     title: '搬家',
-    planDate: _d1,
-    endDate: _d2,
-    isAllDay: false,
-    startMinute: _m9,
-    endMinute: _m18,
     stages: [_stage('a', offset: 0), _stage('b', offset: 60)],
     recurrence: RecurrenceDraft(enabled: shape.isRecurring),
   ),
+  // 单事项：全天（构造器默认），于是**时刻不是必填的** ——
+  // 那两条 drop 用例各自把它拨成非全天再抽。
   TaskShape.single || TaskShape.recurringSingle => TaskDraft(
     shape: shape,
     title: '开会',
@@ -67,7 +83,17 @@ const Map<TaskShape, List<_Removal>> _mustHave = {
     ('开始时刻（非全天时）', _dropStartMinute),
     ('结束时刻（非全天时）', _dropEndMinute),
   ],
-  TaskShape.recurringSingle: [('开始日期', _dropPlanDate), ('结束日期', _dropEndDate)],
+  // **与 `single` 逐条相同**，不是省略（评审 S-2）：两者走的是
+  // `blockedReason` 里同一段 `if (shape.needsSchedule)`。
+  // 少写两行的话，这张表**看起来**在说「重复的单事项不用填时刻」——
+  // 今天不会漏报（规则同源），但下一个人会照着这个印象改规则。
+  // 下面那条「走同一分支的形态，必填表必须相等」把它钉住。
+  TaskShape.recurringSingle: [
+    ('开始日期', _dropPlanDate),
+    ('结束日期', _dropEndDate),
+    ('开始时刻（非全天时）', _dropStartMinute),
+    ('结束时刻（非全天时）', _dropEndMinute),
+  ],
   TaskShape.staged: [
     ('至少两个阶段', _dropOneStage),
     ('每个阶段都要有时间', _dropOneStageTime),
@@ -159,6 +185,38 @@ void main() {
   group('内容：每种形态各自的必填项', () {
     test('前提：这张表把五种形态都写全了', () {
       expect(_mustHave.keys.toSet(), TaskShape.values.toSet());
+    });
+
+    test('走同一分支的形态，必填表必须**逐条相等**（评审 S-2）', () {
+      // 上面那条自检管的是**行数**，管不到每行的内容 ——
+      // 而 `recurringSingle` 一度只写了两条，`single` 写了四条，
+      // 两者却走 `blockedReason` 里同一段判断。
+      //
+      // 分支由 `(hasStages, needsSchedule)` 唯一确定（见 `blockedReason`
+      // 的两级 if）。同一格里的形态，必填项不可能不同 ——
+      // 不同就说明表抄漏了，或者代码里真的分岔了，两种都该当场看见。
+      // **比的是排序拼起来的串，不是 `Set`。** Dart 的 `Set` 不按值相等，
+      // 两个内容相同的集合放进 `Set<Set<…>>` 是两个元素 ——
+      // 那样这条断言会**恒红**，而报出来的样子是「两个一模一样的集合不相等」。
+      final byBranch = <(bool, bool), Map<TaskShape, String>>{};
+      for (final e in _mustHave.entries) {
+        final key = (e.key.hasStages, e.key.needsSchedule);
+        (byBranch[key] ??= {})[e.key] =
+            (e.value.map((r) => r.$1).toList()..sort()).join(' | ');
+      }
+      // 自检：真的分出了不止一格，否则下面那个循环是空转。
+      expect(byBranch.length, greaterThan(1));
+
+      for (final group in byBranch.entries) {
+        final sets = group.value.values.toSet();
+        expect(
+          sets,
+          hasLength(1),
+          reason:
+              '走同一分支的形态必填项不一样：${group.value} —— '
+              '要么表抄漏了，要么 blockedReason 里真的分岔了',
+        );
+      }
     });
 
     for (final entry in _mustHave.entries) {
