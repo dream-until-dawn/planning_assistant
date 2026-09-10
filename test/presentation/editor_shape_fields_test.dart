@@ -159,6 +159,41 @@ void main() {
     expect(find.textContaining('没有日期'), findsNothing);
   });
 
+  testAppWidgets('阶段事项：有阶段但一个都没填时间时，起止**够得着**（评审 S-2）', (tester) async {
+    // ## 逃生口一度锚在代理上
+    //
+    // 判据本来写的是 `stages.isEmpty`，而它只是「推不出来」的一种写法。
+    // 「**有阶段、但一个都没填时间**」时两者给出相反的答案：
+    // 控件不出现，推导又推不出东西 —— 那条任务存着的起止**改不了也看不见**，
+    // 而它仍然在决定这条任务排在列表哪儿。
+    //
+    // 改成用推导自己的判据（`canDeriveSpan`）之后两边不可能再各说各话。
+    await _openEditor(tester, TaskShape.staged);
+    await tester.enterText(find.byKey(TaskEditorPage.titleFieldKey), '搬家');
+    await tester.pump();
+
+    // 加两个**不带时间**的阶段。
+    for (final name in ['打包', '搬运']) {
+      await tapVisible(tester, TaskEditorPage.addStageKey);
+      final field = find
+          .descendant(
+            of: find.byKey(TaskEditorPage.stageSectionKey),
+            matching: find.byType(TextField),
+          )
+          .last;
+      await tester.enterText(field, name);
+      await tester.pumpAndSettle();
+    }
+    await tapVisible(tester, TaskEditorPage.saveButtonKey);
+
+    await openEditorFromCard(tester);
+    expect(
+      await _isPresent(tester, TaskEditorPage.dateFieldKey),
+      isTrue,
+      reason: '推不出起止，控件又藏着 —— 这条任务的起止就再也够不着了',
+    );
+  });
+
   testAppWidgets('**编辑**已有任务时，时间那几个控件回来', (tester) async {
     // 形态是从当前字段反推的（`TaskShape.of` 只看它现在是什么样），
     // 所以「给这条临时事项加上时间」只有这一条路：藏起来就断了 ——

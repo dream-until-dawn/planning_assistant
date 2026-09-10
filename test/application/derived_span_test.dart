@@ -107,6 +107,25 @@ void main() {
       expect(deriveSpanFromStages(_anchor, const []), isNull);
     });
 
+    test('**`canDeriveSpan` 与「返回 null」是同一个判据**', () {
+      // 界面问的是「推不推得出来」（该不该把日期栏放出来），
+      // 它不需要真去推一次。两份判据分开写的话会各说各话 ——
+      // 而那正是「有阶段但一个都没填时间」那种情形出问题的地方。
+      for (final stages in [
+        <StageTiming>[],
+        [_s(null)],
+        [_s(null), _s(null)],
+        [_s(0)],
+        [_s(null), _s(60, 30)],
+      ]) {
+        expect(
+          deriveSpanFromStages(_anchor, stages) == null,
+          !canDeriveSpan(stages),
+          reason: '两个判据对 $stages 给出了相反的答案',
+        );
+      }
+    });
+
     test('只有一部分填了时间 → 按填了的推，没填的原样留着', () {
       // 没填的那些由 `blockedReason` 去催，不在这里被悄悄丢掉 ——
       // 丢掉的话用户会看到阶段数变少，而他并没有删过。

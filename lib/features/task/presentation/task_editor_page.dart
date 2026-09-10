@@ -31,6 +31,7 @@ import '../../archive/application/archive_providers.dart';
 import '../../trash/application/trash_providers.dart';
 import '../../views/shared/application/category_providers.dart';
 import '../../views/shared/application/task_providers.dart';
+import '../application/derived_span.dart';
 import '../application/recurrence_draft.dart';
 import '../application/stage_time.dart';
 import '../application/task_editor_controller.dart';
@@ -868,17 +869,32 @@ String _endText(TaskDraft draft) {
 /// 的旧任务，用户在界面上再也改不到那个日期 ——
 /// **界面够不着的数据，与不存在的数据在用户看来一样，
 /// 但它还在影响列表怎么排。**
+/// 草稿里那几个阶段的时间，喂给 `derived_span.dart` 的两个函数。
+List<StageTiming> _timingsOf(TaskDraft draft) => [
+  for (final s in draft.stages)
+    (
+      startOffsetMinutes: s.startOffsetMinutes,
+      durationMinutes: s.durationMinutes,
+    ),
+];
+
 bool _showsSpanFields(TaskDraft draft) {
   // ① 阶段事项：起止是**推出来的**，这几个控件不出现 ——
   //    填了也会被下一次推导盖掉，而一个填了没用的输入框比没有更糟。
   if (draft.shape.spanDerivedFromStages) {
-    // 唯一的例外：**编辑**一条 `kind=staged` 却一个阶段都没有的旧数据
-    // （早期版本允许这种行）。那时没有东西能推，藏起来等于把它锁死。
+    // 唯一的例外：**编辑**一条推不出起止的旧数据。那时没有东西能推，
+    // 藏起来等于把它锁死 —— 而它存着的起止仍然在决定这条任务排在哪儿。
+    //
+    // **判据用推导自己的那一个**（`canDeriveSpan`），不是
+    // 「有没有阶段」那个近似。头一版写的是 `stages.isEmpty`，
+    // 而「**有阶段、但一个都没填时间**」时两者给出相反的答案：
+    // 控件不出现，推导又推不出东西 —— 那条任务存着的起止改不了也看不见。
+    // 机制要锚在判据上，不是锚在判据的一种写法上。
     //
     // **只在编辑时**。新建的阶段事项本来就是从零个阶段起步的，
-    // 把这个例外写成「没有阶段就显示」的话，它每一次新建都会命中 ——
-    // 那正是这条守卫头一次跑就抓到的。
-    return draft.isEditing && draft.stages.isEmpty;
+    // 把例外写成「推不出来就显示」而不限定编辑的话，它每一次新建都会
+    // 命中 —— 那正是这条守卫头一次跑就抓到的。两个方向都要挡。
+    return draft.isEditing && !canDeriveSpan(_timingsOf(draft));
   }
 
   // ② **编辑已有任务时始终显示。**
@@ -899,8 +915,13 @@ bool _showsSpanFields(TaskDraft draft) {
 /// 哪一段 —— 不显示的话，用户改完阶段时间不知道任务挪到了哪儿，
 /// 而那恰恰是他改阶段时间想控制的东西。
 ///
-/// 一个阶段都还没填时间时不画：那时没有可报的事实，
-/// 而「由阶段决定：（空）」只会让人以为坏了。
+/// 一个阶段都还没填时间时**照样画**，只是换一句话 —— 那时它回答的是
+/// 「日期栏哪儿去了」。不画的话，用户在那个状态下没有任何解释。
+///
+/// （这段注释一度写的是相反的「那时不画」—— 它是给一个只返回
+/// `SizedBox.shrink()` 的占位版本写的，行为改了而注释没跟上。
+/// 评审指出：两句话各自都带着理由，读的人不会当成笔误，
+/// 而照注释「修」回去正好会删掉那句唯一的解释。）
 class _DerivedSpanLine extends StatelessWidget {
   const _DerivedSpanLine({required this.draft});
 
@@ -913,12 +934,15 @@ class _DerivedSpanLine extends StatelessWidget {
     final colors = context.appColors;
     // 还没有任何阶段带时间时**照样画**，只是换一句话 ——
     // 那时它回答的是「日期栏哪儿去了」。不画的话，用户会以为表单坏了。
-    final hasSpan = draft.stages.any((s) => s.hasTime);
+    final hasSpan = canDeriveSpan(_timingsOf(draft));
     return Padding(
       key: spanKey,
       padding: const EdgeInsets.only(bottom: Spacing.sm),
       child: Text(
-        hasSpan ? '由阶段决定：${_spanText(draft)}' : '起止由阶段的时间决定',
+        // 没有任何阶段带时间时，说的是**将来**：此刻的起止并不是由阶段
+        // 决定的（它是历史遗留值），说「起止由阶段的时间决定」等于承诺
+        // 一件当下不成立的事。
+        hasSpan ? '由阶段决定：${_spanText(draft)}' : '填了阶段时间之后，起止由它们决定',
         style: Theme.of(context).textTheme.bodySmall
             ?.copyWith(color: colors.disabledText),
       ),

@@ -48,10 +48,24 @@ typedef StageTiming = ({int? startOffsetMinutes, int? durationMinutes});
 /// 没填时间的阶段（`startOffsetMinutes == null`）**不参与推导**，
 /// 但会原样留在结果里：它们由 `blockedReason` 那一侧去催填，
 /// 而不是在这里被悄悄丢掉。
+/// **这批阶段推不推得出起止。**
+///
+/// 与 [deriveSpanFromStages] 返回 `null` 是**同一个判据**，单独拎出来
+/// 是因为界面要问的就是这个（「该不该把日期栏放出来」），
+/// 而它不需要真去推一次。
+///
+/// 分开写两份的话，它们会各说各话 —— 界面一度用 `stages.isEmpty` 当近似，
+/// 于是「有阶段、但一个都没填时间」那种情形两边给出相反的答案：
+/// 控件不出现，推导又推不出东西，那条任务存着的起止**改不了也看不见**，
+/// 而它仍然在决定这条任务排在列表哪儿。
+bool canDeriveSpan(Iterable<StageTiming> stages) =>
+    stages.any((s) => s.startOffsetMinutes != null);
+
 DerivedSpan? deriveSpanFromStages(
   DateAndMinute anchor,
   List<StageTiming> stages,
 ) {
+  if (!canDeriveSpan(stages)) return null;
   final timed = [
     for (final s in stages)
       if (s.startOffsetMinutes case final o?)

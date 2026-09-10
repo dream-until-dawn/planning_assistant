@@ -333,8 +333,14 @@ Future<Harness> _pumpEditor(
 
 /// 在日期选择器里点到某一天，再确定。
 ///
-/// 夹具时钟钉死在 2026-09-07，所以「点 15 号」落在同一个月里、是确定的
+/// 夹具时钟钉死在 2026-09-07，所以「点某一号」落在同一个月里、是确定的
 /// —— 不钉时钟的话这一下会随跑测试的日子落到不同月份。
+///
+/// **一条没说出口的依赖**（评审指出）：`planDate` 那条点的是 **3 号**，
+/// 也就是**今天之前**。它依赖开始日期的选择器允许选过去
+/// （`_DateRow` 现在给的 `firstDate` 是当年往前五年）。
+/// 哪天有人把它收成 `firstDate: today`，这条探针会红，
+/// 而它报出来的样子是「写路径不通」—— 与真实原因差得很远。
 Future<void> _pickDay(WidgetTester tester, Key row, int day) async {
   await tapVisible(tester, row);
   await tester.tap(find.text('$day'));
