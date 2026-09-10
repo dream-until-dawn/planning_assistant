@@ -38,6 +38,12 @@ jobs:
       - name: 坏测试扫描（含扫描器自检）
         run: dart tool/lint_tests.dart --self-test
 
+      # 非 raw 字面量里被静默吃掉的转义（'\b' 是退格符、'\s' 丢反斜杠）。
+      # 这一族在这个项目里栽过六次，六次都只能靠事后注入才发现 ——
+      # 语言在这里不给任何信号。见 docs/05-engineering/testing-strategy.md §3.5
+      - name: 可疑转义扫描（含扫描器自检）
+        run: dart tool/lint_dart_escapes.dart --self-test
+
       # 需求可追溯性：每条 V1 需求都要有**用例**点它的名，
       # 豁免表只许缩短（棘轮）。同样带 --self-test。
       # 见 docs/05-engineering/conventions.md §5.1
